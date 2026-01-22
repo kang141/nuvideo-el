@@ -243,70 +243,19 @@ ipcMain.handle("stop-sidecar-record", async () => {
     }
   });
 });
-let exportProcess = null;
-let totalReceivedBytes = 0;
-ipcMain.handle("export-session-start", async (_event, { targetPath, fps }) => {
-  var _a;
-  if (exportProcess) {
-    console.warn("[Main] Warning: lingering export session found. Forcing termination.");
-    try {
-      (_a = exportProcess.stdin) == null ? void 0 : _a.end();
-      exportProcess.kill("SIGKILL");
-    } catch (e) {
+ipcMain.handle("save-exported-video", async (_event, { arrayBuffer, targetPath }) => {
+  try {
+    const buffer = Buffer.from(arrayBuffer);
+    if (!buffer.length) {
+      throw new Error("Export failed: empty export buffer (no frames recorded).");
     }
-    exportProcess = null;
+    fs.writeFileSync(targetPath, buffer);
+    console.log("[Main] Export successful:", targetPath);
+    return { success: true };
+  } catch (err) {
+    console.error("[Main] save-exported-video failed:", err);
+    return { success: false, error: err.message };
   }
-  totalReceivedBytes = 0;
-  console.log(`[Main] Starting WebCodecs remux session: target: ${targetPath}`);
-  const args = [
-    "-y",
-    "-f",
-    "h264",
-    // 声明输入流格式为 H.264
-    "-r",
-    fps.toString(),
-    // 设置帧率
-    "-i",
-    "pipe:0",
-    // 从管道读取
-    "-c:v",
-    "copy",
-    // 关键：直接拷贝编码流，无需重新编码，速度极快
-    "-movflags",
-    "+faststart",
-    targetPath
-  ];
-  const { spawn } = await import("node:child_process");
-  exportProcess = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
-  exportProcess.stderr.on("data", (data) => {
-    const log = data.toString().trim();
-    if (log.includes("frame=")) {
-      process.stdout.write(`\r[FFmpeg Remux] ${log}`);
-    } else {
-      console.log("[FFmpeg Remux]", log);
-    }
-  });
-  exportProcess.on("exit", (code) => {
-    console.log(`
-[Main] FFmpeg process exited with code ${code}. Received ${totalReceivedBytes} bytes.`);
-    exportProcess = null;
-  });
-  return { success: true };
-});
-ipcMain.on("export-session-feed", (event, arrayBuffer) => {
-  if (!exportProcess || !exportProcess.stdin) return;
-  const buffer = Buffer.from(arrayBuffer);
-  totalReceivedBytes += buffer.length;
-  exportProcess.stdin.write(buffer);
-});
-ipcMain.handle("export-session-finish", async () => {
-  if (!exportProcess) return { success: true };
-  return new Promise((resolve) => {
-    exportProcess.once("close", (code) => {
-      resolve({ success: code === 0 });
-    });
-    exportProcess.stdin.end();
-  });
 });
 app.on("will-quit", () => {
   if (ffmpegProcess) {

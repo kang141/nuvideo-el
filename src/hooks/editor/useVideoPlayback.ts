@@ -14,8 +14,11 @@ export function useVideoPlayback(
   }, [renderGraph?.duration]);
 
   const maxDuration = useMemo(() => {
-    if (videoDuration > 0 && isFinite(videoDuration)) return videoDuration;
-    return logicalDuration > 0 ? logicalDuration : 0.001;
+    const hasVideoDuration = videoDuration > 0 && isFinite(videoDuration);
+    const hasLogicalDuration = logicalDuration > 0 && isFinite(logicalDuration);
+    if (hasVideoDuration && hasLogicalDuration) return Math.min(videoDuration, logicalDuration);
+    if (hasVideoDuration) return videoDuration;
+    return hasLogicalDuration ? logicalDuration : 0.001;
   }, [logicalDuration, videoDuration]);
 
   // 视频加载与时长探测

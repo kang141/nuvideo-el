@@ -167,7 +167,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isFullscreenPreview, togglePlay, graph]);
 
-  const { isReady } = useVideoRenderer({
+  const { isReady, renderFrame } = useVideoRenderer({
     videoRef,
     canvasRef,
     renderGraph: graph!,
@@ -250,10 +250,11 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   } = useVideoExport({
     videoRef,
     canvasRef,
-    renderGraph: graph,
     maxDuration,
+    exportDuration: graph?.duration ? graph.duration / 1000 : maxDuration,
     onSeek: handleSeek,
-    setIsPlaying
+    setIsPlaying,
+    renderFrame
   });
 
   const handleExport = useCallback((quality?: QualityConfig) => {

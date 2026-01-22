@@ -7,7 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
 process.env.APP_ROOT = path.join(__dirname, '..')
-
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
@@ -290,76 +289,22 @@ ipcMain.handle('stop-sidecar-record', async () => {
 })
 
 
-// --- 导出引擎 (FFmpeg Remux V2) ---
-let exportProcess: any = null;
-let totalReceivedBytes = 0;
-
-ipcMain.handle('export-session-start', async (_event, { targetPath, fps }) => {
-  // 增加强制清理：如果由于上次异常导致残留，尝试关闭它
-  if (exportProcess) {
-    console.warn('[Main] Warning: lingering export session found. Forcing termination.');
-    try {
-        exportProcess.stdin?.end();
-        exportProcess.kill('SIGKILL');
-    } catch (e) {}
-    exportProcess = null;
-  }
-
-  totalReceivedBytes = 0;
-  console.log(`[Main] Starting WebCodecs remux session: target: ${targetPath}`);
-
-  // 注意：此处接收的是 WebCodecs 编码后的 H.264 流，FFmpeg 只需要进行重封装 (Remux)
-  const args = [
-    '-y',
-    '-f', 'h264',              // 声明输入流格式为 H.264
-    '-r', fps.toString(),      // 设置帧率
-    '-i', 'pipe:0',            // 从管道读取
-    '-c:v', 'copy',            // 关键：直接拷贝编码流，无需重新编码，速度极快
-    '-movflags', '+faststart',
-    targetPath
-  ];
-
-  const { spawn } = await import('node:child_process');
-  exportProcess = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-  exportProcess.stderr.on('data', (data: Buffer) => {
-    const log = data.toString().trim();
-    if (log.includes('frame=')) {
-        process.stdout.write(`\r[FFmpeg Remux] ${log}`);
-    } else {
-        console.log('[FFmpeg Remux]', log);
+// 将最终导出的数据保存到用户选择的路径
+ipcMain.handle('save-exported-video', async (_event, { arrayBuffer, targetPath }) => {
+  try {
+    const buffer = Buffer.from(arrayBuffer)
+    if (!buffer.length) {
+      throw new Error('Export failed: empty export buffer (no frames recorded).')
     }
-  });
-
-  exportProcess.on('exit', (code: number) => {
-    console.log(`\n[Main] FFmpeg process exited with code ${code}. Received ${totalReceivedBytes} bytes.`);
-    exportProcess = null;
-  });
-
-  return { success: true };
-});
-
-ipcMain.on('export-session-feed', (event, arrayBuffer: ArrayBuffer) => {
-  if (!exportProcess || !exportProcess.stdin) return;
-
-  const buffer = Buffer.from(arrayBuffer);
-  totalReceivedBytes += buffer.length;
-
-  // WebCodecs 压缩流数据量极小，FFmpeg 几乎瞬间吞完，因此不需要背压控制
-  exportProcess.stdin.write(buffer);
-});
-
-ipcMain.handle('export-session-finish', async () => {
-  if (!exportProcess) return { success: true };
-
-  return new Promise((resolve) => {
-    exportProcess.once('close', (code: number) => {
-      resolve({ success: code === 0 });
-    });
-    // 显式结束输入流，触发 FFmpeg 写入最终 MP4 索引并退出
-    exportProcess.stdin.end();
-  });
-});
+    
+    fs.writeFileSync(targetPath, buffer)
+    console.log('[Main] Export successful:', targetPath);
+    return { success: true }
+  } catch (err) {
+    console.error('[Main] save-exported-video failed:', err)
+    return { success: false, error: (err as Error).message }
+  }
+})
 
 // --- 生命周期管理 ---
 

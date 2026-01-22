@@ -66,7 +66,4 @@ export interface RenderGraph {
   audio?: AudioConfig;
   /** 渲染配置 */
   config: RenderConfig;
-  /** 背景配置 */
-  bgCategory?: string;
-  bgFile?: string;
 }
