@@ -1,0 +1,73 @@
+/**
+ * ScreenRecorder - Sidecar (FFmpeg) 实现
+ * 通过 IPC 调用主进程中的 FFmpeg 引擎，实现高质量、无原生鼠标的录制。
+ */
+export class ScreenRecorder {
+  private _isRecording: boolean = false;
+  private _isStopping: boolean = false;
+
+  /**
+   * 开始录制
+   * @param sourceId 目标屏幕的 SourceID
+   */
+  async start(sourceId: string, _quality?: any): Promise<{ bounds: any }> {
+    if (this._isRecording || this._isStopping) return { bounds: null };
+    console.log('[ScreenRecorder] Requesting Sidecar start...', sourceId);
+    
+    try {
+      // 1. 开启内容保护
+      await (window as any).ipcRenderer.send('window-control', 'set-content-protection', true);
+
+      // 2. 调用主进程启动 FFmpeg，获取所选屏幕的几何信息
+      const result = await (window as any).ipcRenderer.invoke('start-sidecar-record', sourceId);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to start FFmpeg Sidecar');
+      }
+
+      this._isRecording = true;
+      console.log('[ScreenRecorder] Sidecar recording started with bounds:', result.bounds);
+      
+      return { bounds: result.bounds };
+    } catch (err) {
+      console.error('[ScreenRecorder] Start failed:', err);
+      this._isRecording = false;
+      throw err;
+    }
+  }
+
+  /**
+   * 停止录制并返回视频路径
+   */
+  async stop(): Promise<string> {
+    if (!this._isRecording || this._isStopping) return '';
+    this._isStopping = true;
+
+    try {
+      console.log('[ScreenRecorder] Requesting Sidecar stop...');
+      
+      // 1. 关闭内容保护
+      await (window as any).ipcRenderer.send('window-control', 'set-content-protection', false);
+
+      // 2. 调用主进程停止 FFmpeg 并获取路径
+      const videoUrl = await (window as any).ipcRenderer.invoke('stop-sidecar-record');
+      
+      this._isRecording = false;
+      this._isStopping = false;
+      console.log('[ScreenRecorder] Sidecar stopped. URL:', videoUrl);
+      
+      return videoUrl || '';
+    } catch (err) {
+      console.error('[ScreenRecorder] Stop failed:', err);
+      this._isRecording = false;
+      this._isStopping = false;
+      return '';
+    }
+  }
+
+  get isRecording() {
+    return this._isRecording;
+  }
+}
+
+export const screenRecorder = new ScreenRecorder();
