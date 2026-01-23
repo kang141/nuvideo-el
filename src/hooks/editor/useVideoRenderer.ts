@@ -9,6 +9,7 @@ interface UseVideoRendererOptions {
   renderGraph: RenderGraph;
   bgCategory: string;
   bgFile: string;
+  isExporting?: boolean;
 }
 
 export function useVideoRenderer({
@@ -17,6 +18,7 @@ export function useVideoRenderer({
   renderGraph,
   bgCategory,
   bgFile,
+  isExporting = false,
 }: UseVideoRendererOptions) {
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -167,9 +169,9 @@ export function useVideoRenderer({
     ctx.stroke();
   };
 
-  // 预览渲染：用 requestVideoFrameCallback 绑定到“真实显示帧”的 mediaTime，避免播放时光标抖动/重影。
+  // 预览渲染
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || isExporting) return;
 
     const canvas = canvasRef.current;
     if (canvas) {

@@ -36,6 +36,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   const defaultFileName = `nubideo ${new Date().toLocaleDateString().replace(/\//g, '-')} at ${new Date().getHours()}.${new Date().getMinutes()}.mp4`;
   const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const LAST_DIR_KEY = 'nuvideo_last_export_dir';
 
@@ -208,6 +209,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     renderGraph: graph!,
     bgCategory: activeWallpaper.category,
     bgFile: activeWallpaper.file,
+    isExporting,
   });
 
   // 镜头控制逻辑
@@ -279,7 +281,6 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   }, [graph]);
 
   const {
-    isExporting,
     exportProgress,
     handleExport: handleExportRaw
   } = useVideoExport({
@@ -289,7 +290,9 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     exportDuration: graph?.duration ? graph.duration / 1000 : maxDuration,
     onSeek: handleSeek,
     setIsPlaying,
-    renderFrame
+    renderFrame,
+    isExporting,
+    setIsExporting
   });
 
   const handleExport = useCallback((quality?: QualityConfig) => {

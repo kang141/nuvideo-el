@@ -268,6 +268,49 @@ ipcMain.handle("save-exported-video", async (_event, { arrayBuffer, targetPath }
     return { success: false, error: err.message };
   }
 });
+const activeExportStreams = /* @__PURE__ */ new Map();
+ipcMain.handle("open-export-stream", async (_event, { targetPath }) => {
+  try {
+    const fd = fs.openSync(targetPath, "w");
+    const streamId = `export_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    activeExportStreams.set(streamId, { fd, path: targetPath, bytesWritten: 0 });
+    console.log("[Main] Export stream opened:", targetPath);
+    return { success: true, streamId };
+  } catch (err) {
+    console.error("[Main] open-export-stream failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk }) => {
+  try {
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) {
+      throw new Error(`Stream ${streamId} not found`);
+    }
+    const buffer = Buffer.from(chunk);
+    fs.writeSync(handle.fd, buffer);
+    handle.bytesWritten += buffer.length;
+    return { success: true, bytesWritten: handle.bytesWritten };
+  } catch (err) {
+    console.error("[Main] write-export-chunk failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("close-export-stream", async (_event, { streamId }) => {
+  try {
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) {
+      throw new Error(`Stream ${streamId} not found`);
+    }
+    fs.closeSync(handle.fd);
+    activeExportStreams.delete(streamId);
+    console.log(`[Main] Export stream closed: ${handle.path} (${handle.bytesWritten} bytes)`);
+    return { success: true, totalBytes: handle.bytesWritten };
+  } catch (err) {
+    console.error("[Main] close-export-stream failed:", err);
+    return { success: false, error: err.message };
+  }
+});
 app.on("will-quit", () => {
   if (ffmpegProcess) {
     ffmpegProcess.kill("SIGKILL");

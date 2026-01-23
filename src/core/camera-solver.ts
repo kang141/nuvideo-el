@@ -28,6 +28,40 @@ const defaultIntent: CameraIntent = {
 const DEADZONE_W = 0.05;
 const DEADZONE_H = 0.04;
 
+// ============ 增量缓存系统 ============
+// 用于导出时避免 O(n²) 重复计算
+interface CameraSolverCache {
+  lastT: number;
+  state: CameraState;
+  mouseIdx: number;
+}
+
+let incrementalCache: CameraSolverCache | null = null;
+
+/**
+ * 重置增量缓存。导出开始前调用一次。
+ */
+export function resetCameraCache(): void {
+  incrementalCache = null;
+}
+
+/**
+ * 启用增量模式。调用后 computeCameraState 会从上次 t 继续积分，
+ * 而非每次都从 0 开始。
+ */
+export function enableIncrementalMode(): void {
+  incrementalCache = {
+    lastT: 0,
+    state: {
+      cx: 0.5, cy: 0.5, scale: 1.0,
+      vx: 0, vy: 0, vs: 0,
+      mx: 0.5, my: 0.5, mvx: 0, mvy: 0,
+    },
+    mouseIdx: 0,
+  };
+}
+// ============ 增量缓存系统结束 ============
+
 function findActiveIntent(intents: CameraIntent[], t: number): CameraIntent {
   if (intents.length === 0) return defaultIntent;
   let active = defaultIntent;
@@ -80,7 +114,6 @@ function findMousePos(
 export function computeCameraState(graph: RenderGraph, t: number) {
   const intents = graph.camera.intents || [];
   const mouseEvents = graph.mouse || [];
-  lastMouseIdx = 0;
 
   // 1. 获取平滑度参数
   const sm = Math.max(0, Math.min(1, graph.mousePhysics.smoothing));
@@ -107,22 +140,35 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     return { stiffness, damping, maxSpeed };
   })();
 
-  let state: CameraState = {
-    cx: 0.5,
-    cy: 0.5,
-    scale: 1.0,
-    vx: 0,
-    vy: 0,
-    vs: 0,
-    mx: 0.5,
-    my: 0.5,
-    mvx: 0,
-    mvy: 0,
-  };
+  // ============ 增量模式：从缓存继续积分 ============
+  let state: CameraState;
+  let currentT: number;
+
+  if (incrementalCache && t >= incrementalCache.lastT) {
+    // 增量模式：从上次位置继续
+    state = { ...incrementalCache.state };
+    currentT = incrementalCache.lastT;
+    lastMouseIdx = incrementalCache.mouseIdx;
+  } else {
+    // 非增量模式或时间回退：从头开始
+    state = {
+      cx: 0.5,
+      cy: 0.5,
+      scale: 1.0,
+      vx: 0,
+      vy: 0,
+      vs: 0,
+      mx: 0.5,
+      my: 0.5,
+      mvx: 0,
+      mvy: 0,
+    };
+    currentT = 0;
+    lastMouseIdx = 0;
+  }
 
   // 子步长优化：将 16.6ms 拆解为 2ms 的小步长，极大提升数值稳定性
   const dt = 2.0;
-  let currentT = 0;
 
   while (currentT < t) {
     const nextT = Math.min(currentT + dt, t);
@@ -220,6 +266,13 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     state.cy += state.vy * factor;
 
     currentT = nextT;
+  }
+
+  // ============ 更新增量缓存 ============
+  if (incrementalCache) {
+    incrementalCache.lastT = t;
+    incrementalCache.state = { ...state };
+    incrementalCache.mouseIdx = lastMouseIdx;
   }
 
   return {
