@@ -32,8 +32,8 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   const [hideIdle, setHideIdle] = useState(false);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
   
-  // 生成默认文件名 (改为 mp4)
-  const defaultFileName = `Cap ${new Date().toLocaleDateString().replace(/\//g, '-')} at ${new Date().getHours()}.${new Date().getMinutes()}.mp4`;
+  // 生成默认文件名 (改为 mp4，前缀改为 nubideo)
+  const defaultFileName = `nubideo ${new Date().toLocaleDateString().replace(/\//g, '-')} at ${new Date().getHours()}.${new Date().getMinutes()}.mp4`;
   const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
 

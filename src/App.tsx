@@ -77,9 +77,12 @@ function App() {
   const handleSelectSource = async (sourceId: string, quality: QualityConfig) => {
     try {
       console.log('[App] Initializing capture for source:', sourceId, 'Quality:', quality.label);
+      await mouseTracker.syncClock();
       mouseTracker.start(); // 进入就绪态
-      await screenRecorder.start(sourceId, quality);
-      mouseTracker.align(); // 物理对齐视频流点
+      const startResult = await screenRecorder.start(sourceId, quality);
+      if (startResult?.t0) {
+        mouseTracker.align(startResult.t0); // 物理对齐视频流点
+      }
       
       setRecordingState({
         isRecording: true,
@@ -120,8 +123,8 @@ function App() {
           highlightColor: 'rgba(255,255,255,0.2)'
         },
         mousePhysics: {
-          smoothing: 0.45,
-          speedLimit: 1200
+          smoothing: 0.50,
+          speedLimit: 6500
         },
         camera: {
           intents: [],

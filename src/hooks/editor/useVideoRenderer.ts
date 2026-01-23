@@ -1,4 +1,4 @@
-import { useEffect, useRef, RefObject, useState } from 'react';
+﻿import { useEffect, useRef, RefObject, useState } from 'react';
 import { EDITOR_CANVAS_SIZE } from '../../constants/editor';
 import { RenderGraph } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
@@ -22,6 +22,7 @@ export function useVideoRenderer({
   const [isReady, setIsReady] = useState(false);
   const isFirstLoadRef = useRef(true);
   const rafRef = useRef<number>();
+  const vfcRef = useRef<number | null>(null);
 
   // 加载背景图
   useEffect(() => {
@@ -29,10 +30,16 @@ export function useVideoRenderer({
     img.src = `/backgrounds/${bgCategory}/${bgFile}`;
     img.onload = () => {
       bgImageRef.current = img;
+
       if (isFirstLoadRef.current) {
         setIsReady(true);
         isFirstLoadRef.current = false;
+        return;
       }
+
+      // 背景切换时，如果视频暂停/没有新帧，强制重绘一次。
+      const video = videoRef.current;
+      if (video) requestAnimationFrame(() => renderFrame(video.currentTime * 1000));
     };
   }, [bgCategory, bgFile]);
 
@@ -53,7 +60,7 @@ export function useVideoRenderer({
 
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    
+
     // --- A. 基础背景 ---
     ctx.drawImage(bgImageRef.current, 0, 0, W, H);
 
@@ -63,7 +70,7 @@ export function useVideoRenderer({
     const videoAspect = videoW / videoH;
     const canvasAspect = W / H;
 
-    let dw, dh;
+    let dw: number, dh: number;
     if (videoAspect > canvasAspect) {
       dw = W * 0.85;
       dh = dw / videoAspect;
@@ -112,7 +119,7 @@ export function useVideoRenderer({
     ctx.stroke();
   };
 
-  // 渲染循环 (仅在播放时或空闲时运行)
+  // 预览渲染：用 requestVideoFrameCallback 绑定到“真实显示帧”的 mediaTime，避免播放时光标抖动/重影。
   useEffect(() => {
     if (!isReady) return;
 
@@ -122,16 +129,54 @@ export function useVideoRenderer({
       canvas.height = EDITOR_CANVAS_SIZE.height;
     }
 
-    const render = () => {
-      const video = videoRef.current;
-      if (video) {
-        renderFrame(video.currentTime * 1000);
-      }
-      rafRef.current = requestAnimationFrame(render);
+    const video = videoRef.current;
+    if (!video) return;
+
+    let stopped = false;
+
+    const renderFromCurrentTime = () => {
+      if (stopped) return;
+      renderFrame(video.currentTime * 1000);
     };
 
-    render();
+    // 暂停/拖动进度条时没有新帧，事件触发时手动重绘一次。
+    const onSeeked = () => requestAnimationFrame(renderFromCurrentTime);
+    const onPause = () => requestAnimationFrame(renderFromCurrentTime);
+    const onLoadedData = () => requestAnimationFrame(renderFromCurrentTime);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('loadeddata', onLoadedData);
+
+    const hasVfc = typeof (video as any).requestVideoFrameCallback === 'function';
+    if (hasVfc) {
+      const onVfc = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+        if (stopped) return;
+        renderFrame(metadata.mediaTime * 1000);
+        vfcRef.current = (video as any).requestVideoFrameCallback(onVfc);
+      };
+      vfcRef.current = (video as any).requestVideoFrameCallback(onVfc);
+    } else {
+      const tick = () => {
+        if (stopped) return;
+        renderFromCurrentTime();
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    // Initial paint
+    requestAnimationFrame(renderFromCurrentTime);
+
     return () => {
+      stopped = true;
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('pause', onPause);
+      video.removeEventListener('loadeddata', onLoadedData);
+
+      if (vfcRef.current != null && typeof (video as any).cancelVideoFrameCallback === 'function') {
+        try { (video as any).cancelVideoFrameCallback(vfcRef.current); } catch {}
+        vfcRef.current = null;
+      }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [isReady, videoRef, canvasRef, renderGraph]);
@@ -139,7 +184,7 @@ export function useVideoRenderer({
   // --- 光标路径预设 ---
   const CURSORS = {
     macOS: new Path2D('M0,0 L0,18.5 L5,14 L9,22 L11.5,21 L7.5,13.5 L13,13.5 Z'),
-    Circle: null // 圆形直接画 arc 效率更高
+    Circle: null, // 圆形直接用 arc 效率更高
   };
 
   function drawSmoothMouse(ctx: CanvasRenderingContext2D, mx: number, my: number, graph: RenderGraph, t: number) {
@@ -150,61 +195,58 @@ export function useVideoRenderer({
     let isDown = false;
     let lastDownT = -9999;
     for (let i = 0; i < events.length; i++) {
-        if (events[i].t <= t) {
-            if (events[i].type === 'down') {
-                isDown = true;
-                lastDownT = events[i].t;
-            }
-            if (events[i].type === 'up') isDown = false;
-        } else break;
+      if (events[i].t <= t) {
+        if (events[i].type === 'down') {
+          isDown = true;
+          lastDownT = events[i].t;
+        }
+        if (events[i].type === 'up') isDown = false;
+      } else break;
     }
 
     ctx.save();
-    
+
     // --- A. 点击涟漪效果 (Ripple) ---
     if (showRipple) {
       const age = t - lastDownT;
       if (age >= 0 && age < 600) {
-          const progress = age / 600;
-          const opacity = Math.pow(1 - progress, 2);
-          const radius = progress * size * 1.5; // 基于光标大小
-          
-          ctx.beginPath();
-          ctx.arc(mx, my, radius, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.5})`;
-          ctx.lineWidth = 3 * (1 - progress);
-          ctx.stroke();
+        const progress = age / 600;
+        const opacity = Math.pow(1 - progress, 2);
+        const radius = progress * size * 1.5;
+
+        ctx.beginPath();
+        ctx.arc(mx, my, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.5})`;
+        ctx.lineWidth = 3 * (1 - progress);
+        ctx.stroke();
       }
     }
 
     // --- B. 绘制光标 ---
     const clickScale = isDown ? 0.85 : 1.0;
     const visualSize = size * clickScale;
-    
+
     ctx.translate(mx, my);
-    
+
     if (style === 'Circle') {
-      // 简约圆形
       ctx.beginPath();
       ctx.arc(0, 0, visualSize / 2, 0, Math.PI * 2);
-      
+
       ctx.shadowBlur = 10;
       ctx.shadowColor = 'rgba(0,0,0,0.3)';
-      
+
       ctx.fillStyle = 'rgba(255,255,255,0.95)';
       ctx.fill();
-      
+
       ctx.strokeStyle = 'rgba(0,0,0,0.1)';
       ctx.lineWidth = 1;
       ctx.stroke();
     } else {
-      // macOS 指针 (Path2D)
       const path = CURSORS.macOS;
-      // 默认路径大概是 22px 高，我们需要缩放它
       const scale = visualSize / 22;
-      
+
       ctx.scale(scale, scale);
-      ctx.rotate(-Math.PI / 180 * 2); 
+      ctx.rotate(-Math.PI / 180 * 2);
 
       ctx.shadowBlur = 15;
       ctx.shadowColor = 'rgba(0,0,0,0.4)';

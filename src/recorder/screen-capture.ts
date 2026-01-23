@@ -10,8 +10,8 @@ export class ScreenRecorder {
    * 开始录制
    * @param sourceId 目标屏幕的 SourceID
    */
-  async start(sourceId: string, _quality?: any): Promise<{ bounds: any }> {
-    if (this._isRecording || this._isStopping) return { bounds: null };
+  async start(sourceId: string, _quality?: any): Promise<{ bounds: any; t0: number }> {
+    if (this._isRecording || this._isStopping) return { bounds: null, t0: 0 };
     console.log('[ScreenRecorder] Requesting Sidecar start...', sourceId);
     
     try {
@@ -28,7 +28,7 @@ export class ScreenRecorder {
       this._isRecording = true;
       console.log('[ScreenRecorder] Sidecar recording started with bounds:', result.bounds);
       
-      return { bounds: result.bounds };
+      return { bounds: result.bounds, t0: result.t0 ?? 0 };
     } catch (err) {
       console.error('[ScreenRecorder] Start failed:', err);
       this._isRecording = false;

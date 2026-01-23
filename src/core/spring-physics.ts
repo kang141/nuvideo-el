@@ -1,4 +1,4 @@
-import type { CameraState, CameraIntent, SpringConfig, Timestamp } from '../types';
+import type { CameraState, CameraIntent, SpringConfig } from '../types';
 
 /**
  * Spring 物理引擎

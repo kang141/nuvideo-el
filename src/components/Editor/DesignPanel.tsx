@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ImageIcon, 
@@ -41,11 +41,18 @@ const TABS = [
   { id: 'comments', icon: MessageSquare }
 ];
 
+const MOUSE_PHYSICS_PRESETS = [
+  { id: 'snappy', label: '跟手', smoothing: 0.30, speedLimit: 9000 },
+  { id: 'balanced', label: '平衡', smoothing: 0.50, speedLimit: 6500 },
+  { id: 'cinematic', label: '电影', smoothing: 0.68, speedLimit: 4800 },
+] as const;
+
 // 辅助函数：预加载高清原图
 const preloadCategoryImages = (categoryId: string) => {
   const category = AVAILABLE_BG_CATEGORIES.find(c => c.id === categoryId);
   if (!category) return;
   
+
   category.items.forEach(file => {
     const img = new Image();
     img.src = `/backgrounds/${categoryId}/${file}`;
@@ -68,162 +75,237 @@ export const DesignPanel = memo(function DesignPanel({
   mousePhysics,
   onUpdateMousePhysics
 }: DesignPanelProps) {
+  const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
+
   return (
-    <aside className="w-[340px] border-l border-white/[0.03] bg-[#0c0c0c] flex flex-col z-40">
-      <header className="h-14 border-b border-white/[0.03] flex items-center justify-between px-4 text-white/40">
-        <nav className="flex bg-white/[0.02] p-1 rounded-xl w-full border border-white/[0.03]">
-          {TABS.map(tab => (
-            <button 
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)} 
-              className={cn(
-                "flex-1 h-8 flex items-center justify-center rounded-lg transition-all",
-                activeTab === tab.id ? 'bg-white/10 text-white shadow-sm' : 'text-white/20 hover:text-white/40'
-              )}
-            >
-              <tab.icon size={16} />
-            </button>
-          ))}
+    <aside className="w-[320px] border-l border-white/[0.03] bg-[#090909] flex flex-col z-40 relative">
+      <header className="h-14 border-b border-white/[0.03] flex items-center px-4">
+        <nav className="flex bg-white/[0.03] p-1 rounded-xl w-full border border-white/[0.02] relative overflow-hidden">
+          {TABS.map(tab => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "flex-1 h-7 flex items-center justify-center rounded-lg transition-all duration-300 relative z-10",
+                  isActive ? 'text-white' : 'text-white/20 hover:text-white/40'
+                )}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTab"
+                    className="absolute inset-0 bg-white/10 rounded-lg shadow-sm"
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                  />
+                )}
+                <tab.icon size={15} className="relative z-20" />
+              </button>
+            );
+          })}
         </nav>
       </header>
-      
+
       <ScrollArea className="flex-1">
-        <div className="p-5 space-y-10">
+        <div className="p-6 space-y-8">
           <AnimatePresence mode="wait">
             {activeTab === 'camera' && (
-              <motion.div 
-                key="camera" 
-                initial={{ opacity: 0, x: 10 }} 
-                animate={{ opacity: 1, x: 0 }} 
-                exit={{ opacity: 0, x: -10 }} 
-                className="space-y-10"
+              <motion.div
+                key="camera"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="space-y-8"
               >
                 <section className="space-y-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">镜头控制 (Z)</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">镜头控制</span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
+                    <span className="text-[9px] font-mono text-white/10">SHORTCUT: Z</span>
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-2">
-                    <Button 
-                     variant="outline" 
+                    <Button
+                     variant="outline"
                      onClick={onResetZoom}
-                     className="w-full h-10 px-4 bg-white/[0.02] border-white/5 text-white/40 hover:bg-white/5 rounded-xl text-[11px] font-bold"
+                     className="w-full h-9 bg-white/[0.02] border-white/[0.04] text-white/50 hover:bg-white/[0.05] hover:text-white hover:border-white/[0.1] rounded-lg text-[11px] font-medium transition-all"
                     >
-                      重置所有镜头
+                      重置镜头
                     </Button>
-                    <Button 
-                     variant="outline" 
+                    <Button
+                     variant="outline"
                      onClick={() => onAddManualZoom(2.5)}
-                     className="w-full h-10 px-4 bg-white/[0.02] border-white/5 text-white/40 hover:bg-white/5 rounded-xl text-[11px] font-bold"
+                     className="w-full h-9 bg-white/[0.02] border-white/[0.04] text-white/50 hover:bg-white/[0.05] hover:text-white hover:border-white/[0.1] rounded-lg text-[11px] font-medium transition-all"
                     >
-                      添加定焦 (2.5x)
+                      定焦 (2.5x)
                     </Button>
                   </div>
-                  <p className="text-[10px] text-white/20 leading-relaxed text-center">按 Z 键在当前位置自动缩放至鼠标处</p>
+                  <p className="text-[10px] text-white/15 leading-relaxed text-center italic">在画面点击或按 Z 键可自动对焦鼠标</p>
                 </section>
               </motion.div>
             )}
 
             {activeTab === 'cursor' && (
-              <motion.div 
-                key="cursor" 
-                initial={{ opacity: 0, x: 10 }} 
-                animate={{ opacity: 1, x: 0 }} 
-                exit={{ opacity: 0, x: -10 }} 
-                className="space-y-10"
+              <motion.div
+                key="cursor"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="space-y-8"
               >
                 {/* 1. 鼠标外观 */}
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">光标样式</span>
+                <section className="space-y-5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">光标样式</span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {(['macOS', 'Circle'] as const).map(style => (
-                      <Button
+                      <button
                         key={style}
-                        variant="ghost"
                         onClick={() => onUpdateMouseTheme({ style })}
                         className={cn(
-                          "flex flex-col gap-1.5 h-auto py-3 rounded-xl border transition-all",
-                          mouseTheme.style === style 
-                            ? "bg-white/10 border-white/20 text-white" 
-                            : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/5 hover:text-white/50"
+                          "flex flex-col items-center justify-center gap-2 h-20 rounded-xl border transition-all duration-300",
+                          mouseTheme.style === style
+                            ? "bg-white/10 border-white/10 text-white shadow-lg"
+                            : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:bg-white/[0.04] hover:text-white/40"
                         )}
                       >
-                        <span className="text-[11px] font-bold">{style === 'macOS' ? 'macOS 指针' : '简约圆形'}</span>
-                      </Button>
+                        <div className={cn(
+                          "w-6 h-6 flex items-center justify-center",
+                          style === 'Circle' ? "rounded-full bg-current opacity-80" : ""
+                        )}>
+                          {style === 'macOS' && <Send size={14} className="-rotate-45" />}
+                        </div>
+                        <span className="text-[10px] font-medium tracking-tight">{style === 'macOS' ? 'macOS 指针' : '简约圆形'}</span>
+                      </button>
                     ))}
                   </div>
 
-                  <div className="space-y-3 pt-2">
+                  <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-white/40">光标大小</span>
-                      <span className="text-[11px] font-mono text-white/60">{mouseTheme.size}px</span>
+                      <span className="text-[11px] font-medium text-white/40 tracking-tight">感官大小</span>
+                      <span className="text-[10px] font-mono text-white/20 px-1.5 py-0.5 bg-white/[0.03] rounded border border-white/[0.05]">{mouseTheme.size}px</span>
                     </div>
-                    <input 
+                    <input
                       type="range"
                       min="20"
                       max="120"
                       step="1"
                       value={mouseTheme.size}
                       onChange={(e) => onUpdateMouseTheme({ size: parseInt(e.target.value) })}
-                      className="w-full accent-blue-500 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                      className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
                     />
                   </div>
 
-                  <div className="flex items-center justify-between group pt-2">
-                    <div className="flex items-center gap-3">
-                      <span className="text-[11px] font-bold text-white/40">点击特效 (水波纹)</span>
-                    </div>
-                    <Switch 
-                      checked={mouseTheme.showRipple} 
-                      onCheckedChange={(checked) => onUpdateMouseTheme({ showRipple: checked })} 
-                      className="data-[state=checked]:bg-blue-600 scale-90" 
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-[11px] font-medium text-white/40 tracking-tight">点击涟漪效果</span>
+                    <Switch
+                      checked={mouseTheme.showRipple}
+                      onCheckedChange={(checked) => onUpdateMouseTheme({ showRipple: checked })}
+                      className="data-[state=checked]:bg-emerald-600 scale-[0.8] origin-right"
                     />
                   </div>
                 </section>
 
                 {/* 2. 物理效果 */}
-                <section className="space-y-4 pt-6 border-t border-white/[0.04]">
+                <section className="space-y-5 pt-6 border-t border-white/[0.04]">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">移动平滑度</span>
-                    <span className="text-[11px] font-mono text-blue-400 font-bold">{(mousePhysics.smoothing * 100).toFixed(0)}%</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">物理手感</span>
+                    <div className="flex items-center gap-2 bg-white/[0.03] p-0.5 rounded-lg border border-white/[0.02]">
+                      <button
+                        onClick={() => setShowAdvancedCursorPhysics(false)}
+                        className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", !showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
+                      >预设</button>
+                      <button
+                        onClick={() => setShowAdvancedCursorPhysics(true)}
+                        className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
+                      >专业</button>
+                    </div>
                   </div>
-                  <input 
-                    type="range"
-                    min="0"
-                    max="0.95"
-                    step="0.01"
-                    value={mousePhysics.smoothing}
-                    onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
-                    className="w-full accent-blue-500 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
-                  />
-                  <p className="text-[10px] text-white/20 leading-relaxed">降低值可增加实时感，提高值可获得更电影感的丝滑轨迹</p>
+
+                  {!showAdvancedCursorPhysics ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {MOUSE_PHYSICS_PRESETS.map((p) => (
+                        <Button
+                          key={p.id}
+                          variant="outline"
+                          onClick={() => onUpdateMousePhysics({ smoothing: p.smoothing, speedLimit: p.speedLimit })}
+                          className={cn(
+                            "h-9 px-0 bg-white/[0.02] border-white/[0.04] text-white/30 hover:bg-white/[0.05] hover:text-white rounded-lg text-[10px] font-medium transition-all",
+                            Math.abs(mousePhysics.smoothing - p.smoothing) < 0.03 && Math.abs(mousePhysics.speedLimit - p.speedLimit) < 120
+                              ? "bg-white/10 text-white border-white/10 shadow-sm"
+                              : ""
+                          )}
+                        >
+                          {p.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-white/40 tracking-tight">运动平滑度</span>
+                          <span className="text-[10px] font-mono text-emerald-400 font-bold">{(mousePhysics.smoothing * 100).toFixed(0)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.95"
+                          step="0.01"
+                          value={mousePhysics.smoothing}
+                          onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
+                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-white/40 tracking-tight">物理速度上限</span>
+                          <span className="text-[10px] font-mono text-emerald-400 font-bold">{Math.round(mousePhysics.speedLimit)} px/s</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="600"
+                          max="9000"
+                          step="50"
+                          value={mousePhysics.speedLimit}
+                          onChange={(e) => onUpdateMousePhysics({ speedLimit: parseFloat(e.target.value) })}
+                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </section>
               </motion.div>
             )}
 
             {activeTab === 'appearance' && (
-              <motion.div 
-                key="appearance" 
-                initial={{ opacity: 0, y: 10 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                exit={{ opacity: 0, y: -10 }} 
-                className="space-y-10"
+              <motion.div
+                key="appearance"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="space-y-8"
               >
-                {/* 背景分类 - 横向胶囊样式 */}
-                <section>
+                {/* 背景分类 */}
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">背景画布</span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
+                  </div>
                   <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none">
                     {AVAILABLE_BG_CATEGORIES.map(cat => (
-                      <button 
-                        key={cat.id} 
-                        onClick={() => { setBgCategory(cat.id); }} 
+                      <button
+                        key={cat.id}
+                        onClick={() => { setBgCategory(cat.id); }}
                         onMouseEnter={() => preloadCategoryImages(cat.id)}
                         className={cn(
-                          "px-4 py-1.5 rounded-xl text-[12px] font-bold transition-all border whitespace-nowrap",
-                          bgCategory === cat.id 
-                            ? "border-transparent bg-white/10 text-white shadow-xl" 
-                            : "border-white/[0.04] bg-white/[0.02] text-white/30 hover:border-white/10 hover:text-white/50"
+                          "px-3.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border whitespace-nowrap",
+                          bgCategory === cat.id
+                            ? "border-white/10 bg-white/10 text-white shadow-lg"
+                            : "border-white/[0.02] bg-white/[0.02] text-white/30 hover:border-white/10 hover:text-white/50"
                         )}
                       >
                         {cat.label}
@@ -232,30 +314,26 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
                 </section>
 
-                {/* 壁纸选择 - 7列紧凑正方形网格 */}
+                {/* 壁纸选择 */}
                 <section>
-                  <div className="grid grid-cols-7 gap-1">
+                  <div className="grid grid-cols-6 gap-1.5">
                     {(AVAILABLE_BG_CATEGORIES.find(c => c.id === bgCategory)?.items || []).map((file) => (
-                      <button 
-                        key={file} 
-                        onClick={() => setBgFile(file)} 
+                      <button
+                        key={file}
+                        onClick={() => setBgFile(file)}
                         className={cn(
-                          "group relative aspect-square overflow-hidden rounded-lg border transition-all duration-200 bg-white/[0.02]",
-                          bgFile === file 
-                            ? "border-white ring-2 ring-white/20 z-10 scale-[1.02]" 
-                            : "border-white/[0.05] opacity-60 hover:opacity-100 hover:border-white/20"
+                          "group relative aspect-square overflow-hidden rounded-lg border transition-all duration-300 bg-white/[0.02]",
+                          bgFile === file
+                            ? "border-emerald-500 ring-2 ring-emerald-500/20 z-10 scale-[1.05]"
+                            : "border-white/[0.05] opacity-50 hover:opacity-100 hover:border-white/20"
                         )}
                       >
-                        <img 
-                          src={`/backgrounds/${bgCategory}/thumbnails/${file}`} 
-                          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" 
-                          alt="bg" 
+                        <img
+                          src={`/backgrounds/${bgCategory}/thumbnails/${file}`}
+                          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-125"
+                          alt="bg"
                           loading="lazy"
-                          decoding="async"
                         />
-                        {bgFile === file && (
-                          <div className="absolute inset-0 bg-white/5" />
-                        )}
                       </button>
                     ))}
                   </div>
@@ -263,17 +341,15 @@ export const DesignPanel = memo(function DesignPanel({
 
                 {/* 通用设置项 */}
                 <section className="pt-6 border-t border-white/[0.04]">
-                  <div className="flex items-center justify-between group">
+                  <div className="flex items-center justify-between group p-3 rounded-xl bg-white/[0.02] border border-white/[0.02] hover:bg-white/[0.03] transition-all">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-white/[0.02] text-white/40 group-hover:bg-white/5 transition-colors">
-                        <Clock size={15} />
-                      </div>
-                      <span className="text-[12px] font-bold text-white/60">空闲时隐藏界面</span>
+                      <Clock size={14} className="text-white/20" />
+                      <span className="text-[11px] font-medium text-white/50 tracking-tight">空闲时自动隐藏工具栏</span>
                     </div>
-                    <Switch 
-                      checked={hideIdle} 
-                      onCheckedChange={setHideIdle} 
-                      className="data-[state=checked]:bg-blue-600 scale-90" 
+                    <Switch
+                      checked={hideIdle}
+                      onCheckedChange={setHideIdle}
+                      className="data-[state=checked]:bg-emerald-600 scale-[0.8] origin-right"
                     />
                   </div>
                 </section>
@@ -282,6 +358,11 @@ export const DesignPanel = memo(function DesignPanel({
           </AnimatePresence>
         </div>
       </ScrollArea>
+
+      {/* 底部版权或版本号装饰 */}
+      <div className="h-10 flex items-center justify-center border-t border-white/[0.02] bg-white/[0.01]">
+         <span className="text-[9px] font-mono text-white/5 tracking-[0.3em] uppercase">NuVideo Pro Engine</span>
+      </div>
     </aside>
   );
 });
