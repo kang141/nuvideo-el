@@ -1,4 +1,8 @@
-import { RenderGraph, CameraIntent, MouseEvent as NuMouseEvent } from '../types';
+import {
+  RenderGraph,
+  CameraIntent,
+  MouseEvent as NuMouseEvent,
+} from "../types";
 
 interface CameraState {
   cx: number;
@@ -36,11 +40,14 @@ function findActiveIntent(intents: CameraIntent[], t: number): CameraIntent {
 
 // 缓存查找结果，优化性能
 let lastMouseIdx = 0;
-function findMousePos(events: NuMouseEvent[], t: number): { x: number, y: number } | null {
+function findMousePos(
+  events: NuMouseEvent[],
+  t: number,
+): { x: number; y: number } | null {
   if (!events || events.length === 0) return null;
-  
+
   // 简单的指针搜索，因为 currentT 是单调递增的
-  let best = events[0];
+  let best: NuMouseEvent | null = null;
   for (let i = lastMouseIdx; i < events.length; i++) {
     if (events[i].t <= t) {
       best = events[i];
@@ -49,67 +56,132 @@ function findMousePos(events: NuMouseEvent[], t: number): { x: number, y: number
       break;
     }
   }
-  return { x: best.x, y: best.y };
+
+  if (!best) {
+    const first = events[0];
+    return { x: first.x, y: first.y };
+  }
+
+  const next = events[lastMouseIdx + 1];
+  if (!next || next.t <= best.t) {
+    return { x: best.x, y: best.y };
+  }
+
+  const span = next.t - best.t;
+  if (span <= 1e-6) return { x: best.x, y: best.y };
+
+  const ratio = Math.min(1, Math.max(0, (t - best.t) / span));
+  return {
+    x: best.x + (next.x - best.x) * ratio,
+    y: best.y + (next.y - best.y) * ratio,
+  };
 }
 
 export function computeCameraState(graph: RenderGraph, t: number) {
   const intents = graph.camera.intents || [];
   const mouseEvents = graph.mouse || [];
-  lastMouseIdx = 0; // 每次重新模拟重置指针
-  
-  // 提高刚度，加强“奶油”感和跟随感
-  const camConfig = graph.camera.springConfig || { stiffness: 260, damping: 35 };
-    const mouseConfig = (() => {
-    const sm = graph.mousePhysics.smoothing;
-    const stiffness = Math.max(20, 1000 * Math.pow(1 - sm, 1.5));
-    const damping = 2 * Math.sqrt(stiffness) * 0.8;
-    return { stiffness, damping, maxSpeed: 6.0 };
+  lastMouseIdx = 0;
+
+  // 1. 获取平滑度参数
+  const sm = Math.max(0, Math.min(1, graph.mousePhysics.smoothing));
+  const isInstantMouse = sm < 0.001;
+
+  // 镜头配置
+  const camConfig = graph.camera.springConfig || {
+    stiffness: 260,
+    damping: 35,
+  };
+
+  // 鼠标物理配置优化（核心：确保过阻尼，消除震荡）
+  const mouseConfig = (() => {
+    // 刚度随平滑度降低而增加
+    const stiffness = 2800 - sm * 1600;
+    // 阻尼比：必须 >= 1.0 (临界阻尼) 才能保证没有回弹晃动
+    const dampingRatio = 1.15 + sm * 1.5;
+    const damping = 2 * Math.sqrt(stiffness) * dampingRatio;
+
+    const outW = graph.config.outputWidth || 1920;
+    const speedLimitPx = graph.mousePhysics.speedLimit || 6000;
+    const maxSpeed = Math.max(0.25, speedLimitPx / outW);
+
+    return { stiffness, damping, maxSpeed };
   })();
 
   let state: CameraState = {
-    cx: 0.5, cy: 0.5, scale: 1.0,
-    vx: 0, vy: 0, vs: 0,
-    mx: 0.5, my: 0.5, mvx: 0, mvy: 0
+    cx: 0.5,
+    cy: 0.5,
+    scale: 1.0,
+    vx: 0,
+    vy: 0,
+    vs: 0,
+    mx: 0.5,
+    my: 0.5,
+    mvx: 0,
+    mvy: 0,
   };
 
-  const dt = 16.67; 
+  // 子步长优化：将 16.6ms 拆解为 2ms 的小步长，极大提升数值稳定性
+  const dt = 2.0;
   let currentT = 0;
-  
+
   while (currentT < t) {
     const nextT = Math.min(currentT + dt, t);
     const stepDt = nextT - currentT;
     const factor = stepDt / 1000;
-    
+
     const active = findActiveIntent(intents, currentT);
     const rawMouse = findMousePos(mouseEvents, currentT);
 
-    // 1. 鼠标物理
+    // 1. 鼠标物理计算
     if (rawMouse) {
-      const fMx = -mouseConfig.stiffness * (state.mx - rawMouse.x) - mouseConfig.damping * state.mvx;
-      const fMy = -mouseConfig.stiffness * (state.my - rawMouse.y) - mouseConfig.damping * state.mvy;
-      state.mvx += fMx * factor;
-      state.mvy += fMy * factor;
+      if (isInstantMouse) {
+        state.mx = rawMouse.x;
+        state.my = rawMouse.y;
+        state.mvx = 0;
+        state.mvy = 0;
+      } else {
+        const dxm = rawMouse.x - state.mx;
+        const dym = rawMouse.y - state.my;
+        const dist = Math.sqrt(dxm * dxm + dym * dym);
 
-      const speed = Math.sqrt(state.mvx * state.mvx + state.mvy * state.mvy);
-      if (speed > mouseConfig.maxSpeed) {
-        state.mvx = (state.mvx / speed) * mouseConfig.maxSpeed;
-        state.mvy = (state.mvy / speed) * mouseConfig.maxSpeed;
+        // 过远补偿：如果落后太远（>40% 屏幕），直接同步，防止产生幻影
+        if (dist > 0.4) {
+          state.mx = rawMouse.x;
+          state.my = rawMouse.y;
+          state.mvx = 0;
+          state.mvy = 0;
+        } else {
+          const fMx =
+            -mouseConfig.stiffness * (state.mx - rawMouse.x) -
+            mouseConfig.damping * state.mvx;
+          const fMy =
+            -mouseConfig.stiffness * (state.my - rawMouse.y) -
+            mouseConfig.damping * state.mvy;
+          state.mvx += fMx * factor;
+          state.mvy += fMy * factor;
+
+          const speed = Math.sqrt(
+            state.mvx * state.mvx + state.mvy * state.mvy,
+          );
+          if (speed > mouseConfig.maxSpeed) {
+            state.mvx = (state.mvx / speed) * mouseConfig.maxSpeed;
+            state.mvy = (state.mvy / speed) * mouseConfig.maxSpeed;
+          }
+          state.mx += state.mvx * factor;
+          state.my += state.mvy * factor;
+        }
       }
-      state.mx += state.mvx * factor;
-      state.my += state.mvy * factor;
     }
 
-    // 2. 镜头跟随（核心点）
+    // 2. 镜头跟随
     const targetScale = active.targetScale;
-    let targetCx = state.cx; 
+    let targetCx = state.cx;
     let targetCy = state.cy;
 
     if (targetScale > 1.01 && rawMouse) {
-      // 获取当前可视半径 (0.5 / scale)
       const marginX = 0.5 / targetScale;
       const marginY = 0.5 / targetScale;
 
-      // 如果鼠标跑出了当前的 DEADZONE 框
       const left = state.cx - DEADZONE_W;
       const right = state.cx + DEADZONE_W;
       const top = state.cy - DEADZONE_H;
@@ -121,28 +193,40 @@ export function computeCameraState(graph: RenderGraph, t: number) {
       if (rawMouse.y < top) targetCy = rawMouse.y + DEADZONE_H;
       else if (rawMouse.y > bottom) targetCy = rawMouse.y - DEADZONE_H;
 
-      // 强制边界约束：绝对杜绝黑边
       targetCx = Math.max(marginX, Math.min(1 - marginX, targetCx));
       targetCy = Math.max(marginY, Math.min(1 - marginY, targetCy));
     } else {
-      targetCx = 0.5; targetCy = 0.5;
+      targetCx = 0.5;
+      targetCy = 0.5;
     }
 
     // 3. 镜头物理
-    const fS = -camConfig.stiffness * (state.scale - targetScale) - camConfig.damping * state.vs;
+    const fS =
+      -camConfig.stiffness * (state.scale - targetScale) -
+      camConfig.damping * state.vs;
     state.vs += fS * factor;
     state.scale += state.vs * factor;
 
-    const fX = -camConfig.stiffness * (state.cx - targetCx) - camConfig.damping * state.vx;
+    const fX =
+      -camConfig.stiffness * (state.cx - targetCx) -
+      camConfig.damping * state.vx;
     state.vx += fX * factor;
     state.cx += state.vx * factor;
 
-    const fY = -camConfig.stiffness * (state.cy - targetCy) - camConfig.damping * state.vy;
+    const fY =
+      -camConfig.stiffness * (state.cy - targetCy) -
+      camConfig.damping * state.vy;
     state.vy += fY * factor;
     state.cy += state.vy * factor;
 
     currentT = nextT;
   }
 
-  return { cx: state.cx, cy: state.cy, scale: state.scale, mx: state.mx, my: state.my };
+  return {
+    cx: state.cx,
+    cy: state.cy,
+    scale: state.scale,
+    mx: state.mx,
+    my: state.my,
+  };
 }

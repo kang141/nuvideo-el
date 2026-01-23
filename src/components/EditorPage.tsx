@@ -31,8 +31,28 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   const [activeTab, setActiveTab] = useState('appearance');
   const [hideIdle, setHideIdle] = useState(false);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
-  const [filename, setFilename] = useState(`Cap ${new Date().toLocaleDateString()} at ${new Date().getHours()}.${new Date().getMinutes()}.cap`);
+  
+  // 生成默认文件名 (改为 mp4)
+  const defaultFileName = `Cap ${new Date().toLocaleDateString().replace(/\//g, '-')} at ${new Date().getHours()}.${new Date().getMinutes()}.mp4`;
+  const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
+
+  const LAST_DIR_KEY = 'nuvideo_last_export_dir';
+
+  // 初始化：尝试从缓存加载目录并预设路径
+  useEffect(() => {
+    const cachedDir = localStorage.getItem(LAST_DIR_KEY);
+    if (cachedDir && !exportPath) {
+      // 如果有缓存目录，自动拼接当前文件名作为预设路径
+      const pathSeparator = cachedDir.includes('\\') ? '\\' : '/';
+      const lastChar = cachedDir.charAt(cachedDir.length - 1);
+      const isPathEndWithSlash = lastChar === '/' || lastChar === '\\';
+      const initialPath = isPathEndWithSlash ? `${cachedDir}${filename}` : `${cachedDir}${pathSeparator}${filename}`;
+      
+      console.log('[EditorPage] Using cached directory:', cachedDir);
+      setExportPath(initialPath);
+    }
+  }, [filename]);
 
   // 3. 处理文件操作
   const handleDelete = useCallback(() => {
@@ -43,16 +63,31 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
 
   const handlePickAddress = useCallback(async () => {
     try {
-      const result = await (window as any).ipcRenderer.invoke('show-save-dialog');
+      const cachedDir = localStorage.getItem(LAST_DIR_KEY);
+      const result = await (window as any).ipcRenderer.invoke('show-save-dialog', {
+        defaultPath: cachedDir || undefined,
+        defaultName: filename
+      });
+
       if (!result.canceled && result.filePath) {
-        setExportPath(result.filePath);
-        const name = result.filePath.split(/[\\/]/).pop();
+        const fullPath = result.filePath;
+        setExportPath(fullPath);
+        
+        // 提取目录并存入缓存
+        const lastSlashIndex = Math.max(fullPath.lastIndexOf('/'), fullPath.lastIndexOf('\\'));
+        if (lastSlashIndex > -1) {
+          const dir = fullPath.substring(0, lastSlashIndex);
+          localStorage.setItem(LAST_DIR_KEY, dir);
+          console.log('[EditorPage] Directory cached:', dir);
+        }
+
+        const name = fullPath.split(/[\\/]/).pop();
         if (name) setFilename(name);
       }
     } catch (err) {
       console.error('Failed to pick address:', err);
     }
-  }, []);
+  }, [filename]);
 
   // 2. 引用
   const videoRef = useRef<HTMLVideoElement>(null);
