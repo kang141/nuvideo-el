@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog 
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
+import { performance } from 'node:perf_hooks'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -151,10 +152,16 @@ ipcMain.handle('show-save-dialog', async () => {
   })
 })
 
+// Renderer <-> Main clock sync (monotonic)
+ipcMain.handle('sync-clock', async (_event, tClient: number) => {
+  return { tClient, tServer: performance.now() }
+})
+
 // --- Sidecar 录制引擎 (FFmpeg) ---
 let ffmpegProcess: any = null
 let recordingPath: string = ''
 let mousePollTimer: any = null
+let recordingStartTime: number = 0
 
 ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   if (ffmpegProcess) return { success: false, error: 'Recording already in progress' }
@@ -217,6 +224,7 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
       console.error(`[Main] FFmpeg crashed prematurely with code ${code}`)
       ffmpegProcess = null
       if (mousePollTimer) clearInterval(mousePollTimer)
+      recordingStartTime = 0
     }
   })
 
@@ -232,23 +240,29 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   // 启动原生鼠标坐标发报机
   if (mousePollTimer) clearInterval(mousePollTimer)
-  mousePollTimer = setInterval(() => {
-    if (!win) return
-    const point = screen.getCursorScreenPoint()
-    win.webContents.send('mouse-update', { 
-        x: (point.x - bounds.x) / bounds.width,
-        y: (point.y - bounds.y) / bounds.height
-    })
-  }, 16)
 
   return new Promise((resolve) => {
     ffmpegProcess.once('spawn', () => {
-      resolve({ success: true, bounds: bounds })
+      recordingStartTime = performance.now()
+
+      mousePollTimer = setInterval(() => {
+        if (!win || !recordingStartTime) return
+        const point = screen.getCursorScreenPoint()
+        const t = performance.now() - recordingStartTime
+        win.webContents.send('mouse-update', { 
+          x: (point.x - bounds.x) / bounds.width,
+          y: (point.y - bounds.y) / bounds.height,
+          t
+        })
+      }, 16)
+
+      resolve({ success: true, bounds: bounds, t0: recordingStartTime })
     })
 
     ffmpegProcess.once('error', (err: any) => {
       if (mousePollTimer) clearInterval(mousePollTimer)
       ffmpegProcess = null
+      recordingStartTime = 0
       resolve({ success: false, error: err.message })
     })
   })
@@ -259,6 +273,7 @@ ipcMain.handle('stop-sidecar-record', async () => {
      clearInterval(mousePollTimer)
      mousePollTimer = null
   }
+  recordingStartTime = 0
   
   if (!ffmpegProcess) return null
   const proc = ffmpegProcess

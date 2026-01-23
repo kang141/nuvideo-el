@@ -2,6 +2,7 @@ import { protocol, ipcMain, desktopCapturer, app, dialog, screen, BrowserWindow 
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
+import { performance } from "node:perf_hooks";
 const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
 process.env.APP_ROOT = path.join(__dirname$1, "..");
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
@@ -117,9 +118,13 @@ ipcMain.handle("show-save-dialog", async () => {
     ]
   });
 });
+ipcMain.handle("sync-clock", async (_event, tClient) => {
+  return { tClient, tServer: performance.now() };
+});
 let ffmpegProcess = null;
 let recordingPath = "";
 let mousePollTimer = null;
+let recordingStartTime = 0;
 ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
   if (ffmpegProcess) return { success: false, error: "Recording already in progress" };
   const allDisplays = screen.getAllDisplays();
@@ -184,6 +189,7 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
       console.error(`[Main] FFmpeg crashed prematurely with code ${code}`);
       ffmpegProcess = null;
       if (mousePollTimer) clearInterval(mousePollTimer);
+      recordingStartTime = 0;
     }
   });
   ffmpegProcess.stderr.on("data", (data) => {
@@ -195,21 +201,25 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
     }
   });
   if (mousePollTimer) clearInterval(mousePollTimer);
-  mousePollTimer = setInterval(() => {
-    if (!win) return;
-    const point = screen.getCursorScreenPoint();
-    win.webContents.send("mouse-update", {
-      x: (point.x - bounds.x) / bounds.width,
-      y: (point.y - bounds.y) / bounds.height
-    });
-  }, 16);
   return new Promise((resolve) => {
     ffmpegProcess.once("spawn", () => {
-      resolve({ success: true, bounds });
+      recordingStartTime = performance.now();
+      mousePollTimer = setInterval(() => {
+        if (!win || !recordingStartTime) return;
+        const point = screen.getCursorScreenPoint();
+        const t = performance.now() - recordingStartTime;
+        win.webContents.send("mouse-update", {
+          x: (point.x - bounds.x) / bounds.width,
+          y: (point.y - bounds.y) / bounds.height,
+          t
+        });
+      }, 16);
+      resolve({ success: true, bounds, t0: recordingStartTime });
     });
     ffmpegProcess.once("error", (err) => {
       if (mousePollTimer) clearInterval(mousePollTimer);
       ffmpegProcess = null;
+      recordingStartTime = 0;
       resolve({ success: false, error: err.message });
     });
   });
@@ -219,6 +229,7 @@ ipcMain.handle("stop-sidecar-record", async () => {
     clearInterval(mousePollTimer);
     mousePollTimer = null;
   }
+  recordingStartTime = 0;
   if (!ffmpegProcess) return null;
   const proc = ffmpegProcess;
   ffmpegProcess = null;
