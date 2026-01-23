@@ -13,7 +13,7 @@ import { EditorHeader } from './Editor/EditorHeader';
 import { DesignPanel } from './Editor/DesignPanel';
 import { ControlBar } from './Editor/ControlBar';
 import { CanvasPreview } from './Editor/CanvasPreview';
-import { TimelineSection } from './Editor/TimelineSection';
+import { TimelineSectionMemo } from './Editor/TimelineSection';
 import { ExportOverlay } from './Editor/ExportOverlay';
 
 interface EditorPageProps {
@@ -424,9 +424,10 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
       </div>
 
       {!isFullscreenPreview && (
-        <TimelineSection 
+        <TimelineSectionMemo 
           duration={maxDuration}
           currentTime={currentTime}
+          videoRef={videoRef}
           onSeek={handleSeek}
           renderGraph={graph}
           onUpdateIntents={handleUpdateIntents}

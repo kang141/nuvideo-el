@@ -23,6 +23,46 @@ export function useVideoRenderer({
   const isFirstLoadRef = useRef(true);
   const rafRef = useRef<number>();
   const vfcRef = useRef<number | null>(null);
+  const videoSizeRef = useRef({ width: 1920, height: 1080 });
+
+  // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
+
+  // 绘制/刷新离屏静态层
+  const updateOffscreen = (vw: number, vh: number) => {
+    if (!bgImageRef.current) return;
+    
+    if (!offscreenRef.current) {
+      offscreenRef.current = document.createElement('canvas');
+      offscreenRef.current.width = EDITOR_CANVAS_SIZE.width;
+      offscreenRef.current.height = EDITOR_CANVAS_SIZE.height;
+    }
+
+    const img = bgImageRef.current;
+    const canvas = offscreenRef.current;
+    const oCtx = canvas.getContext('2d');
+    if (!oCtx) return;
+
+    const { width: W, height: H } = EDITOR_CANVAS_SIZE;
+    oCtx.clearRect(0, 0, W, H);
+    
+    // 1. 绘制底图
+    oCtx.drawImage(img, 0, 0, W, H);
+    
+    // 2. 根据视频比例计算布局并绘制窗口阴影 + 黑底
+    const layout = calculateLayout(W, H, vw, vh);
+    const { dx, dy, dw, dh, r } = layout;
+
+    oCtx.save();
+    oCtx.shadowColor = 'rgba(0,0,0,0.6)';
+    oCtx.shadowBlur = 60;
+    oCtx.shadowOffsetY = 30;
+    oCtx.fillStyle = '#111'; // 使用接近全黑的深灰色作为窗口底色
+    oCtx.beginPath();
+    oCtx.roundRect(dx, dy, dw, dh, r);
+    oCtx.fill();
+    oCtx.restore();
+  };
 
   // 加载背景图
   useEffect(() => {
@@ -30,46 +70,42 @@ export function useVideoRenderer({
     img.src = `/backgrounds/${bgCategory}/${bgFile}`;
     img.onload = () => {
       bgImageRef.current = img;
+      updateOffscreen(videoSizeRef.current.width, videoSizeRef.current.height);
 
       if (isFirstLoadRef.current) {
         setIsReady(true);
         isFirstLoadRef.current = false;
-        return;
       }
-
-      // 背景切换时，如果视频暂停/没有新帧，强制重绘一次。
+      
       const video = videoRef.current;
       if (video) requestAnimationFrame(() => renderFrame(video.currentTime * 1000));
     };
   }, [bgCategory, bgFile]);
 
-  // 核心渲染逻辑 (可重复调用)
-  // 注意：调用前需确保 canvas.width/height 已正确设置
-  const renderFrame = (timestampMs: number) => {
+  // 监听视频元数据变化
+  useEffect(() => {
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || !isReady || !bgImageRef.current) return;
+    if (!video) return;
 
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
+    const onMetadata = () => {
+      if (video.videoWidth && video.videoHeight) {
+        videoSizeRef.current = { width: video.videoWidth, height: video.videoHeight };
+        updateOffscreen(video.videoWidth, video.videoHeight);
+        // 元数据加载后强制刷新一帧
+        requestAnimationFrame(() => renderFrame(video.currentTime * 1000));
+      }
+    };
 
-    const { width: W, height: H } = EDITOR_CANVAS_SIZE;
+    video.addEventListener('loadedmetadata', onMetadata);
+    if (video.readyState >= 1) onMetadata();
 
-    const camera = computeCameraState(renderGraph, timestampMs);
-    const s = camera.scale;
+    return () => video.removeEventListener('loadedmetadata', onMetadata);
+  }, [videoRef, isReady]);
 
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-    // --- A. 基础背景 ---
-    ctx.drawImage(bgImageRef.current, 0, 0, W, H);
-
-    // --- B. 核心布局计算 (1:1 适配录屏比例) ---
-    const videoW = video.videoWidth || 1920;
-    const videoH = video.videoHeight || 1080;
+  // 辅助函数：计算布局
+  const calculateLayout = (W: number, H: number, videoW: number, videoH: number) => {
     const videoAspect = videoW / videoH;
     const canvasAspect = W / H;
-
     let dw: number, dh: number;
     if (videoAspect > canvasAspect) {
       dw = W * 0.85;
@@ -78,36 +114,48 @@ export function useVideoRenderer({
       dh = H * 0.85;
       dw = dh * videoAspect;
     }
+    return {
+      dw, dh,
+      dx: (W - dw) / 2,
+      dy: (H - dh) / 2,
+      r: 32
+    };
+  };
 
-    const dx = (W - dw) / 2;
-    const dy = (H - dh) / 2;
-    const r = 32;
+  // 核心渲染逻辑 (可重复调用)
+  // 注意：调用前需确保 canvas.width/height 已正确设置
+  const renderFrame = (timestampMs: number) => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !isReady || !offscreenRef.current) return;
 
-    // 1. 绘制容器阴影
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
-    ctx.shadowBlur = 60;
-    ctx.shadowOffsetY = 30;
-    ctx.beginPath();
-    ctx.roundRect(dx, dy, dw, dh, r);
-    ctx.fill();
-    ctx.restore();
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+
+    const { width: W, height: H } = EDITOR_CANVAS_SIZE;
+    const camera = computeCameraState(renderGraph, timestampMs);
+    const s = camera.scale;
+
+    // --- A. 绘制预渲染的背景层 ---
+    ctx.drawImage(offscreenRef.current, 0, 0);
+
+    // --- B. 动态布局 ---
+    const { dx, dy, dw, dh, r } = calculateLayout(W, H, video.videoWidth || 1920, video.videoHeight || 1080);
 
     // --- C. 内容层 ---
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(dx, dy, dw, dh, r);
     ctx.clip();
-    ctx.translate(dx, dy);
-    ctx.translate(dw / 2, dh / 2);
+    
+    // 内容变换
+    ctx.translate(dx + dw / 2, dy + dh / 2);
     ctx.scale(s, s);
     ctx.translate(-camera.cx * dw, -camera.cy * dh);
 
     if (video.readyState >= 2) {
       ctx.drawImage(video, 0, 0, dw, dh);
-      const mx = camera.mx * dw;
-      const my = camera.my * dh;
-      drawSmoothMouse(ctx, mx, my, renderGraph, timestampMs);
+      drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, renderGraph, timestampMs);
     }
     ctx.restore();
 

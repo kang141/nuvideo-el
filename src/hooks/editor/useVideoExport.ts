@@ -106,44 +106,41 @@ export function useVideoExport({
         video.currentTime = 0;
       });
 
-      console.log(`[useVideoExport] Starting real-time capture loop with ${selectedConfig.codec}...`);
+      console.log(`[useVideoExport] Starting fast offline capture loop with ${selectedConfig.codec}...`);
       const startTime = performance.now();
       let encodedFrames = 0;
+      const totalFrames = Math.floor(durationSeconds * fps);
+      const timeStep = 1 / fps;
 
-      await new Promise<void>((resolve, reject) => {
-        const captureFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
-          if (!isExportingRef.current) return resolve();
+      for (let i = 0; i <= totalFrames; i++) {
+        if (!isExportingRef.current) break;
 
-          const mediaTime = metadata.mediaTime;
-          if (mediaTime > durationSeconds) {
-            video.pause();
-            return resolve();
-          }
+        const mediaTime = i * timeStep;
+        
+        // 1. 手动驱动视频到目标时间点
+        video.currentTime = mediaTime;
+        
+        // 2. 等待 Seek 完成
+        await new Promise(r => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked);
+            r(null);
+          };
+          video.addEventListener('seeked', onSeeked);
+        });
 
-          // 同步渲染当前帧到 Canvas
-          renderFrame(mediaTime * 1000);
+        // 3. 同步渲染 Canvas
+        renderFrame(mediaTime * 1000);
 
-          // 编码
-          const timestampUs = Math.round(mediaTime * 1_000_000);
-          const vFrame = new VideoFrame(canvas, { timestamp: timestampUs });
-          
-          encoder.encode(vFrame, { keyFrame: encodedFrames % 60 === 0 });
-          vFrame.close();
+        // 4. 发送到编码器
+        const timestampUs = Math.round(mediaTime * 1_000_000);
+        const vFrame = new VideoFrame(canvas, { timestamp: timestampUs });
+        encoder.encode(vFrame, { keyFrame: encodedFrames % 60 === 0 });
+        vFrame.close();
 
-          encodedFrames++;
-          setExportProgress(Math.min(mediaTime / durationSeconds, 1));
-
-          if (mediaTime < durationSeconds) {
-            video.requestVideoFrameCallback(captureFrame);
-          } else {
-            video.pause();
-            resolve();
-          }
-        };
-
-        video.requestVideoFrameCallback(captureFrame);
-        video.play().catch(reject);
-      });
+        encodedFrames++;
+        setExportProgress(Math.min(mediaTime / durationSeconds, 1));
+      }
 
       await encoder.flush();
       encoder.close();

@@ -3,7 +3,8 @@ import type { RenderGraph, CameraIntent } from '../../types';
 
 interface CanvasTimelineProps {
   duration: number; // 秒
-  currentTime: number; // 秒
+  currentTime: number; // 秒（仅用于初始化/拖拽反馈）
+  videoRef: React.RefObject<HTMLVideoElement>; // 新增：直接引用视频以获取高频进度
   onSeek: (time: number) => void;
   renderGraph: RenderGraph;
   onUpdateIntents: (intents: CameraIntent[]) => void;
@@ -15,14 +16,15 @@ type DragMode = 'none' | 'seek' | 'move-zoom' | 'resize-left' | 'resize-right';
 
 export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   duration,
-  currentTime,
+  videoRef,
   onSeek,
   renderGraph,
   onUpdateIntents,
   className,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const staticCanvasRef = useRef<HTMLCanvasElement>(null);
+  const playheadCanvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
 
@@ -53,7 +55,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
   const totalWidth = useMemo(() => duration * pps, [duration, pps]);
 
-  // 2. 响应尺寸变化
+  // 2. 响应尺寸与 DPR 变化
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -67,196 +69,212 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  // 3. 绘制核心
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || width === 0 || height === 0) return;
+  const drawStatic = useCallback(() => {
+    const canvas = staticCanvasRef.current;
+    if (!canvas || width <= 0 || height <= 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Retina 适配
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+    
+    // 仅在尺寸变更时才重置 canvas 宽高（重置会导致内容清空）
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
 
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
     ctx.clearRect(0, 0, width, height);
 
-    const paddingLeft = 30; // 左右各留点边距
-    const contentWidth = width - paddingLeft * 2;
-    
-    // 转换函数：时间 -> 坐标
+    const paddingLeft = 30;
+    // 强制 duration 最小值，防止 pps 飙升
+    const safeDuration = Math.max(duration, 0.1);
     const timeToX = (t: number) => paddingLeft + t * pps - scrollLeft;
-    // 转换函数：坐标 -> 时间
     const xToTime = (x: number) => (x - paddingLeft + scrollLeft) / pps;
 
-    // --- 绘制背景层 ---
-    const trackCount = 2; // 目前显示 2 条轨道：Clip 轨道 和 Zoom 轨道
-    const trackH = 40; // 每条轨道高度
-    const trackGap = 8; // 轨道间距
-    const totalContentH = (trackH + trackGap) * trackCount;
-    const tracksStartY = 45; // 轨道开始的 Y 坐标，给顶部的 Ruler 留出空间
+    const trackCount = 2;
+    const trackH = 40;
+    const trackGap = 8;
+    const tracksStartY = 45;
 
     // 绘制轨道槽位
+    const contentWidth = width - paddingLeft * 2;
     for (let i = 0; i < trackCount; i++) {
         const ty = tracksStartY + i * (trackH + trackGap);
         ctx.beginPath();
         ctx.roundRect(paddingLeft, ty, contentWidth, trackH, 10);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
         ctx.lineWidth = 1;
         ctx.stroke();
     }
 
-    // --- 绘制刻度线 ---
-    // 强制每秒一个刻度，如果缩放极小则跳跃，但默认保持 1s
-    let tickStep = 1;
-    if (pps < 5) tickStep = 10;
-    else if (pps < 10) tickStep = 5;
-    else if (pps < 20) tickStep = 2;
-    else tickStep = 1; 
-
+    // 绘制刻度线
+    let tickStep = pps < 5 ? 10 : pps < 10 ? 5 : pps < 20 ? 2 : 1;
     const startT = Math.floor(xToTime(0) / tickStep) * tickStep;
     const endT = Math.ceil(xToTime(width) / tickStep) * tickStep;
 
-    // 显式包含 duration 点
-    const ticks = [];
     for (let t = startT; t <= endT; t += tickStep) {
-      if (t >= 0 && t <= duration) ticks.push(t);
-    }
-    if (duration > 0 && (ticks.length === 0 || ticks[ticks.length - 1] < duration)) {
-        ticks.push(duration);
-    }
+      if (t < 0 || t > safeDuration) continue;
+      const x = Math.round(timeToX(t));
+      if (x < paddingLeft || x > width - paddingLeft) continue;
 
-    ticks.forEach(t => {
-      const x = timeToX(t);
-      if (x < paddingLeft || x > width - paddingLeft) return;
-
-      // 每一秒都是 Major 刻度点
-      const isMajor = Math.abs(t % 1) < 0.001 || Math.abs(t - duration) < 0.001;
-      
+      const isMajor = Math.abs(t % 1) < 0.001 || Math.abs(t - safeDuration) < 0.001;
       if (isMajor) {
-        // 文字标签
-        ctx.font = '500 10px "Inter", sans-serif';
+        ctx.font = '600 10px "Inter", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        const label = t % 1 === 0 ? `${t}s` : `${t.toFixed(1)}s`;
-        ctx.fillText(label, x, 15);
-
-        // 主刻度圆点
-        ctx.beginPath();
-        ctx.arc(x, 30, 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillText(t % 1 === 0 ? `${t}s` : `${t.toFixed(1)}s`, x, 15);
+        ctx.beginPath(); ctx.arc(x, 30, 1.5, 0, Math.PI * 2); ctx.fill();
       } else {
-        // 其他刻度 (如果有 tickStep 小于 1 的情况)
-        ctx.beginPath();
-        ctx.moveTo(x, 28);
-        ctx.lineTo(x, 32);
-        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.beginPath(); ctx.moveTo(x, 28); ctx.lineTo(x, 32); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.stroke();
+      }
+    }
+
+    // 绘制 Zoom 条
+    const zoomTrackY = tracksStartY;
+    const intents = renderGraph.camera.intents || [];
+    intents.forEach((current, i) => {
+      const next = intents[i + 1];
+      if (current.targetScale > 1.0) {
+        const startX = timeToX(current.t / 1000);
+        const endX = next ? timeToX(next.t / 1000) : timeToX(duration);
+        const rw = Math.max(4, endX - startX);
+        const ry = zoomTrackY + 3;
+        const rh = trackH - 6;
+        const isSelected = i === selectedZoomIndex;
+
+        ctx.save();
+        const grad = ctx.createLinearGradient(startX, ry, startX, ry + rh);
+        grad.addColorStop(0, isSelected ? '#ffbd69' : '#ff9f43');
+        grad.addColorStop(1, isSelected ? '#ff8080' : '#ff6b6b');
+        ctx.beginPath(); ctx.roundRect(startX, ry, rw, rh, 8);
+        ctx.fillStyle = grad;
+        ctx.shadowColor = isSelected ? 'rgba(255, 107, 107, 0.8)' : 'rgba(255, 107, 107, 0.4)';
+        ctx.shadowBlur = isSelected ? 20 : 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = isSelected ? '#fff' : 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = isSelected ? 2 : 1;
         ctx.stroke();
+        if (rw > 50) {
+            ctx.font = '900 10px "Inter", sans-serif';
+            ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
+            ctx.textAlign = 'left';
+            ctx.fillText('FILTER: ZOOM', startX + 12, ry + rh / 2 + 4);
+        }
+        ctx.restore();
       }
     });
 
-    // --- 绘制轨道内容 (Zoom 状态长方形条) ---
-    // 强制第一条轨道为置顶缩放轨道，增加视觉冲击力
-    const zoomTrackY = tracksStartY + 0 * (trackH + trackGap);
-    const intents = renderGraph.camera.intents || [];
-    
-    for (let i = 0; i < intents.length; i++) {
-        const current = intents[i];
-        const next = intents[i + 1];
-
-        if (current.targetScale > 1.0) {
-            const startX = timeToX(current.t / 1000);
-            const endX = next ? timeToX(next.t / 1000) : timeToX(duration);
-            
-            const rw = Math.max(4, endX - startX); 
-            const ry = zoomTrackY + 3;
-            const rh = trackH - 6;
-            const isSelected = i === selectedZoomIndex;
-
-            ctx.save();
-            
-            // 1. 绘制主体渐变
-            const grad = ctx.createLinearGradient(startX, ry, startX, ry + rh);
-            grad.addColorStop(0, isSelected ? '#ffbd69' : '#ff9f43');
-            grad.addColorStop(1, isSelected ? '#ff8080' : '#ff6b6b');
-            
-            ctx.beginPath();
-            ctx.roundRect(startX, ry, rw, rh, 8);
-            ctx.fillStyle = grad;
-            
-            // 2. 强力外发光效果 (选中时更亮)
-            ctx.shadowColor = isSelected ? 'rgba(255, 107, 107, 0.8)' : 'rgba(255, 107, 107, 0.4)';
-            ctx.shadowBlur = isSelected ? 20 : 12;
-            ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // 3. 内部边框与选中高亮
-            ctx.strokeStyle = isSelected ? '#fff' : 'rgba(255, 255, 255, 0.3)';
-            ctx.lineWidth = isSelected ? 2 : 1;
-            ctx.stroke();
-            
-            // 4. 文字
-            if (rw > 50) {
-                ctx.font = '900 10px "Inter", sans-serif';
-                ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
-                ctx.textAlign = 'left';
-                ctx.fillText('FILTER: ZOOM', startX + 12, ry + rh / 2 + 4);
-            }
-
-            // 5. 拖拽手柄图标 (仅在选中或足够宽时)
-            ctx.fillStyle = 'rgba(255,255,255,0.4)';
-            ctx.fillRect(startX + 2, ry + 10, 2, rh - 20);
-            ctx.fillRect(startX + rw - 4, ry + 10, 2, rh - 20);
-
-            ctx.restore();
-        }
-    }
-
-    // --- 绘制轨道 2 (视频 Clip) ---
+    // 绘制轨道 2
     const videoTrackY = tracksStartY + 1 * (trackH + trackGap);
     ctx.beginPath();
     ctx.roundRect(paddingLeft, videoTrackY + 4, contentWidth, trackH - 8, 8);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.fill();
+  }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex]);
 
-    // --- 绘制鼠标悬浮虚影 ---
-    if (hoverX !== null) {
-      const hx = Math.max(paddingLeft, Math.min(width - paddingLeft, hoverX));
-      ctx.beginPath();
-      ctx.moveTo(hx, tracksStartY);
-      ctx.lineTo(hx, tracksStartY + totalContentH);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // --- 绘制播放头 (红线) ---
-    const phX = timeToX(currentTime);
-    if (phX >= paddingLeft && phX <= width - paddingLeft) {
-      const playheadColor = '#ff4757';
-      ctx.beginPath();
-      ctx.moveTo(phX, 35);
-      ctx.lineTo(phX, tracksStartY + totalContentH + 10);
-      ctx.strokeStyle = playheadColor;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(phX, 35, 4, 0, Math.PI * 2);
-      ctx.fillStyle = playheadColor;
-      ctx.fill();
-    }
-  }, [width, height, duration, currentTime, pps, scrollLeft, hoverX, renderGraph, selectedZoomIndex]);
-
+  // 4. 驱动播放头的高频同步循环
   useEffect(() => {
-    draw();
-  }, [draw]);
+    let raf: number;
+    
+    const tick = () => {
+      const video = videoRef.current;
+      const canvas = playheadCanvasRef.current;
+      if (!video || !canvas || width <= 0 || height <= 0) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const targetW = Math.round(width * dpr);
+      const targetH = Math.round(height * dpr);
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
+      ctx.clearRect(0, 0, width, height);
+
+      const paddingLeft = 30;
+      const timeToX = (t: number) => paddingLeft + t * pps - scrollLeft;
+      
+      const curTime = video.currentTime;
+      const phX = Math.round(timeToX(curTime));
+
+      if (phX >= paddingLeft && phX <= width - paddingLeft) {
+        const playheadColor = '#ff4757';
+        const tracksStartY = 45;
+        const totalContentH = (40 + 8) * 2;
+
+        // --- 绘制极致精美的红针 ---
+        ctx.save();
+        
+        // 1. 顶部表头 (带有倒角的精密设计)
+        ctx.fillStyle = playheadColor;
+        const headW = 12;
+        const headH = 8;
+        ctx.beginPath();
+        ctx.roundRect(phX - headW/2, 22, headW, headH, 2);
+        ctx.fill();
+        
+        // 2. 指向三角形
+        ctx.beginPath();
+        ctx.moveTo(phX - headW/2, 22 + headH);
+        ctx.lineTo(phX + headW/2, 22 + headH);
+        ctx.lineTo(phX, 22 + headH + 4);
+        ctx.closePath();
+        ctx.fill();
+
+        // 3. 极细指向针 (1px 物理对齐)
+        ctx.beginPath();
+        ctx.moveTo(phX, 32);
+        ctx.lineTo(phX, tracksStartY + totalContentH + 10);
+        ctx.strokeStyle = playheadColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        // 4. 高亮圆点
+        ctx.beginPath();
+        ctx.arc(phX, 26, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      // 悬浮预览线
+      if (hoverX !== null) {
+        const hx = Math.round(Math.max(paddingLeft, Math.min(width - paddingLeft, hoverX)));
+        ctx.beginPath();
+        ctx.moveTo(hx, 45);
+        ctx.lineTo(hx, 45 + (40 + 8) * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [width, height, pps, scrollLeft, hoverX, videoRef]);
+
+  // 这里的关键：所有可能影响静态层的状态变化都要触发重绘
+  useEffect(() => {
+    drawStatic();
+  }, [drawStatic, duration, renderGraph]);
 
   const isDragging = useRef(false);
   const paddingLeft = 30;
@@ -471,7 +489,10 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      <canvas ref={staticCanvasRef} className="absolute inset-0 w-full h-full" />
+      <canvas ref={playheadCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
     </div>
   );
 };
+
+export const CanvasTimelineMemo = React.memo(CanvasTimeline);

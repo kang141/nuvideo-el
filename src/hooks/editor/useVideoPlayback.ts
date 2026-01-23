@@ -9,6 +9,9 @@ export function useVideoPlayback(
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
 
+  // 内部追踪的高精度时间，不触发重渲染
+  const internalTimeRef = useRef(0);
+
   const logicalDuration = useMemo(() => {
     return renderGraph?.duration ? renderGraph.duration / 1000 : 0;
   }, [renderGraph?.duration]);
@@ -70,19 +73,30 @@ export function useVideoPlayback(
   // 播放进度同步
   useEffect(() => {
     let syncRaf: number;
+    let lastStateUpdateTime = 0;
+
     const sync = () => {
       const video = videoRef.current;
       if (video) {
-        let now = video.currentTime;
+        const now = video.currentTime;
+        internalTimeRef.current = now;
+
+        // 策略：每 100ms 更新一次 React 状态用于 UI 显示（如时间文本）
+        const performanceNow = performance.now();
+        if (performanceNow - lastStateUpdateTime > 100 || now >= maxDuration) {
+          setCurrentTime(now);
+          lastStateUpdateTime = performanceNow;
+        }
+
         if (now >= maxDuration) {
-          now = maxDuration;
           video.pause();
           setIsPlaying(false);
+          setCurrentTime(maxDuration);
         }
-        setCurrentTime(now);
       }
       if (isPlaying) syncRaf = requestAnimationFrame(sync);
     };
+
     if (isPlaying) syncRaf = requestAnimationFrame(sync);
     else sync();
     return () => cancelAnimationFrame(syncRaf);
@@ -94,7 +108,7 @@ export function useVideoPlayback(
     
     try {
       if (video.paused) {
-        if (currentTime >= maxDuration - 0.1) {
+        if (video.currentTime >= maxDuration - 0.1) {
           video.currentTime = 0;
           setCurrentTime(0);
         }
@@ -120,11 +134,11 @@ export function useVideoPlayback(
 
     const time = Math.min(Math.max(0, s), maxDuration);
     
-    // 1. 同步 React 状态（用于 UI 显示，如时间数值）
+    // 1. 同步进行中的 React 状态（保证 UI 基本同步）
     setCurrentTime(time);
+    internalTimeRef.current = time;
 
     // 2. 核心：原子化操作，直接操作组件底层的 DOM 元素
-    // 使用 requestAnimationFrame 确保在浏览器重绘周期内完成更新，避免阻塞 UI 线程
     if (!isSeekingRef.current) {
       isSeekingRef.current = true;
       if (seekRafRef.current) cancelAnimationFrame(seekRafRef.current);
