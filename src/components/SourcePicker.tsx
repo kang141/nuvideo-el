@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Monitor, AppWindow, RefreshCw, Zap } from 'lucide-react';
+import { Monitor, AppWindow, RefreshCw, Zap, Play } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { QUALITY_OPTIONS, QualityConfig } from '@/constants/quality';
@@ -42,7 +42,6 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
 
   const filteredSources = sources
     .filter((s) => {
-      // 过滤当前应用窗口、开发环境窗口以及系统级覆盖层（如 NVIDIA）
       const systemExclusions = [
         'NuVideo Studio', 
         'Vite + React + TS', 
@@ -70,12 +69,19 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
 
   return (
     <div
-      className="relative flex h-full w-full bg-[#0c0c0c]/90 backdrop-blur-3xl"
+      className="relative flex h-full w-full bg-[#080808]"
       onClick={onCancel}
       style={{ WebkitAppRegion: 'no-drag' } as any}
     >
+      {/* 动态背景背景 - 显著加亮 */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-[10%] -left-[10%] w-[80%] h-[80%] bg-emerald-500/10 blur-[130px] rounded-full animate-pulse" />
+        <div className="absolute -bottom-[20%] -right-[10%] w-[70%] h-[70%] bg-blue-500/10 blur-[130px] rounded-full animate-pulse [animation-delay:2s]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-white/[0.02]" />
+      </div>
+
       <motion.div
-        className="flex h-full w-full overflow-hidden border-t border-white/5 bg-transparent shadow-2xl"
+        className="relative flex h-full w-full overflow-hidden border-t border-white/[0.03] bg-transparent"
         style={{ WebkitAppRegion: 'no-drag' } as any}
         onClick={(e) => e.stopPropagation()}
         initial={{ opacity: 0 }}
@@ -83,143 +89,170 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
         exit={{ opacity: 0 }}
       >
         {/* Sidebar */}
-        <aside className="flex w-[260px] flex-col border-r border-white/5 bg-white/[0.01] p-10 overflow-y-auto" style={{ WebkitAppRegion: 'no-drag' } as any}>
-         
-
-          <div className="mb-8">
-             <div className="mb-4 flex items-center gap-2 px-2">
-                <div className="h-px flex-1 bg-white/5" />
-                <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">Source Type</span>
-                <div className="h-px flex-1 bg-white/5" />
+        <aside className="relative flex w-[280px] flex-col border-r border-white/[0.04] bg-white/[0.03] p-8 overflow-y-auto backdrop-blur-2xl" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <div className="mb-10">
+             <div className="mb-6 flex items-center gap-3 px-2">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">录制范围</span>
+                <div className="h-px flex-1 bg-white/[0.05]" />
              </div>
-             <nav className="flex flex-col gap-2">
-                <button
-                  onClick={() => setActiveTab('screen')}
-                  className={cn(
-                    "group flex items-center gap-4 rounded-xl px-4 py-3 transition-all duration-300",
-                    activeTab === 'screen' 
-                      ? "bg-white text-black shadow-lg" 
-                      : "text-white/40 hover:bg-white/5 hover:text-white"
-                  )}
-                >
-                  <Monitor size={16} className={cn(activeTab === 'screen' ? "text-black" : "text-white/20")} />
-                  <span className="text-[12px] font-bold">Screens</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('window')}
-                  className={cn(
-                    "group flex items-center gap-4 rounded-xl px-4 py-3 transition-all duration-300",
-                    activeTab === 'window' 
-                      ? "bg-white text-black shadow-lg" 
-                      : "text-white/40 hover:bg-white/5 hover:text-white"
-                  )}
-                >
-                  <AppWindow size={16} className={cn(activeTab === 'window' ? "text-black" : "text-white/20")} />
-                  <span className="text-[12px] font-bold">Windows</span>
-                </button>
-             </nav>
-          </div>
-
-          <div className="mb-8">
-             <div className="mb-4 flex items-center gap-2 px-2">
-                <div className="h-px flex-1 bg-white/5" />
-                <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">Quality</span>
-                <div className="h-px flex-1 bg-white/5" />
-             </div>
-             <nav className="flex flex-col gap-2">
-                {QUALITY_OPTIONS.map((q) => (
+             <nav className="flex flex-col gap-1.5">
+                {[
+                  { id: 'screen', label: '整个屏幕', icon: Monitor },
+                  { id: 'window', label: '应用窗口', icon: AppWindow },
+                ].map((item) => (
                   <button
-                    key={q.id}
-                    onClick={() => setSelectedQualityId(q.id)}
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id as any)}
                     className={cn(
-                      "group flex flex-col items-start gap-1 rounded-xl px-4 py-3 transition-all duration-300 text-left",
-                      selectedQualityId === q.id 
-                        ? "bg-emerald-500 text-white shadow-[0_4px_15px_rgba(16,185,129,0.3)]" 
-                        : "bg-white/[0.02] border border-white/5 text-white/40 hover:bg-white/5 hover:text-white"
+                      "group flex items-center gap-4 rounded-xl px-4 py-3.5 transition-all duration-500 relative overflow-hidden",
+                      activeTab === item.id 
+                        ? "text-white" 
+                        : "text-white/50 hover:text-white/80 hover:bg-white/[0.03]"
                     )}
                   >
-                    <div className="flex w-full items-center justify-between">
-                      <span className="text-[12px] font-bold">{q.label}</span>
-                      <Zap size={12} className={cn(selectedQualityId === q.id ? "text-white/80" : "text-white/10")} />
-                    </div>
-                    <span className={cn("text-[8px] font-medium opacity-60 uppercase tracking-tighter", selectedQualityId === q.id ? "text-white" : "text-emerald-500/80")}>
-                      ~{q.bitrate / 1000000} Mbps
-                    </span>
+                    {activeTab === item.id && (
+                      <motion.div 
+                        layoutId="activeSourceTab"
+                        className="absolute inset-0 bg-white/[0.05] border border-white/[0.05] rounded-xl shadow-inner" 
+                      />
+                    )}
+                    <item.icon size={16} className={cn("relative z-10 transition-colors duration-500", activeTab === item.id ? "text-emerald-400" : "text-current")} />
+                    <span className="text-[13px] font-bold relative z-10 tracking-tight">{item.label}</span>
                   </button>
                 ))}
              </nav>
           </div>
 
-          <div className="mt-auto pt-6 border-t border-white/5">
+          <div className="mb-10">
+             <div className="mb-6 flex items-center gap-3 px-2">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">画质预设</span>
+                <div className="h-px flex-1 bg-white/[0.05]" />
+             </div>
+             <div className="flex flex-col gap-2 px-1">
+                {QUALITY_OPTIONS.map((q) => (
+                  <button
+                    key={q.id}
+                    onClick={() => setSelectedQualityId(q.id)}
+                    className={cn(
+                      "group flex items-center gap-4 rounded-xl px-4 py-3 transition-all duration-500 border relative overflow-hidden",
+                      selectedQualityId === q.id 
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-white shadow-[0_8px_20px_-10px_rgba(16,185,129,0.3)]" 
+                        : "bg-white/[0.01] border-white/[0.05] text-white/40 hover:border-white/20 hover:text-white/60"
+                    )}
+                  >
+                    <Zap 
+                      size={14} 
+                      fill={selectedQualityId === q.id ? "currentColor" : "none"} 
+                      className={cn("transition-colors duration-500", selectedQualityId === q.id ? "text-emerald-400" : "text-white/10")} 
+                    />
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span className="text-[12px] font-black tracking-tight">{q.label}</span>
+                    </div>
+                    
+                    {selectedQualityId === q.id && (
+                      <motion.div 
+                        layoutId="activeQualityLine"
+                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500/50" 
+                      />
+                    )}
+                  </button>
+                ))}
+             </div>
+          </div>
+
+          <div className="mt-auto pt-6">
              <button
               onClick={fetchSources}
               disabled={loading}
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/5 py-3 text-[10px] font-bold uppercase tracking-widest text-white/40 transition-all hover:bg-white/10 hover:text-white disabled:opacity-50"
+              className="group flex w-full items-center justify-center gap-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40 transition-all hover:bg-white/[0.06] hover:text-white/80 disabled:opacity-50"
             >
-              <RefreshCw size={14} className={cn(loading && "animate-spin")} />
-              {loading ? 'Refreshing...' : 'Refresh'}
+              <RefreshCw size={14} className={cn("transition-transform duration-700", loading ? "animate-spin" : "group-hover:rotate-180")} />
+              {loading ? '正在扫描资源...' : '刷新素材来源'}
             </button>
           </div>
         </aside>
 
 
         {/* Content Area */}
-        <div className="flex flex-1 flex-col" style={{ WebkitAppRegion: 'no-drag' } as any}>
+        <div className="flex flex-1 flex-col bg-transparent" style={{ WebkitAppRegion: 'no-drag' } as any}>
           <header className="flex h-24 items-center justify-between px-12">
-            <div>
-              <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-white/20">
-                {activeTab === 'screen' ? 'Physical Displays' : 'Application Windows'}
+            <div className="flex items-baseline gap-4">
+              <h4 className="text-[10px] font-black uppercase tracking-[0.5em] text-white/30">
+                {activeTab === 'screen' ? '全部显示器' : '正在运行的应用'}
               </h4>
-               <div className="mt-1 h-0.5 w-8 bg-white/10 rounded-full" />
+              <div className="h-1 w-1 rounded-full bg-white/20" />
+              <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">发现 {filteredSources.length} 个来源</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-[9px] font-bold uppercase tracking-widest text-white/20">Live Preview</span>
-              <div className="flex h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            <div className="flex items-center gap-6">
+             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.05]">
+                  <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white/50">原生捕获引擎已就绪</span>
+               </div>
             </div>
           </header>
 
-          <ScrollArea className="flex-1">
-            <div className="grid grid-cols-2 gap-10 px-12 pb-16">
+          <ScrollArea className="flex-1 px-8">
+            <div className="grid grid-cols-2 gap-8 px-4 pb-20">
               <AnimatePresence mode="popLayout">
                 {filteredSources.length > 0 ? (
                   filteredSources.map((source, idx) => (
                     <motion.div
                       key={source.id}
-                      initial={{ opacity: 0, y: 30 }}
+                      initial={{ opacity: 0, y: 40 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      transition={{ delay: idx * 0.04, type: 'spring', damping: 20 }}
+                      transition={{ 
+                        delay: idx * 0.05, 
+                        type: 'spring', 
+                        stiffness: 100,
+                        damping: 20 
+                      }}
                       className="group cursor-pointer"
                       onClick={() => onSelect(source.id, selectedQuality)}
                     >
-                      <div className="relative aspect-video overflow-hidden rounded-[2rem] border border-white/5 bg-white/[0.02] transition-all duration-700 group-hover:border-white/20 group-hover:shadow-[0_40px_80px_rgba(0,0,0,0.5)]">
+                      <div className="relative aspect-video overflow-hidden rounded-[2.5rem] border border-white/[0.15] bg-[#1a1a1a] transition-all duration-700 group-hover:border-white/50 group-hover:shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)]">
                         <img
-                          className="h-full w-full object-cover transition duration-1000 group-hover:scale-110 opacity-60 group-hover:opacity-100"
+                          className="h-full w-full object-cover transition-all duration-1000 group-hover:scale-105 opacity-80 group-hover:opacity-100 grayscale-[0.1] group-hover:grayscale-0"
                           src={source.thumbnail}
                           alt={source.name}
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-40 group-hover:opacity-100 transition-opacity duration-700" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent transition-opacity duration-700 opacity-60 group-hover:opacity-40" />
                         
-                        {/* Hover Action */}
+                        {/* 状态悬浮层 */}
+                        <div className="absolute top-6 left-6 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-2 group-hover:translate-y-0">
+                           <div className="px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2">
+                              <div className="h-1 w-1 rounded-full bg-emerald-400" />
+                              <span className="text-[9px] font-black text-white/60 uppercase tracking-widest">Active Source</span>
+                           </div>
+                        </div>
+
+                        {/* Hover Action Center */}
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-all duration-700 group-hover:opacity-100">
-                           <div className="translate-y-4 rounded-full bg-white px-6 py-3 text-[11px] font-black uppercase tracking-widest text-black shadow-2xl transition-transform duration-700 group-hover:translate-y-0">
-                             Select
+                           <div className="scale-90 group-hover:scale-100 rounded-full bg-white p-6 text-black shadow-2xl transition-all duration-700 group-active:scale-90 bg-gradient-to-tr from-white to-neutral-200">
+                             <Play size={24} fill="currentColor" strokeWidth={0} />
                            </div>
                         </div>
                       </div>
-                      <div className="mt-5 px-4 text-center">
-                        <p className="truncate text-[11px] font-black uppercase tracking-widest text-white/30 transition-colors duration-500 group-hover:text-white">
+                      <div className="mt-6 px-4">
+                        <h3 className="truncate text-sm font-black text-white/60 transition-all duration-500 group-hover:text-white group-hover:translate-x-1 tracking-tight">
                           {source.name}
-                        </p>
+                        </h3>
+                        <div className="mt-1 flex items-center gap-2 opacity-50 group-hover:opacity-100 transition-all duration-700 -translate-y-2 group-hover:translate-y-0 delay-100">
+                           <span className="text-[9px] font-bold text-white/40 uppercase tracking-widest leading-none">High-FPS Recording</span>
+                        </div>
                       </div>
                     </motion.div>
                   ))
                 ) : (
-                  <div className="col-span-full flex h-[350px] flex-col items-center justify-center text-center">
-                    <div className="rounded-full bg-white/[0.02] p-8 mb-6 border border-white/5">
-                      <Monitor size={40} className="text-white/10" />
+                  <div className="col-span-full flex h-[400px] flex-col items-center justify-center text-center">
+                    <div className="relative mb-8">
+                       <div className="absolute inset-0 bg-white/5 blur-3xl rounded-full" />
+                       <div className="relative rounded-full bg-white/[0.02] p-10 border border-white/5">
+                         <Monitor size={48} className="text-white/10" />
+                       </div>
                     </div>
-                    <h5 className="text-sm font-bold tracking-widest text-white/30 uppercase">No sources active</h5>
+                    <h5 className="text-[11px] font-black tracking-[0.4em] text-white/30 uppercase mb-2">未发现可用显示源</h5>
+                    <p className="text-[13px] font-medium text-white/20 max-w-[280px]">请检查系统设置并授予屏幕录制权限。</p>
                   </div>
                 )}
               </AnimatePresence>

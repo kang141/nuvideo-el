@@ -180,7 +180,7 @@ function App() {
       "relative flex h-screen w-screen flex-col overflow-hidden transition-all duration-500",
       appState === 'recording' 
         ? "bg-transparent" 
-        : "bg-neutral-950 rounded-[32px] border border-white/5 shadow-2xl"
+        : "bg-[#0c0c0c] rounded-[32px] border border-white/10 shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]"
     )}>
       <AnimatePresence mode="wait">
         {displayStage === 'visible' && (
@@ -190,7 +190,7 @@ function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18, ease: "easeInOut" }}
-            className="flex h-full w-full flex-col"
+            className="flex h-full w-full flex-col relative z-10"
           >
             {/* 1. 录制模式 */}
             {appState === 'recording' && (
@@ -209,10 +209,11 @@ function App() {
             {appState === 'home' && (
               <div className="flex h-full w-full flex-col">
                 <div className="z-50 h-12 w-full flex-shrink-0">
-                   <WindowStatusBar subtitle="Source Selection" />
+                   <WindowStatusBar subtitle="选择素材来源" />
                 </div>
                 <main className="relative flex flex-1 overflow-hidden">
-                  <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(1200px_600px_at_50%_120%,rgba(255,255,255,0.08),transparent_60%),radial-gradient(600px_400px_at_10%_-10%,rgba(255,255,255,0.06),transparent_60%)]" />
+                  {/* 仅在首页保留的动态背景环境 */}
+                  <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(1200px_800px_at_50%_100%,rgba(16,185,129,0.12),transparent_70%),radial-gradient(1000px_600px_at_10%_-10%,rgba(59,130,246,0.15),transparent_70%)]" />
                   <SourcePicker
                     onSelect={handleSelectSource}
                     onCancel={() => {}}

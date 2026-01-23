@@ -9,31 +9,24 @@ export interface QualityConfig {
 export const QUALITY_OPTIONS: QualityConfig[] = [
   {
     id: 'original',
-    label: 'Original (Lossless)',
+    label: '最高画质',
     bitrate: 80000000,
     maxWidth: 4000,
     maxHeight: 4000,
   },
   {
-    id: '4k',
-    label: '4K High (60Mbps)',
-    bitrate: 60000000,
-    maxWidth: 3840,
-    maxHeight: 2160,
-  },
-  {
-    id: '2k',
-    label: '2K Medium (30Mbps)',
-    bitrate: 30000000,
-    maxWidth: 2560,
-    maxHeight: 1440,
-  },
-  {
     id: 'fhd',
-    label: '1080p Standard (15Mbps)',
+    label: '平衡性能',
     bitrate: 15000000,
     maxWidth: 1920,
     maxHeight: 1080,
+  },
+  {
+    id: 'hd',
+    label: '流畅优先',
+    bitrate: 8000000,
+    maxWidth: 1280,
+    maxHeight: 720,
   }
 ];
 

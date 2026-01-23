@@ -200,7 +200,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreenPreview, togglePlay, graph]);
+  }, [isFullscreenPreview, togglePlay, graph, maxDuration]);
 
   const { isReady, renderFrame } = useVideoRenderer({
     videoRef,
@@ -356,27 +356,29 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
 
   return (
     <div className={cn(
-      "flex h-full min-h-0 flex-col bg-[#080808] text-neutral-200 overflow-hidden font-sans transition-opacity duration-300",
+      "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans transition-opacity duration-300",
       isReady ? "opacity-100" : "opacity-0"
     )}>
       <ExportOverlay isExporting={isExporting} progress={exportProgress} />
 
       {!isFullscreenPreview && (
-        <EditorHeader 
-          onBack={onBack} 
-          onDelete={handleDelete}
-          onExport={handleExport} 
-          isExporting={isExporting} 
-          filename={filename}
-          onPickAddress={handlePickAddress}
-        />
+        <div className="relative z-50">
+          <EditorHeader 
+            onBack={onBack} 
+            onDelete={handleDelete}
+            onExport={handleExport} 
+            isExporting={isExporting} 
+            filename={filename}
+            onPickAddress={handlePickAddress}
+          />
+        </div>
       )}
 
       <div className={cn(
         "flex flex-1 min-h-0 overflow-hidden relative",
         isFullscreenPreview && "fixed inset-0 z-[100] bg-black"
       )}>
-        <div className="flex flex-1 min-h-0 flex-col relative bg-[#101010] overflow-hidden">
+        <div className="flex flex-1 min-h-0 min-w-0 flex-col relative bg-[#101010] overflow-hidden">
           <CanvasPreview 
             videoRef={videoRef} 
             canvasRef={canvasRef} 
@@ -387,7 +389,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
           <div className={cn(
             "transition-all duration-300",
             isFullscreenPreview 
-              ? "absolute bottom-10 left-1/2 -translate-x-1/2 z-[110] w-[600px] rounded-3xl border border-white/5 bg-[#0a0a0a]/80 backdrop-blur-xl shadow-2xl overflow-hidden opacity-0 hover:opacity-100" 
+              ? "absolute bottom-10 left-1/2 -translate-x-1/2 z-[110] w-[600px] rounded-3xl border border-white/5 bg-[#0a0a0a] shadow-2xl overflow-hidden" 
               : "w-full"
           )}>
             <ControlBar 

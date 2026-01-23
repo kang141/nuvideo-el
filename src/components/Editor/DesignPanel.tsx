@@ -78,7 +78,7 @@ export const DesignPanel = memo(function DesignPanel({
   const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
 
   return (
-    <aside className="w-[320px] border-l border-white/[0.03] bg-[#090909] flex flex-col z-40 relative">
+    <aside className="w-[320px] border-l border-white/[0.1] bg-white/[0.03] backdrop-blur-3xl flex flex-col z-40 relative">
       <header className="h-14 border-b border-white/[0.03] flex items-center px-4">
         <nav className="flex bg-white/[0.03] p-1 rounded-xl w-full border border-white/[0.02] relative overflow-hidden">
           {TABS.map(tab => {
@@ -107,7 +107,7 @@ export const DesignPanel = memo(function DesignPanel({
       </header>
 
       <ScrollArea className="flex-1">
-        <div className="p-6 space-y-8">
+        <div className="p-5 space-y-6 pb-12">
           <AnimatePresence mode="wait">
             {activeTab === 'camera' && (
               <motion.div
@@ -119,28 +119,28 @@ export const DesignPanel = memo(function DesignPanel({
               >
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">镜头控制</span>
-                    <div className="h-px flex-1 bg-white/[0.03]" />
-                    <span className="text-[9px] font-mono text-white/10">SHORTCUT: Z</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">镜头控制</span>
+                    <div className="h-px flex-1 bg-white/[0.08]" />
+                    <span className="text-[9px] font-mono text-white/40">快捷键: Z</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                      variant="outline"
                      onClick={onResetZoom}
-                     className="w-full h-9 bg-white/[0.02] border-white/[0.04] text-white/50 hover:bg-white/[0.05] hover:text-white hover:border-white/[0.1] rounded-lg text-[11px] font-medium transition-all"
+                     className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
                     >
                       重置镜头
                     </Button>
                     <Button
                      variant="outline"
                      onClick={() => onAddManualZoom(2.5)}
-                     className="w-full h-9 bg-white/[0.02] border-white/[0.04] text-white/50 hover:bg-white/[0.05] hover:text-white hover:border-white/[0.1] rounded-lg text-[11px] font-medium transition-all"
+                     className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
                     >
                       定焦 (2.5x)
                     </Button>
                   </div>
-                  <p className="text-[10px] text-white/15 leading-relaxed text-center italic">在画面点击或按 Z 键可自动对焦鼠标</p>
+                  <p className="text-[10px] text-white/30 leading-relaxed text-center italic">在画面点击或按 Z 键可自动对焦鼠标</p>
                 </section>
               </motion.div>
             )}
@@ -295,17 +295,17 @@ export const DesignPanel = memo(function DesignPanel({
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">背景画布</span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none">
+                  <div className="flex flex-wrap gap-3">
                     {AVAILABLE_BG_CATEGORIES.map(cat => (
                       <button
                         key={cat.id}
                         onClick={() => { setBgCategory(cat.id); }}
                         onMouseEnter={() => preloadCategoryImages(cat.id)}
                         className={cn(
-                          "px-3.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border whitespace-nowrap",
+                          "px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border whitespace-nowrap",
                           bgCategory === cat.id
-                            ? "border-white/10 bg-white/10 text-white shadow-lg"
-                            : "border-white/[0.02] bg-white/[0.02] text-white/30 hover:border-white/10 hover:text-white/50"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+                            : "border-white/[0.05] bg-white/[0.03] text-white/40 hover:border-white/20 hover:text-white/70"
                         )}
                       >
                         {cat.label}
@@ -315,7 +315,11 @@ export const DesignPanel = memo(function DesignPanel({
                 </section>
 
                 {/* 壁纸选择 */}
-                <section>
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">选择壁纸</span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
+                  </div>
                   <div className="grid grid-cols-6 gap-1.5">
                     {(AVAILABLE_BG_CATEGORIES.find(c => c.id === bgCategory)?.items || []).map((file) => (
                       <button
@@ -339,20 +343,7 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
                 </section>
 
-                {/* 通用设置项 */}
-                <section className="pt-6 border-t border-white/[0.04]">
-                  <div className="flex items-center justify-between group p-3 rounded-xl bg-white/[0.02] border border-white/[0.02] hover:bg-white/[0.03] transition-all">
-                    <div className="flex items-center gap-3">
-                      <Clock size={14} className="text-white/20" />
-                      <span className="text-[11px] font-medium text-white/50 tracking-tight">空闲时自动隐藏工具栏</span>
-                    </div>
-                    <Switch
-                      checked={hideIdle}
-                      onCheckedChange={setHideIdle}
-                      className="data-[state=checked]:bg-emerald-600 scale-[0.8] origin-right"
-                    />
-                  </div>
-                </section>
+              
               </motion.div>
             )}
           </AnimatePresence>
@@ -360,7 +351,7 @@ export const DesignPanel = memo(function DesignPanel({
       </ScrollArea>
 
       {/* 底部版权或版本号装饰 */}
-      <div className="h-10 flex items-center justify-center border-t border-white/[0.02] bg-white/[0.01]">
+      <div className="h-8 flex items-center justify-center border-t border-white/[0.02] bg-white/[0.01]">
          <span className="text-[9px] font-mono text-white/5 tracking-[0.3em] uppercase">NuVideo Pro Engine</span>
       </div>
     </aside>
