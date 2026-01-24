@@ -5,7 +5,8 @@ import {
   Redo2, 
   Upload,
   ChevronLeft,
-  Zap
+  Zap,
+  Settings2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { WindowControls } from '../Common/WindowControls';
@@ -17,6 +18,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { QUALITY_OPTIONS, QualityConfig } from '@/constants/quality';
 import { useState } from 'react';
 
@@ -27,6 +29,8 @@ interface EditorHeaderProps {
   isExporting: boolean;
   filename: string;
   onPickAddress: () => void;
+  autoZoomEnabled: boolean;
+  onToggleAutoZoom: (enabled: boolean) => void;
 }
 
 export function EditorHeader({ 
@@ -35,10 +39,13 @@ export function EditorHeader({
   onExport, 
   isExporting, 
   filename, 
-  onPickAddress 
+  onPickAddress,
+  autoZoomEnabled,
+  onToggleAutoZoom
 }: EditorHeaderProps) {
   const [qualityId, setQualityId] = useState(QUALITY_OPTIONS[0].id);
   const selectedQuality = QUALITY_OPTIONS.find(q => q.id === qualityId) || QUALITY_OPTIONS[0];
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <header 
@@ -75,7 +82,7 @@ export function EditorHeader({
         </div>
       </div>
 
-      {/* 中间：工具栏 - 撤销重做 (更收敛) */}
+      {/* 中间：工具栏 - 撤销重做 + 设置 */}
       <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/[0.02] border border-white/[0.04] p-0.5 rounded-xl" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-white/20 hover:text-white/70 hover:bg-white/[0.05] rounded-lg">
           <Undo2 size={16} />
@@ -83,6 +90,41 @@ export function EditorHeader({
         <Button variant="ghost" size="icon" className="h-8 w-8 text-white/20 hover:text-white/70 hover:bg-white/[0.05] rounded-lg">
           <Redo2 size={16} />
         </Button>
+        
+        <div className="w-px h-4 bg-white/[0.04] mx-0.5" />
+        
+        {/* 设置按钮 */}
+        <div className="relative">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className={cn(
+              "h-8 w-8 rounded-lg transition-all",
+              showSettings ? "text-white bg-white/[0.08]" : "text-white/20 hover:text-white/70 hover:bg-white/[0.05]"
+            )}
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            <Settings2 size={16} />
+          </Button>
+          
+          {/* 设置下拉菜单 */}
+          {showSettings && (
+            <div className="absolute top-full mt-2 right-0 w-56 bg-[#1a1a1a] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden z-50">
+              <div className="p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-semibold text-white/90">自动缩放</span>
+                    <span className="text-[10px] text-white/40">根据鼠标动作自动添加缩放</span>
+                  </div>
+                  <Switch 
+                    checked={autoZoomEnabled}
+                    onCheckedChange={onToggleAutoZoom}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 右侧：导出与窗口控制 */}

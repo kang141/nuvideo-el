@@ -119,10 +119,11 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   const sm = Math.max(0, Math.min(1, graph.mousePhysics.smoothing));
   const isInstantMouse = sm < 0.001;
 
-  // 镜头配置
-  const camConfig = graph.camera.springConfig || {
-    stiffness: 260,
-    damping: 35,
+  // 镜头配置 - 强制使用极慢的丝滑参数（ScreenStudio 风格）
+  // 注意：这里暂时忽略 graph.camera.springConfig，确保旧项目也能立刻享受到如丝般顺滑
+  const camConfig = {
+    stiffness: 40,   // 从 80 再降到 40，极慢，像电影镜头一样
+    damping: 20,     // 配合 stiffness 40 的过阻尼 (Ratio ~1.58)，无回弹
   };
 
   // 鼠标物理配置优化（核心：确保过阻尼，消除震荡）

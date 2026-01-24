@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { RenderGraph, CameraIntent } from '../types';
 import { cn } from '@/lib/utils';
 import { QualityConfig } from '../constants/quality';
+import { generateAutoZoomIntents } from '../core/auto-zoom';
 
 // Hooks
 import { useVideoPlayback } from '../hooks/editor/useVideoPlayback';
@@ -21,9 +22,17 @@ interface EditorPageProps {
   onBack: () => void;
 }
 
+const AUTO_ZOOM_KEY = 'nuvideo_auto_zoom_enabled';
+
 export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProps) {
   // 1. 数据状态 (Single Source of Truth)
   const [graph, setGraph] = useState<RenderGraph | null>(initialGraph);
+  
+  // 自动缩放开关（从 localStorage 读取）
+  const [autoZoomEnabled, setAutoZoomEnabled] = useState(() => {
+    const saved = localStorage.getItem(AUTO_ZOOM_KEY);
+    return saved !== null ? saved === 'true' : true; // 默认开启
+  });
 
   // 2. UI 状态
   const [browsingCategory, setBrowsingCategory] = useState('macOS');
@@ -99,6 +108,44 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     const next = !isFullscreenPreview;
     setIsFullscreenPreview(next);
   };
+
+  // 自动缩放开关切换
+  const handleToggleAutoZoom = useCallback((enabled: boolean) => {
+    setAutoZoomEnabled(enabled);
+    localStorage.setItem(AUTO_ZOOM_KEY, String(enabled));
+    console.log('[EditorPage] Auto zoom:', enabled ? 'enabled' : 'disabled');
+  }, []);
+
+  // 首次加载时自动生成缩放关键帧
+  const hasAutoZoomedRef = useRef(false);
+  useEffect(() => {
+    if (!graph || !autoZoomEnabled || hasAutoZoomedRef.current) return;
+    
+    const mouseEvents = graph.mouse || [];
+    if (mouseEvents.length === 0) {
+      console.log('[EditorPage] No mouse events, skipping auto zoom');
+      return;
+    }
+
+    hasAutoZoomedRef.current = true;
+    
+    try {
+      const autoIntents = generateAutoZoomIntents(mouseEvents, graph.duration);
+      
+      if (autoIntents.length > 1) {
+        setGraph({
+          ...graph,
+          camera: {
+            ...graph.camera,
+            intents: autoIntents
+          }
+        });
+        console.log(`[EditorPage] Auto-generated ${autoIntents.length} zoom intents`);
+      }
+    } catch (err) {
+      console.error('[EditorPage] Auto zoom generation failed:', err);
+    }
+  }, [graph, autoZoomEnabled]);
 
   // 4. 业务逻辑 Hooks
   const {
@@ -373,6 +420,8 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
             isExporting={isExporting} 
             filename={filename}
             onPickAddress={handlePickAddress}
+            autoZoomEnabled={autoZoomEnabled}
+            onToggleAutoZoom={handleToggleAutoZoom}
           />
         </div>
       )}
