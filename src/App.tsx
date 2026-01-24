@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { useState, useEffect, useRef } from 'react';
 import { SourcePicker } from './components/SourcePicker';
 import { EditorPage } from './components/EditorPage';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * 自动缩放算法 - 平滑慢速版
  * 
