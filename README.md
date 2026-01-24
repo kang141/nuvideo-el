@@ -12,8 +12,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-MVP-orange.svg" alt="Project Status">
   <img src="https://img.shields.io/badge/Platform-Windows-blue.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Status-MVP-orange.svg" alt="Project Status">
-  <img src="https://img.shields.io/badge/Platform-Windows-blue.svg" alt="Platform">
   <img src="https://img.shields.io/badge/License-AGPLv3--Commercial-blue.svg" alt="License">
 </p>
 
