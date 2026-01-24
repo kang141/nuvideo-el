@@ -1,4 +1,3 @@
-````md
 # nuvideo-el
 
 <p align="center">
@@ -58,7 +57,6 @@ cd nuvideo-el
 npm install
 npm run dev
 ```
-````
 
 ### 构建打包
 
@@ -111,3 +109,7 @@ Copyright (c) 2026 Su Zai
 ```
 
 _注意：本项目目前处于持续开发阶段，建议仅用于测试与学习。_
+
+```
+
+```
