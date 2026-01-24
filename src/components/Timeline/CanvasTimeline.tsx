@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import type { RenderGraph, CameraIntent } from '../../types';
+import { Language, translations } from '@/i18n/translations';
 
 interface CanvasTimelineProps {
   duration: number; // 秒
@@ -9,6 +10,7 @@ interface CanvasTimelineProps {
   renderGraph: RenderGraph;
   onUpdateIntents: (intents: CameraIntent[]) => void;
   className?: string;
+  language: Language;
 }
 
 // 拖拽状态类型
@@ -21,7 +23,9 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   renderGraph,
   onUpdateIntents,
   className,
+  language
 }) => {
+  const t = translations[language];
   const containerRef = useRef<HTMLDivElement>(null);
   const staticCanvasRef = useRef<HTMLCanvasElement>(null);
   const playheadCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -164,7 +168,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
             ctx.font = '900 10px "Inter", sans-serif';
             ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
             ctx.textAlign = 'left';
-            ctx.fillText('FILTER: ZOOM', startX + 12, ry + rh / 2 + 4);
+            ctx.fillText(`FILTER: ${t.editor.zoomFilter}`, startX + 12, ry + rh / 2 + 4);
         }
         ctx.restore();
       }
@@ -176,7 +180,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     ctx.roundRect(paddingLeft, videoTrackY + 4, contentWidth, trackH - 8, 8);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.fill();
-  }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex]);
+  }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex, language]);
 
   // 4. 驱动播放头的高频同步循环
   useEffect(() => {

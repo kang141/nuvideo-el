@@ -1,29 +1,57 @@
 import { WindowControls } from './Common/WindowControls';
+import { cn } from '@/lib/utils';
+import { Language, translations } from '@/i18n/translations';
+import { AppSettingsMenu } from './Common/AppSettingsMenu';
 
 interface WindowStatusBarProps {
   title?: string;
   subtitle?: string;
+  autoZoomEnabled: boolean;
+  onToggleAutoZoom: (enabled: boolean) => void;
+  language: Language;
+  setLanguage: (lang: Language) => void;
 }
 
-export function WindowStatusBar({ title = 'NuVideo', subtitle }: WindowStatusBarProps) {
+export function WindowStatusBar({ 
+  title = 'NuVideo', 
+  subtitle,
+  autoZoomEnabled,
+  onToggleAutoZoom,
+  language,
+  setLanguage
+}: WindowStatusBarProps) {
+  const t = translations[language];
+
   return (
     <div
       className="flex h-12 w-full items-center justify-between border-b border-white/5 bg-transparent px-4 text-white/80"
       style={{ WebkitAppRegion: 'drag' } as any}
     >
-      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'drag' } as any}>
+      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <img src="/logo.svg" alt="logo" className="h-5 w-5 object-contain" />
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-wide text-white">{title}</span>
           {subtitle && (
             <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.22em] text-white/60">
-              {subtitle}
+              {t.home.subtitle}
             </span>
           )}
         </div>
       </div>
 
-      <WindowControls />
+      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+        {/* 设置按钮 */}
+        <AppSettingsMenu 
+          autoZoomEnabled={autoZoomEnabled}
+          onToggleAutoZoom={onToggleAutoZoom}
+          language={language}
+          setLanguage={setLanguage}
+          align="right"
+        />
+
+        <div className="w-px h-4 bg-white/5 mx-1" />
+        <WindowControls />
+      </div>
     </div>
   );
 }

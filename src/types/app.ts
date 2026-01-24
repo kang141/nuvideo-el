@@ -15,4 +15,8 @@ export interface RecordingState {
   duration: number;
   /** 是否暂停 */
   isPaused: boolean;
+  /** 录制格式 */
+  format: 'video' | 'gif';
+  /** 是否开启自动缩放 */
+  autoZoom: boolean;
 }

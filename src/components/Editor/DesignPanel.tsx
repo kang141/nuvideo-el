@@ -3,10 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ImageIcon, 
   Video, 
-  Volume2, 
-  Send, 
-  MessageSquare,
-  Clock
+  Send
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -14,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { AVAILABLE_BG_CATEGORIES } from '../../constants/editor';
 import type { RenderGraph } from '../../types';
+import { Language, translations } from '@/i18n/translations';
 
 interface DesignPanelProps {
   activeTab: string;
@@ -31,21 +29,10 @@ interface DesignPanelProps {
   onUpdateMouseTheme: (updates: Partial<RenderGraph['mouseTheme']>) => void;
   mousePhysics: RenderGraph['mousePhysics'];
   onUpdateMousePhysics: (updates: Partial<RenderGraph['mousePhysics']>) => void;
+  language: Language;
 }
 
-const TABS = [
-  { id: 'appearance', icon: ImageIcon },
-  { id: 'camera', icon: Video },
-  { id: 'audio', icon: Volume2 },
-  { id: 'cursor', icon: Send },
-  { id: 'comments', icon: MessageSquare }
-];
 
-const MOUSE_PHYSICS_PRESETS = [
-  { id: 'snappy', label: '跟手', smoothing: 0.30, speedLimit: 9000 },
-  { id: 'balanced', label: '平衡', smoothing: 0.50, speedLimit: 6500 },
-  { id: 'cinematic', label: '电影', smoothing: 0.68, speedLimit: 4800 },
-] as const;
 
 // 辅助函数：预加载高清原图
 const preloadCategoryImages = (categoryId: string) => {
@@ -66,16 +53,28 @@ export const DesignPanel = memo(function DesignPanel({
   setBgCategory,
   bgFile,
   setBgFile,
-  hideIdle,
-  setHideIdle,
   onResetZoom,
   onAddManualZoom,
   mouseTheme,
   onUpdateMouseTheme,
   mousePhysics,
-  onUpdateMousePhysics
+  onUpdateMousePhysics,
+  language
 }: DesignPanelProps) {
   const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
+  const t = translations[language];
+
+  const TABS = [
+    { id: 'appearance', icon: ImageIcon, label: t.editor.appearance },
+    { id: 'camera', icon: Video, label: t.editor.camera },
+    { id: 'cursor', icon: Send, label: t.editor.cursor }
+  ];
+
+  const MOUSE_PHYSICS_PRESETS = [
+    { id: 'snappy', label: t.editor.snappy, smoothing: 0.30, speedLimit: 9000 },
+    { id: 'balanced', label: t.editor.balanced, smoothing: 0.50, speedLimit: 6500 },
+    { id: 'cinematic', label: t.editor.cinematic, smoothing: 0.68, speedLimit: 4800 },
+  ] as const;
 
   return (
     <aside className="w-[320px] border-l border-white/[0.1] bg-white/[0.03] backdrop-blur-3xl flex flex-col z-40 relative">
@@ -119,9 +118,9 @@ export const DesignPanel = memo(function DesignPanel({
               >
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">镜头控制</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">{t.editor.cameraControl}</span>
                     <div className="h-px flex-1 bg-white/[0.08]" />
-                    <span className="text-[9px] font-mono text-white/40">快捷键: Z</span>
+                    <span className="text-[9px] font-mono text-white/40">Z</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -130,17 +129,17 @@ export const DesignPanel = memo(function DesignPanel({
                      onClick={onResetZoom}
                      className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
                     >
-                      重置镜头
+                      {t.editor.resetCamera}
                     </Button>
                     <Button
                      variant="outline"
                      onClick={() => onAddManualZoom(2.5)}
                      className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
                     >
-                      定焦 (2.5x)
+                      {t.editor.fixZoom}
                     </Button>
                   </div>
-                  <p className="text-[10px] text-white/30 leading-relaxed text-center italic">在画面点击或按 Z 键可自动对焦鼠标</p>
+                  <p className="text-[10px] text-white/30 leading-relaxed text-center italic">{t.editor.cameraTip}</p>
                 </section>
               </motion.div>
             )}
@@ -156,7 +155,7 @@ export const DesignPanel = memo(function DesignPanel({
                 {/* 1. 鼠标外观 */}
                 <section className="space-y-5">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">光标样式</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.cursorStyle}</span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -177,14 +176,14 @@ export const DesignPanel = memo(function DesignPanel({
                         )}>
                           {style === 'macOS' && <Send size={14} className="-rotate-45" />}
                         </div>
-                        <span className="text-[10px] font-medium tracking-tight">{style === 'macOS' ? 'macOS 指针' : '简约圆形'}</span>
+                        <span className="text-[10px] font-medium tracking-tight">{style === 'macOS' ? t.editor.macOSCursor : t.editor.circleCursor}</span>
                       </button>
                     ))}
                   </div>
 
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-white/40 tracking-tight">感官大小</span>
+                      <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.cursorSize}</span>
                       <span className="text-[10px] font-mono text-white/20 px-1.5 py-0.5 bg-white/[0.03] rounded border border-white/[0.05]">{mouseTheme.size}px</span>
                     </div>
                     <input
@@ -199,7 +198,7 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <span className="text-[11px] font-medium text-white/40 tracking-tight">点击涟漪效果</span>
+                    <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.rippleEffect}</span>
                     <Switch
                       checked={mouseTheme.showRipple}
                       onCheckedChange={(checked) => onUpdateMouseTheme({ showRipple: checked })}
@@ -211,16 +210,16 @@ export const DesignPanel = memo(function DesignPanel({
                 {/* 2. 物理效果 */}
                 <section className="space-y-5 pt-6 border-t border-white/[0.04]">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">物理手感</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.physics}</span>
                     <div className="flex items-center gap-2 bg-white/[0.03] p-0.5 rounded-lg border border-white/[0.02]">
                       <button
                         onClick={() => setShowAdvancedCursorPhysics(false)}
                         className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", !showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
-                      >预设</button>
+                      >{t.editor.preset}</button>
                       <button
                         onClick={() => setShowAdvancedCursorPhysics(true)}
                         className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
-                      >专业</button>
+                      >{t.editor.professional}</button>
                     </div>
                   </div>
 
@@ -246,7 +245,7 @@ export const DesignPanel = memo(function DesignPanel({
                     <div className="space-y-6">
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-white/40 tracking-tight">运动平滑度</span>
+                          <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.smoothing}</span>
                           <span className="text-[10px] font-mono text-emerald-400 font-bold">{(mousePhysics.smoothing * 100).toFixed(0)}%</span>
                         </div>
                         <input
@@ -262,7 +261,7 @@ export const DesignPanel = memo(function DesignPanel({
 
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-white/40 tracking-tight">物理速度上限</span>
+                          <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.speedLimit}</span>
                           <span className="text-[10px] font-mono text-emerald-400 font-bold">{Math.round(mousePhysics.speedLimit)} px/s</span>
                         </div>
                         <input
@@ -292,7 +291,7 @@ export const DesignPanel = memo(function DesignPanel({
                 {/* 背景分类 */}
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">背景画布</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.canvas}</span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
                   <div className="flex flex-wrap gap-3">
@@ -317,7 +316,7 @@ export const DesignPanel = memo(function DesignPanel({
                 {/* 壁纸选择 */}
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">选择壁纸</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.wallpaper}</span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
                   <div className="grid grid-cols-6 gap-1.5">
@@ -352,7 +351,7 @@ export const DesignPanel = memo(function DesignPanel({
 
       {/* 底部版权或版本号装饰 */}
       <div className="h-8 flex items-center justify-center border-t border-white/[0.02] bg-white/[0.01]">
-         <span className="text-[9px] font-mono text-white/5 tracking-[0.3em] uppercase">NuVideo Pro Engine</span>
+         <span className="text-[9px] font-mono text-white/5 tracking-[0.3em] uppercase">{t.editor.engineInfo}</span>
       </div>
     </aside>
   );

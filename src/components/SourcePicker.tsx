@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Monitor, AppWindow, RefreshCw, Zap, Play } from 'lucide-react';
+import { Monitor, AppWindow, RefreshCw, Zap, Play, Video, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { QUALITY_OPTIONS, QualityConfig } from '@/constants/quality';
+import { Language, translations } from '@/i18n/translations';
 
 interface Source {
   id: string;
@@ -12,15 +13,27 @@ interface Source {
 }
 
 interface SourcePickerProps {
-  onSelect: (sourceId: string, quality: QualityConfig) => void;
+  onSelect: (sourceId: string, quality: QualityConfig, format: 'video' | 'gif', autoZoom: boolean) => void;
   onCancel: () => void;
+  autoZoomEnabled: boolean;
+  language: Language;
 }
 
-export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
+export function SourcePicker({ 
+  onSelect, 
+  onCancel,
+  autoZoomEnabled,
+  language
+}: SourcePickerProps) {
   const [sources, setSources] = useState<Source[]>([]);
-  const [activeTab, setActiveTab] = useState<'screen' | 'window'>('screen');
-  const [selectedQualityId, setSelectedQualityId] = useState<string>(QUALITY_OPTIONS[0].id);
+  const QUALITY_KEY = 'nuvideo_last_quality';
+  const FORMAT_KEY = 'nuvideo_last_format';
+  const TAB_KEY = 'nuvideo_last_tab';
+
+  const [activeTab, setActiveTab] = useState<'screen' | 'window'>(() => (localStorage.getItem(TAB_KEY) as any) || 'screen');
+  const [selectedQualityId, setSelectedQualityId] = useState<string>(() => localStorage.getItem(QUALITY_KEY) || QUALITY_OPTIONS[0].id);
   const [loading, setLoading] = useState(true);
+  const [recordFormat, setRecordFormat] = useState<'video' | 'gif'>(() => (localStorage.getItem(FORMAT_KEY) as any) || 'video');
 
   const selectedQuality = QUALITY_OPTIONS.find(q => q.id === selectedQualityId) || QUALITY_OPTIONS[0];
 
@@ -67,6 +80,8 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
       return a.name.localeCompare(b.name);
     });
 
+  const t = translations[language];
+
   return (
     <div
       className="relative flex h-full w-full bg-[#080808]"
@@ -89,20 +104,23 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
         exit={{ opacity: 0 }}
       >
         {/* Sidebar */}
-        <aside className="relative flex w-[280px] flex-col border-r border-white/[0.04] bg-white/[0.03] p-8 overflow-y-auto backdrop-blur-2xl" style={{ WebkitAppRegion: 'no-drag' } as any}>
-          <div className="mb-10">
+        <aside className="relative flex w-[240px] flex-col border-r border-white/[0.04] bg-white/[0.03] p-6 overflow-y-auto backdrop-blur-2xl" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <div className="mb-8">
              <div className="mb-6 flex items-center gap-3 px-2">
-                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">录制范围</span>
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">{t.home.range}</span>
                 <div className="h-px flex-1 bg-white/[0.05]" />
              </div>
              <nav className="flex flex-col gap-1.5">
                 {[
-                  { id: 'screen', label: '整个屏幕', icon: Monitor },
-                  { id: 'window', label: '应用窗口', icon: AppWindow },
+                  { id: 'screen', label: t.home.screen, icon: Monitor },
+                  { id: 'window', label: t.home.window, icon: AppWindow },
                 ].map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setActiveTab(item.id as any)}
+                    onClick={() => {
+                      setActiveTab(item.id as any);
+                      localStorage.setItem(TAB_KEY, item.id);
+                    }}
                     className={cn(
                       "group flex items-center gap-4 rounded-xl px-4 py-3.5 transition-all duration-500 relative overflow-hidden",
                       activeTab === item.id 
@@ -120,19 +138,73 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
                     <span className="text-[13px] font-bold relative z-10 tracking-tight">{item.label}</span>
                   </button>
                 ))}
-             </nav>
+              </nav>
           </div>
 
-          <div className="mb-10">
+          <div className="mb-8">
              <div className="mb-6 flex items-center gap-3 px-2">
-                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">画质预设</span>
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">{t.home.mode}</span>
+                <div className="h-px flex-1 bg-white/[0.05]" />
+             </div>
+             <nav className="flex flex-col gap-1.5">
+                {[
+                  { id: 'video', label: t.home.video, icon: Video, desc: t.home.videoDesc },
+                  { id: 'gif', label: t.home.gif, icon: ImageIcon, desc: t.home.gifDesc },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setRecordFormat(item.id as any);
+                      localStorage.setItem(FORMAT_KEY, item.id);
+                    }}
+                    className={cn(
+                      "group flex items-center gap-4 rounded-xl px-4 py-3.5 transition-all duration-500 relative overflow-hidden",
+                      recordFormat === item.id 
+                        ? "text-white" 
+                        : "text-white/50 hover:text-white/80 hover:bg-white/[0.03]"
+                    )}
+                  >
+                    {recordFormat === item.id && (
+                      <motion.div 
+                        layoutId="activeFormatTab"
+                        className="absolute inset-0 bg-white/[0.05] border border-white/[0.05] rounded-xl shadow-inner" 
+                      />
+                    )}
+                    <item.icon size={16} className={cn("relative z-10 transition-colors duration-500", recordFormat === item.id ? "text-blue-400" : "text-current")} />
+                    <div className="flex flex-col items-start relative z-10">
+                      <span className="text-[13px] font-bold tracking-tight">{item.label}</span>
+                    </div>
+                  </button>
+                ))}
+             </nav>
+             
+             {recordFormat === 'gif' && (
+               <motion.div 
+                 initial={{ opacity: 0, y: 10 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 className="mt-3 px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10 flex items-start gap-3"
+               >
+                 <AlertCircle size={14} className="text-blue-400 mt-0.5 shrink-0" />
+                 <p className="text-[10px] text-blue-300/60 leading-relaxed font-medium">
+                   {t.home.gifDesc}
+                 </p>
+               </motion.div>
+             )}
+          </div>
+
+          <div className="mb-8">
+             <div className="mb-6 flex items-center gap-3 px-2">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">{t.home.quality}</span>
                 <div className="h-px flex-1 bg-white/[0.05]" />
              </div>
              <div className="flex flex-col gap-2 px-1">
                 {QUALITY_OPTIONS.map((q) => (
                   <button
                     key={q.id}
-                    onClick={() => setSelectedQualityId(q.id)}
+                    onClick={() => {
+                      setSelectedQualityId(q.id);
+                      localStorage.setItem(QUALITY_KEY, q.id);
+                    }}
                     className={cn(
                       "group flex items-center gap-4 rounded-xl px-4 py-3 transition-all duration-500 border relative overflow-hidden",
                       selectedQualityId === q.id 
@@ -160,6 +232,7 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
              </div>
           </div>
 
+
           <div className="mt-auto pt-6">
              <button
               onClick={fetchSources}
@@ -167,7 +240,7 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
               className="group flex w-full items-center justify-center gap-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40 transition-all hover:bg-white/[0.06] hover:text-white/80 disabled:opacity-50"
             >
               <RefreshCw size={14} className={cn("transition-transform duration-700", loading ? "animate-spin" : "group-hover:rotate-180")} />
-              {loading ? '正在扫描资源...' : '刷新素材来源'}
+              {loading ? t.home.scanning : t.home.refresh}
             </button>
           </div>
         </aside>
@@ -178,15 +251,15 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
           <header className="flex h-24 items-center justify-between px-12">
             <div className="flex items-baseline gap-4">
               <h4 className="text-[10px] font-black uppercase tracking-[0.5em] text-white/30">
-                {activeTab === 'screen' ? '全部显示器' : '正在运行的应用'}
+                {activeTab === 'screen' ? t.home.allScreens : t.home.runningApps}
               </h4>
               <div className="h-1 w-1 rounded-full bg-white/20" />
-              <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">发现 {filteredSources.length} 个来源</span>
+              <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{t.home.foundSources.replace('{count}', filteredSources.length.toString())}</span>
             </div>
             <div className="flex items-center gap-6">
              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.05]">
                   <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                  <span className="text-[9px] font-black uppercase tracking-widest text-white/50">原生捕获引擎已就绪</span>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white/50">{t.home.engineReady}</span>
                </div>
             </div>
           </header>
@@ -208,7 +281,7 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
                         damping: 20 
                       }}
                       className="group cursor-pointer"
-                      onClick={() => onSelect(source.id, selectedQuality)}
+                      onClick={() => onSelect(source.id, selectedQuality, recordFormat, autoZoomEnabled)}
                     >
                       <div className="relative aspect-video overflow-hidden rounded-[2.5rem] border border-white/[0.15] bg-[#1a1a1a] transition-all duration-700 group-hover:border-white/50 group-hover:shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)]">
                         <img
@@ -251,8 +324,8 @@ export function SourcePicker({ onSelect, onCancel }: SourcePickerProps) {
                          <Monitor size={48} className="text-white/10" />
                        </div>
                     </div>
-                    <h5 className="text-[11px] font-black tracking-[0.4em] text-white/30 uppercase mb-2">未发现可用显示源</h5>
-                    <p className="text-[13px] font-medium text-white/20 max-w-[280px]">请检查系统设置并授予屏幕录制权限。</p>
+                    <h5 className="text-[11px] font-black tracking-[0.4em] text-white/30 uppercase mb-2">{t.home.noSource}</h5>
+                    <p className="text-[13px] font-medium text-white/20 max-w-[280px]">{t.home.noSourceDesc}</p>
                   </div>
                 )}
               </AnimatePresence>

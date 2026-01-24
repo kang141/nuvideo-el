@@ -26,6 +26,7 @@ export function useVideoRenderer({
   const rafRef = useRef<number>();
   const vfcRef = useRef<number | null>(null);
   const videoSizeRef = useRef({ width: 1920, height: 1080 });
+  const layoutRef = useRef({ dx: 0, dy: 0, dw: 0, dh: 0, r: 32 });
 
   // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
@@ -53,6 +54,7 @@ export function useVideoRenderer({
     
     // 2. 根据视频比例计算布局并绘制窗口阴影 + 黑底
     const layout = calculateLayout(W, H, vw, vh);
+    layoutRef.current = layout; // 缓存布局
     const { dx, dy, dw, dh, r } = layout;
 
     oCtx.save();
@@ -134,15 +136,14 @@ export function useVideoRenderer({
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    const { width: W, height: H } = EDITOR_CANVAS_SIZE;
     const camera = computeCameraState(renderGraph, timestampMs);
     const s = camera.scale;
 
     // --- A. 绘制预渲染的背景层 ---
     ctx.drawImage(offscreenRef.current, 0, 0);
 
-    // --- B. 动态布局 ---
-    const { dx, dy, dw, dh, r } = calculateLayout(W, H, video.videoWidth || 1920, video.videoHeight || 1080);
+    // --- B. 使用缓存的动态布局 ---
+    const { dx, dy, dw, dh, r } = layoutRef.current;
 
     // --- C. 内容层 ---
     ctx.save();

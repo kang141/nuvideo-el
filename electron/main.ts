@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -143,13 +143,28 @@ ipcMain.handle('save-temp-video', async (_event, arrayBuffer: ArrayBuffer) => {
 })
 
 // 显示保存对话框
-ipcMain.handle('show-save-dialog', async () => {
+ipcMain.handle('show-save-dialog', async (_event, options: { defaultPath?: string, defaultName?: string } = {}) => {
+  let initialPath = '';
+  
+  if (options.defaultPath) {
+    // 检查 defaultPath 是否已经是完整路径（包含后缀）比较复杂，这里简单判定：
+    // 如果 defaultPath 是目录，且有 defaultName，则拼接
+    if (options.defaultName && !options.defaultPath.toLowerCase().endsWith('.mp4') && !options.defaultPath.toLowerCase().endsWith('.gif')) {
+       initialPath = path.join(options.defaultPath, options.defaultName);
+    } else {
+       initialPath = options.defaultPath;
+    }
+  } else {
+    initialPath = path.join(app.getPath('videos'), options.defaultName || `nuvideo_export_${Date.now()}.mp4`);
+  }
+
   return await dialog.showSaveDialog({
     title: '导出视频',
-    defaultPath: path.join(app.getPath('videos'), `nuvideo_export_${Date.now()}.mp4`),
+    defaultPath: initialPath,
     filters: [
-      { name: 'Movies', extensions: ['mp4', 'webm'] }
-    ]
+      { name: 'Media Files', extensions: ['mp4', 'gif', 'webm'] }
+    ],
+    properties: ['showOverwriteConfirmation']
   })
 })
 
@@ -385,7 +400,60 @@ ipcMain.handle('close-export-stream', async (_event, { streamId }) => {
   }
 });
 
+// 打开文件所在目录
+ipcMain.handle('show-item-in-folder', async (_event, filePath: string) => {
+  if (filePath) {
+    shell.showItemInFolder(filePath);
+  }
+});
+
+// 删除文件
+ipcMain.handle('delete-file', async (_event, filePath: string) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return { success: true };
+    }
+    return { success: false, error: 'File not found' };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+});
+
 // --- 生命周期管理 ---
+
+// 视频转高质量 GIF
+ipcMain.handle('convert-mp4-to-gif', async (_event, { inputPath, outputPath, width, fps = 30 }) => {
+  try {
+    const { spawn } = await import('node:child_process');
+    
+    // 采用更先进的 "one-pass" 调色板渲染策略
+    // fps=${fps}: 确保抽帧频率符合预期
+    // flags=lanczos: 高质量缩放
+    // palettegen: 使用单帧色彩优化
+    const filter = `fps=${fps},scale=${width}:-1:flags=lanczos:sws_dither=none,split[s0][s1];[s0]palettegen=max_colors=256:stats_mode=full[p];[s1][p]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`;
+    
+    const gifArgs = [
+      '-i', inputPath,
+      '-vf', filter,
+      '-y', outputPath
+    ];
+
+    console.log('[Main] Generating optimized GIF with filter:', filter);
+    await new Promise((resolve, reject) => {
+      const p = spawn('ffmpeg', gifArgs);
+      p.on('close', (code) => code === 0 ? resolve(null) : reject(new Error(`GIF generation failed with code ${code}`)));
+    });
+
+    // 清理原 MP4 避免重复占用空间
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+
+    return { success: true };
+  } catch (err) {
+    console.error('[Main] convert-mp4-to-gif failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
 
 app.on('will-quit', () => {
   if (ffmpegProcess) {

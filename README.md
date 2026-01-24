@@ -100,16 +100,6 @@ npm run build
 
 商业授权咨询：可通过 Issue 联系，或邮件至 **[kangdeng28@gmail.com](mailto:kangdeng28@gmail.com)**。
 
----
-
 Copyright (c) 2026 Su Zai
 
-```
-
-```
-
 _注意：本项目目前处于持续开发阶段，建议仅用于测试与学习。_
-
-```
-
-```

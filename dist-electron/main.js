@@ -1,4 +1,4 @@
-import { protocol, ipcMain, desktopCapturer, app, dialog, screen, BrowserWindow } from "electron";
+import { protocol, ipcMain, desktopCapturer, app, dialog, screen, shell, BrowserWindow } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -110,13 +110,24 @@ ipcMain.handle("save-temp-video", async (_event, arrayBuffer) => {
     return null;
   }
 });
-ipcMain.handle("show-save-dialog", async () => {
+ipcMain.handle("show-save-dialog", async (_event, options = {}) => {
+  let initialPath = "";
+  if (options.defaultPath) {
+    if (options.defaultName && !options.defaultPath.toLowerCase().endsWith(".mp4") && !options.defaultPath.toLowerCase().endsWith(".gif")) {
+      initialPath = path.join(options.defaultPath, options.defaultName);
+    } else {
+      initialPath = options.defaultPath;
+    }
+  } else {
+    initialPath = path.join(app.getPath("videos"), options.defaultName || `nuvideo_export_${Date.now()}.mp4`);
+  }
   return await dialog.showSaveDialog({
     title: "导出视频",
-    defaultPath: path.join(app.getPath("videos"), `nuvideo_export_${Date.now()}.mp4`),
+    defaultPath: initialPath,
     filters: [
-      { name: "Movies", extensions: ["mp4", "webm"] }
-    ]
+      { name: "Media Files", extensions: ["mp4", "gif", "webm"] }
+    ],
+    properties: ["showOverwriteConfirmation"]
   });
 });
 ipcMain.handle("sync-clock", async (_event, tClient) => {
@@ -309,6 +320,46 @@ ipcMain.handle("close-export-stream", async (_event, { streamId }) => {
     return { success: true, totalBytes: handle.bytesWritten };
   } catch (err) {
     console.error("[Main] close-export-stream failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
+  if (filePath) {
+    shell.showItemInFolder(filePath);
+  }
+});
+ipcMain.handle("delete-file", async (_event, filePath) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return { success: true };
+    }
+    return { success: false, error: "File not found" };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("convert-mp4-to-gif", async (_event, { inputPath, outputPath, width, fps = 30 }) => {
+  try {
+    const { spawn } = await import("node:child_process");
+    const filter = `fps=${fps},scale=${width}:-1:flags=lanczos:sws_dither=none,split[s0][s1];[s0]palettegen=max_colors=256:stats_mode=full[p];[s1][p]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`;
+    const gifArgs = [
+      "-i",
+      inputPath,
+      "-vf",
+      filter,
+      "-y",
+      outputPath
+    ];
+    console.log("[Main] Generating optimized GIF with filter:", filter);
+    await new Promise((resolve, reject) => {
+      const p = spawn("ffmpeg", gifArgs);
+      p.on("close", (code) => code === 0 ? resolve(null) : reject(new Error(`GIF generation failed with code ${code}`)));
+    });
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    return { success: true };
+  } catch (err) {
+    console.error("[Main] convert-mp4-to-gif failed:", err);
     return { success: false, error: err.message };
   }
 });

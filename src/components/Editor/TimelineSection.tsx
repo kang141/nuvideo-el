@@ -2,6 +2,7 @@ import { Search, Scissors, Plus } from 'lucide-react';
 import React from 'react';
 import { CanvasTimelineMemo } from '../Timeline/CanvasTimeline';
 import type { RenderGraph, CameraIntent } from '../../types';
+import { Language, translations } from '@/i18n/translations';
 
 interface TimelineSectionProps {
   duration: number;
@@ -10,6 +11,7 @@ interface TimelineSectionProps {
   onSeek: (time: number) => void;
   renderGraph: RenderGraph;
   onUpdateIntents: (intents: CameraIntent[]) => void;
+  language: Language;
 }
 
 export function TimelineSection({
@@ -18,8 +20,10 @@ export function TimelineSection({
   videoRef,
   onSeek,
   renderGraph,
-  onUpdateIntents
+  onUpdateIntents,
+  language
 }: TimelineSectionProps) {
+  const t = translations[language];
   return (
     <section className="h-[200px] min-h-[200px] w-full flex-shrink-0 bg-[#060606] border-t border-white/[0.04] flex z-50 overflow-hidden">
       {/* 左侧功能侧边栏 */}
@@ -29,7 +33,7 @@ export function TimelineSection({
         
         {/* 对齐第一条轨道 (Zoom) */}
         <div className="h-[40px] flex items-center justify-center">
-          <button title="Zoom Tool" className="h-8 w-8 flex items-center justify-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition-all border border-white/[0.03]">
+          <button title={t.editor.zoomTool} className="h-8 w-8 flex items-center justify-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition-all border border-white/[0.03]">
             <Search size={16} />
           </button>
         </div>
@@ -39,7 +43,7 @@ export function TimelineSection({
 
         {/* 对齐第二条轨道 (Video/Cut) */}
         <div className="h-[40px] flex items-center justify-center">
-          <button title="Cut Tool" className="h-8 w-8 flex items-center justify-center rounded-lg text-white/20 hover:bg-white/5 hover:text-white transition-all">
+          <button title={t.editor.cutTool} className="h-8 w-8 flex items-center justify-center rounded-lg text-white/20 hover:bg-white/5 hover:text-white transition-all">
             <Scissors size={16} />
           </button>
         </div>
@@ -62,6 +66,8 @@ export function TimelineSection({
           renderGraph={renderGraph}
           onUpdateIntents={onUpdateIntents}
           className="w-full h-full"
+          language={language}
+          key={`timeline-${renderGraph.camera.intents?.length || 0}`}
         />
       </div>
     </section>

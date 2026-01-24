@@ -9,19 +9,41 @@ import { mouseTracker, screenRecorder } from './recorder';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QualityConfig } from './constants/quality';
+import { Language } from './i18n/translations';
 
 function App() {
   // 1. 核心状态：逻辑状态与显示阶段
   const [appState, setAppState] = useState<AppState>('home');
   const [displayStage, setDisplayStage] = useState<'visible' | 'transitioning'>('visible');
   
-  const [recordingState, setRecordingState] = useState<RecordingState>({
+  const [recordingState, setRecordingState] = useState<RecordingState>(() => ({
     isRecording: false,
     duration: 0,
     isPaused: false,
-  });
+    format: 'video',
+    autoZoom: localStorage.getItem('nuvideo_auto_zoom_enabled') !== 'false',
+  }));
   const [renderGraph, setRenderGraph] = useState<RenderGraph | null>(null);
   const lastVideoUrlRef = useRef<string | null>(null);
+
+  // 全局设置状态
+  const [autoZoomEnabled, setAutoZoomEnabled] = useState(() => 
+    localStorage.getItem('nuvideo_auto_zoom_enabled') !== 'false'
+  );
+
+  const handleUpdateAutoZoom = (val: boolean) => {
+    setAutoZoomEnabled(val);
+    localStorage.setItem('nuvideo_auto_zoom_enabled', val.toString());
+  };
+
+  const [language, setLanguage] = useState<Language>(() => 
+    (localStorage.getItem('nuvideo_language') as Language) || 'zh'
+  );
+
+  const handleUpdateLanguage = (lang: Language) => {
+    setLanguage(lang);
+    localStorage.setItem('nuvideo_language', lang);
+  };
 
   // 2. 增强型转场函数：淡出 -> Resize -> 淡入
   const transitionTo = async (nextState: AppState) => {
@@ -66,37 +88,53 @@ function App() {
     }
 
     const interval = setInterval(() => {
-      setRecordingState((prev) => ({
-        ...prev,
-        duration: prev.duration + 100,
-      }));
+      setRecordingState((prev) => {
+        const nextDuration = prev.duration + 100;
+        
+        // --- GIF 强制停止逻辑 ---
+        if (prev.format === 'gif' && nextDuration >= 15000) {
+          console.log('[App] GIF recording limit reached (15s), stopping automatically');
+          handleStopRecording();
+          return {
+            ...prev,
+            duration: 15000,
+            isRecording: false, // 提前在状态里标记，减少定时器误差
+          };
+        }
+
+        return {
+          ...prev,
+          duration: nextDuration,
+        };
+      });
     }, 100);
 
     return () => clearInterval(interval);
   }, [recordingState.isRecording, recordingState.isPaused]);
 
-  const handleSelectSource = async (sourceId: string, quality: QualityConfig) => {
+  const handleSelectSource = async (sourceId: string, quality: QualityConfig, format: 'video' | 'gif' = 'video', autoZoom: boolean = true) => {
     try {
-      console.log('[App] Initializing capture for source:', sourceId, 'Quality:', quality.label);
+      console.log('[App] Initializing capture for source:', sourceId, 'Quality:', quality.label, 'Format:', format);
       await mouseTracker.syncClock();
       mouseTracker.start(); // 进入就绪态
       const startResult = await screenRecorder.start(sourceId, quality);
       if (startResult?.t0) {
         mouseTracker.align(startResult.t0); // 物理对齐视频流点
       }
-      
       setRecordingState({
         isRecording: true,
         startTime: Date.now(),
         duration: 0,
         isPaused: false,
+        format,
+        autoZoom,
       });
 
       // 使用精密转场
       transitionTo('recording');
     } catch (err) {
       console.error('Failed to start recording:', err);
-      setRecordingState({ isRecording: false, duration: 0, isPaused: false });
+      setRecordingState(prev => ({ ...prev, isRecording: false, duration: 0, isPaused: false }));
       alert('录制启动失败');
     }
   };
@@ -132,17 +170,23 @@ function App() {
           algorithm: 'spring',
           springConfig: { stiffness: 170, damping: 26 },
         },
-        config: { fps: 60, ratio: '16:9', outputWidth: 1920 },
+        config: { 
+          fps: 60, 
+          ratio: '16:9', 
+          outputWidth: 1920,
+          targetFormat: recordingState.format
+        },
+        autoZoom: recordingState.autoZoom,
       };
 
-      setRecordingState({ isRecording: false, duration: 0, isPaused: false });
+      setRecordingState(prev => ({ ...prev, isRecording: false, duration: 0, isPaused: false }));
       setRenderGraph(finalGraph);
       
       // 使用精密转场
       transitionTo('editor');
     } catch (err) {
       console.error('[App] Failed to finalize recording:', err);
-      setRecordingState({ isRecording: false, duration: 0, isPaused: false });
+      setRecordingState(prev => ({ ...prev, isRecording: false, duration: 0, isPaused: false }));
       transitionTo('home');
     }
   };
@@ -202,6 +246,7 @@ function App() {
                   onStop={handleStopRecording}
                   onPause={handlePauseRecording}
                   onResume={handleResumeRecording}
+                  language={language}
                 />
               </div>
             )}
@@ -210,7 +255,13 @@ function App() {
             {appState === 'home' && (
               <div className="flex h-full w-full flex-col">
                 <div className="z-50 h-12 w-full flex-shrink-0">
-                   <WindowStatusBar subtitle="选择素材来源" />
+                   <WindowStatusBar 
+                    subtitle="选择素材来源" 
+                    autoZoomEnabled={autoZoomEnabled}
+                    onToggleAutoZoom={handleUpdateAutoZoom}
+                    language={language}
+                    setLanguage={handleUpdateLanguage}
+                   />
                 </div>
                 <main className="relative flex flex-1 overflow-hidden">
                   {/* 仅在首页保留的动态背景环境 */}
@@ -218,6 +269,8 @@ function App() {
                   <SourcePicker
                     onSelect={handleSelectSource}
                     onCancel={() => {}}
+                    autoZoomEnabled={autoZoomEnabled}
+                    language={language}
                   />
                 </main>
               </div>
@@ -228,6 +281,10 @@ function App() {
               <EditorPage
                 renderGraph={renderGraph}
                 onBack={handleBackToHome}
+                language={language}
+                setLanguage={handleUpdateLanguage}
+                autoZoomEnabled={autoZoomEnabled}
+                onToggleAutoZoom={handleUpdateAutoZoom}
               />
             )}
           </motion.div>

@@ -16,7 +16,7 @@ interface UseVideoExportOptions {
 }
 
 // 编码器背压阈值：队列超过此值时暂停编码
-const ENCODER_QUEUE_THRESHOLD = 5;
+const ENCODER_QUEUE_THRESHOLD = 12;
 // 进度更新节流间隔 (ms)
 const PROGRESS_THROTTLE_MS = 100;
 
@@ -33,14 +33,21 @@ export function useVideoExport({
 }: UseVideoExportOptions) {
   const [exportProgress, setExportProgress] = useState(0);
   const isExportingRef = useRef(false);
+  const cancelExport = () => {
+    isExportingRef.current = false;
+    setIsExporting(false);
+    resetCameraCache();
+  };
 
-  const handleExport = async (quality?: QualityConfig, targetPath?: string | null) => {
-    if (isExportingRef.current) return;
+  const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
+    if (isExportingRef.current) return { success: false };
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || !canvas) return { success: false };
 
-    const bitrate = quality?.bitrate || 50 * 1024 * 1024;
+    let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
+    // 如果是 GIF 导出，中间件 MP4 必须使用极高码率 (150Mbps) 以保证转码前的清晰度
+    const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
     const fps = 60;
     const durationSeconds = exportDuration ?? maxDuration;
 
@@ -52,32 +59,44 @@ export function useVideoExport({
       // 1. 准备路径与 Muxer
       let finalPath = targetPath;
       if (!finalPath) {
-        const saveResult = await (window as any).ipcRenderer.invoke('show-save-dialog');
+        // 如果外部没有传入路径（比如直接点击导出），则请求主进程显示对话框，并建议当前文件名
+        const ext = isGif ? '.gif' : '.mp4';
+        const suggestName = `nuvideo_export_${Date.now()}${ext}`;
+        const saveResult = await (window as any).ipcRenderer.invoke('show-save-dialog', { defaultName: suggestName });
         if (saveResult.canceled || !saveResult.filePath) {
           isExportingRef.current = false;
           setIsExporting(false);
-          return;
+          isExportingRef.current = false;
+          setIsExporting(false);
+          return { success: false };
         }
         finalPath = saveResult.filePath;
       }
+
+      // Re-evaluate isGif based on finalPath if targetPath was initially null
+      isGif = quality?.id === 'gif' || finalPath!.toLowerCase().endsWith('.gif');
+      // 重要：如果是 GIF，初始 MP4 必须写到临时文件，不能直接写到最终路径（防止 FFmpeg 读写冲突）
+      const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
       const width = canvas.width;
       const height = canvas.height;
       const muxerTarget = new ArrayBufferTarget();
 
-      // 2. 选择编码器 (完全排除 VP9，优先 H.264 和 H.265)
-      const configCandidates: VideoEncoderConfig[] = [
-        // H.264 High Profile (最高质量硬件加速)
+      // 2. 选择编码器 (如果是 GIF 模式则优先尝试 VP9 以获得更好色彩)
+      const configCandidates: VideoEncoderConfig[] = [];
+      
+      if (isGif) {
+        configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' });
+        configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' });
+      }
+
+      configCandidates.push(
         { codec: 'avc1.640033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        // H.264 Main Profile (中端兼容性硬件加速)
         { codec: 'avc1.4d0033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        // H.265/HEVC (现代硬件平衡性能与质量)
         { codec: 'hev1.1.6.L120.90', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        // H.264 Baseline (最低端兼容性硬件加速)
         { codec: 'avc1.42e01e', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        // 软编兜底 (仅限 H.264)
-        { codec: 'avc1.640033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' },
-      ];
+        { codec: 'avc1.640033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' }
+      );
 
       let selectedConfig: VideoEncoderConfig | null = null;
       for (const config of configCandidates) {
@@ -89,12 +108,14 @@ export function useVideoExport({
           }
         } catch { continue; }
       }
-      if (!selectedConfig) throw new Error('No supported encoder (H.264/H.265)');
+      if (!selectedConfig) throw new Error('No supported encoder found');
 
       // 根据选中的编码器确定 Muxer 容器标识
       let muxerCodec: 'avc' | 'vp9' | 'hevc' = 'avc';
       if (selectedConfig.codec.startsWith('hev') || selectedConfig.codec.startsWith('hvc')) {
         muxerCodec = 'hevc' as any;
+      } else if (selectedConfig.codec.startsWith('vp09') || selectedConfig.codec.startsWith('vp9')) {
+        muxerCodec = 'vp9' as any;
       } else {
         muxerCodec = 'avc';
       }
@@ -167,10 +188,16 @@ export function useVideoExport({
               return;
             }
 
-            // ============ 编码器背压控制 ============
-            // 如果编码队列过长，等待队列消化
+            // ============ 编码器背压控制 (Pause & Drain) ============
+            // 当队列过满时，必须暂停视频播放，等待编码器消化，防止丢帧
             if (encoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
-              await encoder.flush();
+              video.pause();
+              // 轮询等待直到队列降低到安全水位 (例如 2)
+              while (encoder.encodeQueueSize > 2) {
+                await new Promise(r => setTimeout(r, 10));
+              }
+              // 恢复播放
+              video.play().catch(console.error);
             }
 
             // 渲染当前帧
@@ -186,7 +213,10 @@ export function useVideoExport({
             // ============ 进度节流：每 100ms 更新一次 ============
             const now = performance.now();
             if (now - lastProgressUpdate > PROGRESS_THROTTLE_MS) {
-              setExportProgress(Math.min(mediaTimeSec / durationSeconds, 1));
+              const progressRatio = Math.min(mediaTimeSec / durationSeconds, 1);
+              // 如果是 GIF 模式，渲染过程只占前 90%，剩下的 10% 留给后期转换
+              const weightedProgress = isGif ? progressRatio * 0.9 : progressRatio;
+              setExportProgress(weightedProgress);
               lastProgressUpdate = now;
             }
 
@@ -224,7 +254,9 @@ export function useVideoExport({
 
           // 背压控制
           if (encoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
-            await encoder.flush();
+            while (encoder.encodeQueueSize > 2) {
+              await new Promise(r => setTimeout(r, 10));
+            }
           }
 
           // 同步渲染 Canvas
@@ -240,7 +272,9 @@ export function useVideoExport({
           // 进度节流
           const now = performance.now();
           if (now - lastProgressUpdate > PROGRESS_THROTTLE_MS) {
-            setExportProgress(Math.min(mediaTime / durationSeconds, 1));
+            const progressRatio = Math.min(mediaTime / durationSeconds, 1);
+            const weightedProgress = isGif ? progressRatio * 0.9 : progressRatio;
+            setExportProgress(weightedProgress);
             lastProgressUpdate = now;
           }
         }
@@ -261,9 +295,9 @@ export function useVideoExport({
       const fullBuffer = muxerTarget.buffer;
       const totalBytes = fullBuffer.byteLength;
 
-      // 打开写入流
+      // 打开写入流 (写入到工作路径)
       const openResult = await (window as any).ipcRenderer.invoke('open-export-stream', {
-        targetPath: finalPath
+        targetPath: workPath
       });
       
       if (!openResult.success) {
@@ -278,6 +312,13 @@ export function useVideoExport({
         const chunkEnd = Math.min(offset + CHUNK_SIZE, totalBytes);
         const chunk = fullBuffer.slice(offset, chunkEnd);
         
+        // 检查取消
+        if (!isExportingRef.current) {
+          await (window as any).ipcRenderer.invoke('close-export-stream', { streamId });
+          await (window as any).ipcRenderer.invoke('delete-file', workPath); // 删除半截文件
+          throw new Error('Export cancelled during write');
+        }
+
         const writeResult = await (window as any).ipcRenderer.invoke('write-export-chunk', {
           streamId,
           chunk
@@ -303,22 +344,48 @@ export function useVideoExport({
 
       const elapsed = (performance.now() - startTime) / 1000;
       console.log(`[useVideoExport] Export finished: ${encodedFrames} frames in ${elapsed.toFixed(2)}s (${(encodedFrames / elapsed).toFixed(1)} fps)`);
+      
+      // ============ Phase 6: GIF 模式分流处理 ============
+      if (isGif) {
+        console.log('[useVideoExport] Rendering finished, starting high-quality GIF conversion...');
+        setExportProgress(0.91); // 进入转换阶段
+
+        const convertResult = await (window as any).ipcRenderer.invoke('convert-mp4-to-gif', {
+          inputPath: workPath,    // 临时 MP4
+          outputPath: finalPath,  // 最终 GIF 路径
+          // 提升 GIF 默认宽度到 1080，如果原始宽度更小则保持原样
+          width: Math.min(canvas.width, 1080), 
+          fps: 30 // 提升帧率到 30fps，保证流畅度
+        });
+
+        if (convertResult.success) {
+          console.log('[useVideoExport] GIF conversion success');
+          setExportProgress(1.0); // 最终完成
+        } else {
+          throw new Error(`GIF conversion failed: ${convertResult.error}`);
+        }
+      }
+
       isExportingRef.current = false;
       setIsExporting(false);
       setExportProgress(0);
       onSeek(0);
-
+      setExportProgress(0);
+      onSeek(0);
+      return { success: true, filePath: finalPath || undefined };
     } catch (err) {
       console.error('[useVideoExport] Export failed:', err);
       resetCameraCache(); // 确保错误时也重置缓存
       isExportingRef.current = false;
       setIsExporting(false);
+      return { success: false };
     }
   };
 
   return {
     isExporting,
     exportProgress,
-    handleExport
+    handleExport,
+    cancelExport
   };
 }

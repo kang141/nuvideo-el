@@ -33,6 +33,8 @@ export interface RenderConfig {
   outputWidth: number;
   /** GIF 配置（可选） */
   gifProfile?: GIFProfile;
+  /** 目标导出格式 */
+  targetFormat?: 'video' | 'gif';
 }
 
 /**
@@ -66,4 +68,6 @@ export interface RenderGraph {
   audio?: AudioConfig;
   /** 渲染配置 */
   config: RenderConfig;
+  /** 自动缩放开关 */
+  autoZoom: boolean;
 }

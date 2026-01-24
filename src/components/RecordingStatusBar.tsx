@@ -1,15 +1,8 @@
-import { useState } from 'react';
 import {
-  Mic,
-  MicOff,
-  MoreVertical,
-  RotateCcw,
-  Trash2,
-  Settings,
-  Camera,
   Pause,
   Play,
 } from 'lucide-react';
+import { Language, translations } from '@/i18n/translations';
 import { motion } from 'framer-motion';
 
 interface RecordingStatusBarProps {
@@ -18,6 +11,7 @@ interface RecordingStatusBarProps {
   onStop: () => void;
   onPause: () => void;
   onResume: () => void;
+  language: Language;
 }
 
 export function RecordingStatusBar({
@@ -26,8 +20,9 @@ export function RecordingStatusBar({
   onStop,
   onPause,
   onResume,
+  language
 }: RecordingStatusBarProps) {
-  const [isMicMuted, setIsMicMuted] = useState(false);
+  const t = translations[language];
 
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -75,37 +70,10 @@ export function RecordingStatusBar({
             onClick={isPaused ? onResume : onPause}
             className={`p-2.5 rounded-full transition-all ${isPaused ? 'text-amber-500 hover:bg-amber-500/10' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}`}
           >
-            {isPaused ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}
-          </button>
-
-          <button 
-            onClick={() => setIsMicMuted(!isMicMuted)}
-            className={`p-2.5 rounded-full transition-all ${isMicMuted ? 'text-red-500 hover:bg-red-500/10' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}`}
-          >
-            {isMicMuted ? <MicOff size={20} /> : <Mic size={20} />}
-          </button>
-          
-          <button className="p-2.5 rounded-full text-neutral-400 hover:bg-white/5 hover:text-white transition-all">
-            <Camera size={20} />
-          </button>
-
-          <button className="p-2.5 rounded-full text-neutral-400 hover:bg-white/5 hover:text-white transition-all">
-            <RotateCcw size={20} />
-          </button>
-
-          <button className="p-2.5 rounded-full text-neutral-400 hover:bg-white/5 hover:text-white transition-all">
-            <Trash2 size={20} />
+            {isPaused ? <Play size={22} fill="currentColor" /> : <Pause size={22} fill="currentColor" />}
           </button>
 
           <div className="w-px h-5 bg-white/10 mx-1.5" />
-
-          <button className="p-2.5 rounded-full text-neutral-400 hover:bg-white/5 hover:text-white transition-all">
-            <Settings size={20} />
-          </button>
-
-          <button className="p-2.5 rounded-full text-neutral-400 hover:bg-white/5 hover:text-white transition-all">
-            <MoreVertical size={20} />
-          </button>
 
           {/* STOP 按钮 */}
           <button 
@@ -114,7 +82,7 @@ export function RecordingStatusBar({
           >
             <div className="relative z-10 flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-black rounded-[1px]" />
-              <span className="tracking-tight uppercase">Stop</span>
+              <span className="tracking-tight uppercase">{t.recording.stop}</span>
             </div>
             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent group-hover:translate-x-full duration-500 transition-transform" />
           </button>

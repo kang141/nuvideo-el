@@ -24,9 +24,11 @@ const defaultIntent: CameraIntent = {
   targetScale: 1.0,
 };
 
-// 灵敏死区参数：大幅缩小死区，从 0.15 降为 0.05，让镜头反应更快
 const DEADZONE_W = 0.05;
 const DEADZONE_H = 0.04;
+
+// 自动对焦时的缩放力度
+const AUTO_ZOOM_SCALE = 1.8;
 
 // ============ 增量缓存系统 ============
 // 用于导出时避免 O(n²) 重复计算
@@ -221,9 +223,17 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     }
 
     // 2. 镜头跟随
-    const targetScale = active.targetScale;
+    // 如果开启了 autoZoom 且当前没有强制覆盖的 intent（或者只有全局 intent），则应用自动逻辑
+    const hasManualIntent = intents.some(i => i.t > 10); // 简单判定：T>10ms 的通常是手动添加的
+    
+    let targetScale = active.targetScale;
     let targetCx = state.cx;
     let targetCy = state.cy;
+
+    // 自动缩放逻辑：当开启了全局 autoZoom 且当前没有活跃的手动覆盖意图时生效
+    if (graph.autoZoom && !hasManualIntent && rawMouse) {
+        targetScale = AUTO_ZOOM_SCALE;
+    }
 
     if (targetScale > 1.01 && rawMouse) {
       const marginX = 0.5 / targetScale;

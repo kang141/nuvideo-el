@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { RenderGraph, CameraIntent } from '../types';
+import { Language } from '../i18n/translations';
 import { cn } from '@/lib/utils';
 import { QualityConfig } from '../constants/quality';
 import { generateAutoZoomIntents } from '../core/auto-zoom';
@@ -20,19 +21,23 @@ import { ExportOverlay } from './Editor/ExportOverlay';
 interface EditorPageProps {
   renderGraph: RenderGraph | null;
   onBack: () => void;
+  language: Language;
+  setLanguage: (lang: Language) => void;
+  autoZoomEnabled: boolean;
+  onToggleAutoZoom: (enabled: boolean) => void;
 }
 
-const AUTO_ZOOM_KEY = 'nuvideo_auto_zoom_enabled';
 
-export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProps) {
+export function EditorPage({ 
+  renderGraph: initialGraph, 
+  onBack, 
+  language, 
+  setLanguage,
+  autoZoomEnabled,
+  onToggleAutoZoom
+}: EditorPageProps) {
   // 1. 数据状态 (Single Source of Truth)
   const [graph, setGraph] = useState<RenderGraph | null>(initialGraph);
-  
-  // 自动缩放开关（从 localStorage 读取）
-  const [autoZoomEnabled, setAutoZoomEnabled] = useState(() => {
-    const saved = localStorage.getItem(AUTO_ZOOM_KEY);
-    return saved !== null ? saved === 'true' : true; // 默认开启
-  });
 
   // 2. UI 状态
   const [browsingCategory, setBrowsingCategory] = useState('macOS');
@@ -41,11 +46,16 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
   const [hideIdle, setHideIdle] = useState(false);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
   
-  // 生成默认文件名 (改为 mp4，前缀改为 nubideo)
-  const defaultFileName = `nubideo ${new Date().toLocaleDateString().replace(/\//g, '-')} at ${new Date().getHours()}.${new Date().getMinutes()}.mp4`;
+  // 生成默认文件名 (根据模式自适应后缀，包含秒以防止重复)
+  const ext = initialGraph?.config?.targetFormat === 'gif' ? '.gif' : '.mp4';
+  const now = new Date();
+  const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, '0')}.${now.getSeconds().toString().padStart(2, '0')}`;
+  const defaultFileName = `nubideo ${now.toLocaleDateString().replace(/\//g, '-')} at ${timeStr}${ext}`;
   const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const [lastExportPath, setLastExportPath] = useState<string | null>(null);
 
   const LAST_DIR_KEY = 'nuvideo_last_export_dir';
 
@@ -59,8 +69,11 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
       const isPathEndWithSlash = lastChar === '/' || lastChar === '\\';
       const initialPath = isPathEndWithSlash ? `${cachedDir}${filename}` : `${cachedDir}${pathSeparator}${filename}`;
       
-      console.log('[EditorPage] Using cached directory:', cachedDir);
-      setExportPath(initialPath);
+      // 注意：如果是 GIF 模式且 finalPath 还是 .mp4，强制修复
+      const correctedPath = initialGraph?.config?.targetFormat === 'gif' ? initialPath.replace(/\.mp4$/i, '.gif') : initialPath;
+      
+      console.log('[EditorPage] Using cached directory:', cachedDir, 'Path:', correctedPath);
+      setExportPath(correctedPath);
     }
   }, [filename]);
 
@@ -109,12 +122,6 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     setIsFullscreenPreview(next);
   };
 
-  // 自动缩放开关切换
-  const handleToggleAutoZoom = useCallback((enabled: boolean) => {
-    setAutoZoomEnabled(enabled);
-    localStorage.setItem(AUTO_ZOOM_KEY, String(enabled));
-    console.log('[EditorPage] Auto zoom:', enabled ? 'enabled' : 'disabled');
-  }, []);
 
   // 首次加载时自动生成缩放关键帧
   const hasAutoZoomedRef = useRef(false);
@@ -329,7 +336,8 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
 
   const {
     exportProgress,
-    handleExport: handleExportRaw
+    handleExport: handleExportRaw,
+    cancelExport
   } = useVideoExport({
     videoRef,
     canvasRef,
@@ -342,9 +350,25 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     setIsExporting
   });
 
-  const handleExport = useCallback((quality?: QualityConfig) => {
-    handleExportRaw(quality, exportPath);
-  }, [handleExportRaw, exportPath]);
+  const handleExport = useCallback(async (quality?: QualityConfig) => {
+    setExportSuccess(false);
+    const result = await handleExportRaw(quality, exportPath);
+    
+    // 如果导出成功，自动刷新下一次可能导出的默认文件名（带上最新时间戳）
+    if (result.success) {
+      setLastExportPath(result.filePath || null);
+      setExportSuccess(true);
+
+      const ext = graph?.config?.targetFormat === 'gif' ? '.gif' : '.mp4';
+      const now = new Date();
+      const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, '0')}.${now.getSeconds().toString().padStart(2, '0')}`;
+      const nextName = `nubideo ${now.toLocaleDateString().replace(/\//g, '-')} at ${timeStr}${ext}`;
+      
+      setFilename(nextName);
+      // 同时也重置 exportPath，让下一次导出重新基于新名字生成
+      setExportPath(null); 
+    }
+  }, [handleExportRaw, exportPath, graph?.config?.targetFormat]);
 
   const handleSetBgFile = useCallback((file: string) => {
     setActiveWallpaper({ category: browsingCategory, file });
@@ -402,6 +426,16 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
     });
   }, [graph]);
 
+  const handleOpenFile = useCallback(() => {
+    if (lastExportPath) {
+      (window as any).ipcRenderer.invoke('show-item-in-folder', lastExportPath);
+    }
+  }, [lastExportPath]);
+
+  const handleCloseOverlay = useCallback(() => {
+    setExportSuccess(false);
+  }, []);
+
   if (!graph) return null;
 
   return (
@@ -409,7 +443,15 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
       "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans transition-opacity duration-300",
       isReady ? "opacity-100" : "opacity-0"
     )}>
-      <ExportOverlay isExporting={isExporting} progress={exportProgress} />
+      <ExportOverlay 
+        isExporting={isExporting} 
+        progress={exportProgress} 
+        language={language}
+        onCancel={cancelExport}
+        success={exportSuccess}
+        onOpenFile={handleOpenFile}
+        onClose={handleCloseOverlay}
+      />
 
       {!isFullscreenPreview && (
         <div className="relative z-50">
@@ -420,8 +462,10 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
             isExporting={isExporting} 
             filename={filename}
             onPickAddress={handlePickAddress}
+            language={language}
+            setLanguage={setLanguage}
             autoZoomEnabled={autoZoomEnabled}
-            onToggleAutoZoom={handleToggleAutoZoom}
+            onToggleAutoZoom={onToggleAutoZoom}
           />
         </div>
       )}
@@ -471,6 +515,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
             onUpdateMouseTheme={handleUpdateMouseTheme}
             mousePhysics={graph.mousePhysics}
             onUpdateMousePhysics={handleUpdateMousePhysics}
+            language={language}
           />
         )}
       </div>
@@ -483,6 +528,7 @@ export function EditorPage({ renderGraph: initialGraph, onBack }: EditorPageProp
           onSeek={handleSeek}
           renderGraph={graph}
           onUpdateIntents={handleUpdateIntents}
+          language={language}
         />
       )}
     </div>
