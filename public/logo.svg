@@ -1,0 +1,27 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 背景渐变：现代感的青绿渐变 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="50%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+  </defs>
+
+  <!-- 背景底座：扩大至边缘，占据更多画幅 -->
+  <rect x="10" y="10" width="180" height="180" rx="44" fill="url(#bgGradient)" />
+
+  <!-- 主字母 "N"：大幅度扩大尺寸，减少留白 -->
+  <path d="M55 145V55L145 145V55" stroke="white" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- 内部轨迹细节：微调颜色并增大粗细 -->
+  <g stroke="#C2410C" stroke-width="3" stroke-linecap="round" opacity="0.8">
+    <path d="M55 125V75" />
+    <path d="M72 72L128 128" />
+    <path d="M145 125V75" />
+  </g>
+
+  <!-- 节点装饰 -->
+  <circle cx="55" cy="55" r="4" fill="white" />
+  <circle cx="145" cy="145" r="4" fill="white" />
+</svg>

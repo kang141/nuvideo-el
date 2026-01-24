@@ -30,7 +30,8 @@ function createWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     show: false,
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    // 使用 PNG 格式以确保 Windows 任务栏兼容性与图标刷新
+    icon: path.join(process.env.VITE_PUBLIC, 'logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       webSecurity: true,
