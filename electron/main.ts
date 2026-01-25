@@ -16,9 +16,9 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 let win: BrowserWindow | null
 
-// 注册自定义协议以允许加载本地文件 (解决 "Not allowed to load local resource")
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'nuvideo', privileges: { bypassCSP: true, stream: true, secure: true, standard: true, supportFetchAPI: true } }
+  { scheme: 'nuvideo', privileges: { bypassCSP: true, stream: true, secure: true, standard: true, supportFetchAPI: true } },
+  { scheme: 'asset', privileges: { bypassCSP: true, secure: true, standard: true, supportFetchAPI: true } }
 ])
 
 function createWindow() {
@@ -486,6 +486,24 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Failed to register protocol', error)
     }
+  })
+
+  // 注册 asset:// 协议用于访问静态资源
+  protocol.registerFileProtocol('asset', (request, callback) => {
+    // 移除协议前缀，并统一处理斜杠
+    let assetPath = request.url.replace('asset://', '')
+    if (assetPath.startsWith('/')) assetPath = assetPath.substring(1)
+    
+    let fullPath = ''
+    if (VITE_DEV_SERVER_URL) {
+      // 开发模式：资源在 public 目录
+      fullPath = path.join(process.env.VITE_PUBLIC, assetPath)
+    } else {
+      // 打包模式：Vite 会将 public 里的资源平铺在 dist 根目录
+      fullPath = path.join(RENDERER_DIST, assetPath)
+    }
+    
+    callback({ path: path.normalize(fullPath) })
   })
   
   createWindow()

@@ -1,7 +1,8 @@
 import { WindowControls } from './Common/WindowControls';
-import { cn } from '@/lib/utils';
 import { Language, translations } from '@/i18n/translations';
 import { AppSettingsMenu } from './Common/AppSettingsMenu';
+import logoUrl from '/logo.svg?url';
+
 
 interface WindowStatusBarProps {
   title?: string;
@@ -28,7 +29,7 @@ export function WindowStatusBar({
       style={{ WebkitAppRegion: 'drag' } as any}
     >
       <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
-        <img src="/logo.svg" alt="logo" className="h-5 w-5 object-contain" />
+        <img src={logoUrl} alt="logo" className="h-6 w-6 object-contain" />
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-wide text-white">{title}</span>
           {subtitle && (

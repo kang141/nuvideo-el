@@ -42,7 +42,7 @@ const preloadCategoryImages = (categoryId: string) => {
 
   category.items.forEach(file => {
     const img = new Image();
-    img.src = `/backgrounds/${categoryId}/${file}`;
+    img.src = `asset://backgrounds/${categoryId}/${file}`;
   });
 };
 
@@ -332,7 +332,7 @@ export const DesignPanel = memo(function DesignPanel({
                         )}
                       >
                         <img
-                          src={`/backgrounds/${bgCategory}/thumbnails/${file}`}
+                          src={`asset://backgrounds/${bgCategory}/thumbnails/${file}`}
                           className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-125"
                           alt="bg"
                           loading="lazy"

@@ -71,7 +71,7 @@ export function useVideoRenderer({
   // 加载背景图
   useEffect(() => {
     const img = new Image();
-    img.src = `/backgrounds/${bgCategory}/${bgFile}`;
+    img.src = `asset://backgrounds/${bgCategory}/${bgFile}`;
     img.onload = () => {
       bgImageRef.current = img;
       updateOffscreen(videoSizeRef.current.width, videoSizeRef.current.height);

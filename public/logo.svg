@@ -1,27 +1,39 @@
-<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="100%" height="100%" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- 背景渐变：现代感的青绿渐变 -->
-    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00D2FF" />
-      <stop offset="50%" stop-color="#34D399" />
-      <stop offset="100%" stop-color="#10B981" />
-    </linearGradient>
+    <!-- 优化后的发光滤镜，缩短了模糊半径以适应小尺寸 -->
+    <filter id="white-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="green-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
   </defs>
 
-  <!-- 背景底座：扩大至边缘，占据更多画幅 -->
-  <rect x="10" y="10" width="180" height="180" rx="44" fill="url(#bgGradient)" />
+  <!-- 背景：高级深蓝色深邃底色 -->
+  <rect width="64" height="64" rx="14" fill="#0F172A" />
+  
+  <!-- 细微内边框 -->
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" stroke="#1E293B" stroke-opacity="0.5" />
 
-  <!-- 主字母 "N"：大幅度扩大尺寸，减少留白 -->
-  <path d="M55 145V55L145 145V55" stroke="white" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
-
-  <!-- 内部轨迹细节：微调颜色并增大粗细 -->
-  <g stroke="#C2410C" stroke-width="3" stroke-linecap="round" opacity="0.8">
-    <path d="M55 125V75" />
-    <path d="M72 72L128 128" />
-    <path d="M145 125V75" />
+  <!-- N 字形，调整了坐标使其更居中 -->
+  <g transform="translate(4, 4) scale(0.875)">
+    <path 
+      d="M32 32L48 48V16" 
+      stroke="#10B981" 
+      stroke-width="8" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      filter="url(#green-glow)"
+    />
+    <path 
+      d="M16 48V16L32 32" 
+      stroke="white" 
+      stroke-width="8" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      filter="url(#white-glow)"
+    />
   </g>
-
-  <!-- 节点装饰 -->
-  <circle cx="55" cy="55" r="4" fill="white" />
-  <circle cx="145" cy="145" r="4" fill="white" />
 </svg>

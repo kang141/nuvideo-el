@@ -1,7 +1,7 @@
 # nuvideo-el
 
 <p align="center">
-  <img src="./public/logo.svg" width="120" alt="nuvideo-el logo">
+  <img src="./public/logo.png" width="120" alt="NuVideo logo">
 </p>
 
 <p align="center">
