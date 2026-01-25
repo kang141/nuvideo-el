@@ -5,7 +5,8 @@
 </p>
 
 <p align="center">
-  Windows 上的演示录屏工具（受 ScreenStudio 启发）
+  Windows 上的演示录屏工具（受 ScreenStudio 启发）<br>
+  <a href="https://nuvideo.kangcpu.top">官方网站: nuvideo.kangcpu.top</a>
 </p>
 
 <p align="center">
