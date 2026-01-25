@@ -16,6 +16,16 @@
 
 ---
 
+## 界面预览
+
+<p align="center">
+  <img src="./pho2.png" width="800" alt="NuVideo Editor Panel">
+  <br><br>
+  <img src="./pho1.png" width="800" alt="NuVideo Editor Main">
+</p>
+
+---
+
 ## 简介
 
 **nuvideo-el** 是一个面向 Windows 的录屏与演示视频制作工具。它的目标是：让教程/产品演示视频更清晰、更好看（例如自动跟随鼠标区域、提供鼠标强调效果），同时保持尽量简单的工作流。
