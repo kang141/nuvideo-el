@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Windows 上的演示录屏工具（受 ScreenStudio 启发）<br>
+  Windows 上的演示录屏工具<br>
   <a href="https://nuvideo.kangcpu.top">官方网站: nuvideo.kangcpu.top</a>
 </p>
 
@@ -22,7 +22,7 @@
 <p align="center">
   <img src="./pho2.png" width="800" alt="NuVideo Editor Panel">
   <br><br>
-  <img src="./pho1.png" width="800" alt="NuVideo Editor Main">
+  <img src="https://github.com/user-attachments/assets/ffcc9de2-98ba-4d34-8041-6a60682bd8b1" width="800" alt="NuVideo Demo Animation">
 </p>
 
 ---
@@ -32,8 +32,6 @@
 **nuvideo-el** 是一个面向 Windows 的录屏与演示视频制作工具。它的目标是：让教程/产品演示视频更清晰、更好看（例如自动跟随鼠标区域、提供鼠标强调效果），同时保持尽量简单的工作流。
 
 项目目前处于 **MVP 阶段**：核心录制、预览与导出链路已经跑通，功能还在持续完善中。作为独立开发者的业余项目，欢迎试用与反馈。
-
-> 备注：本项目受 ScreenStudio 的产品形态启发，但不是其官方作品，也没有任何关联。
 
 ## 功能（当前）
 
