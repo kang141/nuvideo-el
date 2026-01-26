@@ -2,7 +2,7 @@
   "name": "nuvideo",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Windows 上的演示录屏工具（受 ScreenStudio 启发）",
   "homepage": "https://nuvideo.kangcpu.top",
   "author": "NuVideo Team",
