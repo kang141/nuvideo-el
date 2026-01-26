@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import type { RenderGraph, CameraIntent } from '../../types';
-import { Language, translations } from '@/i18n/translations';
+import { Language } from '@/i18n/translations';
 
 interface CanvasTimelineProps {
   duration: number; // 秒
@@ -25,7 +25,6 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   className,
   language
 }) => {
-  const t = translations[language];
   const containerRef = useRef<HTMLDivElement>(null);
   const staticCanvasRef = useRef<HTMLCanvasElement>(null);
   const playheadCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -43,9 +42,6 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number>(-1); // 新增：选中状态
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartIntents, setDragStartIntents] = useState<CameraIntent[]>([]);
-
-  // 1. 基础计算
-  // ... (省略部分以便匹配)
 
   // 1. 基础计算
   const ABSOLUTE_MIN_PPS = 20; // 即使在最小时，1秒也要占 20px，保证操作手感
@@ -171,8 +167,8 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         if (rw > 50) {
             ctx.font = '900 10px "Inter", sans-serif';
             ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
-            ctx.textAlign = 'left';
-            ctx.fillText(`FILTER: ${t.editor.zoomFilter}`, startX + 12, ry + rh / 2 + 4);
+            ctx.textAlign = 'center';
+            ctx.fillText('ZOOM', startX + rw / 2, ry + rh / 2 + 3.5);
         }
         ctx.restore();
       }
@@ -393,7 +389,6 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     }
   }, [hitTestZoomBar, renderGraph.camera.intents, scrollLeft, pps, duration, onSeek, onUpdateIntents]);
 
-  // ... (handleMouseMove 等代码省略，逻辑已在)
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

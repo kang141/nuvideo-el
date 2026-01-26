@@ -278,48 +278,6 @@ export function EditorPage({
     });
   }, [graph]);
 
-  // 手动添加缩放意图（在当前时间点）
-  const handleAddManualZoom = useCallback((scale: number, cx?: number, cy?: number) => {
-    if (!graph) return;
-    const currentTimeMs = (videoRef.current?.currentTime || 0) * 1000;
-    
-    let targetCx = cx;
-    let targetCy = cy;
-
-    // 如果没有传入坐标，则尝试自动寻找该时间点的鼠标位置
-    if (targetCx === undefined || targetCy === undefined) {
-      const activeMouseEvent = (graph.mouse || []).slice().reverse().find(m => m.t <= currentTimeMs) || graph.mouse?.[0];
-      if (activeMouseEvent) {
-        targetCx = activeMouseEvent.x;
-        targetCy = activeMouseEvent.y;
-      } else {
-        targetCx = 0.5;
-        targetCy = 0.5;
-      }
-    }
-
-    console.log('[EditorPage] Adding manual zoom intent:', { t: currentTimeMs, scale, cx: targetCx, cy: targetCy });
-    
-    const newIntent = {
-      t: currentTimeMs,
-      targetCx: targetCx!,
-      targetCy: targetCy!,
-      targetScale: scale
-    };
-    
-    const existingIntents = graph.camera.intents || [];
-    const newIntents = [...existingIntents, newIntent].sort((a, b) => a.t - b.t);
-    
-    setGraph({
-      ...graph,
-      camera: {
-        ...graph.camera,
-        intents: newIntents
-      }
-    });
-    
-    console.log('[EditorPage] New intents count:', newIntents.length);
-  }, [graph]);
 
   // 更新 intents 的回调（用于时间轴拖拽编辑）
   const handleUpdateIntents = useCallback((newIntents: CameraIntent[]) => {
@@ -510,7 +468,6 @@ export function EditorPage({
             hideIdle={hideIdle}
             setHideIdle={setHideIdle}
             onResetZoom={handleResetZoom}
-            onAddManualZoom={handleAddManualZoom}
             mouseTheme={graph.mouseTheme}
             onUpdateMouseTheme={handleUpdateMouseTheme}
             mousePhysics={graph.mousePhysics}

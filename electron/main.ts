@@ -14,6 +14,24 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
+// 动态获取 FFmpeg 路径
+const getFFmpegPath = () => {
+  const isDev = !!VITE_DEV_SERVER_URL;
+  const platform = process.platform === 'win32' ? 'win32' : process.platform;
+  const executableIdentifier = process.platform === 'win32' ? '.exe' : '';
+  
+  if (isDev) {
+    // 开发环境下使用系统全局 ffmpeg 或项目本地 resources 下的
+    const localPkgPath = path.join(process.env.APP_ROOT, 'resources', 'bin', platform, `ffmpeg${executableIdentifier}`);
+    return fs.existsSync(localPkgPath) ? localPkgPath : 'ffmpeg';
+  }
+  
+  // 打包环境下，从 extraResources (resources/bin) 目录获取
+  return path.join(process.resourcesPath, 'bin', `ffmpeg${executableIdentifier}`);
+};
+
+const ffmpegPath = getFFmpegPath();
+
 let win: BrowserWindow | null
 
 protocol.registerSchemesAsPrivileged([
@@ -185,11 +203,13 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   // 1. 寻找对应屏幕并获取关键的缩放因子 (Scale Factor)
   const allDisplays = screen.getAllDisplays()
   let targetDisplay = screen.getPrimaryDisplay()
-  if (sourceId.startsWith('screen:')) {
+  
+  if (sourceId && sourceId.startsWith('screen:')) {
     const displayId = sourceId.split(':')[1]
     const found = allDisplays.find(d => d.id.toString() === displayId)
     if (found) targetDisplay = found
   }
+
 
   const { bounds, scaleFactor } = targetDisplay
   // 核心修复：必须确保物理像素是 2 的倍数，且绝对不能超出物理屏幕边界
@@ -198,9 +218,6 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     return v % 2 === 0 ? v : v - 1;
   };
 
-  const physicalX = Math.round(bounds.x * scaleFactor);
-  const physicalY = Math.round(bounds.y * scaleFactor);
-  
   // 确保尺寸不会因为四舍五入溢出
   const physicalW = toEven(bounds.width * scaleFactor);
   const physicalH = toEven(bounds.height * scaleFactor);
@@ -210,26 +227,26 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   
   const args = [
     '-loglevel', 'info', 
-    '-thread_queue_size', '1024',
+    '-thread_queue_size', '8192', // 极致缓冲区
     '-f', 'gdigrab',
     '-framerate', '60',
     '-draw_mouse', '0',
-    '-offset_x', physicalX.toString(),
-    '-offset_y', physicalY.toString(),
+    '-offset_x', Math.round(bounds.x * scaleFactor).toString(),
+    '-offset_y', Math.round(bounds.y * scaleFactor).toString(),
     '-video_size', `${physicalW}x${physicalH}`,
     '-i', 'desktop',
-    '-vf', 'crop=trunc(iw/2)*2:trunc(ih/2)*2', 
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-tune', 'zerolatency',
-    '-crf', '18',
+    '-crf', '23', // 稍微降低一点码率以换取巨大的性能提升
+    '-threads', '0', // 使用所有核心
     '-pix_fmt', 'yuv420p',
     recordingPath,
     '-y'
   ]
 
   const { spawn } = await import('node:child_process')
-  ffmpegProcess = spawn('ffmpeg', args, {
+  ffmpegProcess = spawn(ffmpegPath, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false
   })
@@ -441,7 +458,7 @@ ipcMain.handle('convert-mp4-to-gif', async (_event, { inputPath, outputPath, wid
 
     console.log('[Main] Generating optimized GIF with filter:', filter);
     await new Promise((resolve, reject) => {
-      const p = spawn('ffmpeg', gifArgs);
+      const p = spawn(ffmpegPath, gifArgs);
       p.on('close', (code) => code === 0 ? resolve(null) : reject(new Error(`GIF generation failed with code ${code}`)));
     });
 

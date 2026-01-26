@@ -23,7 +23,7 @@ export interface AutoZoomConfig {
 }
 
 const DEFAULT_CONFIG: AutoZoomConfig = {
-  zoomScale: 2.0,
+  zoomScale: 1.8,
   dwellThreshold: 600,      // 停留 600ms 以上触发 (过滤短暂停留)
   speedThreshold: 0.2,      // 速度低于 0.2/秒 (更严格)
   zoomDuration: 2500,       // 缩放持续 2.5 秒 (更从容)
@@ -153,7 +153,7 @@ function generateIntents(
       t: point.t,
       targetCx: point.x,
       targetCy: point.y,
-      targetScale: config.zoomScale
+      targetScale: 1.8
     });
 
     // 计算本次缩放的理结束时间

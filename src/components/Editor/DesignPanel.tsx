@@ -23,7 +23,6 @@ interface DesignPanelProps {
   hideIdle: boolean;
   setHideIdle: (hide: boolean) => void;
   onResetZoom: () => void;
-  onAddManualZoom: (scale: number, cx?: number, cy?: number) => void;
   // 鼠标设置
   mouseTheme: RenderGraph['mouseTheme'];
   onUpdateMouseTheme: (updates: Partial<RenderGraph['mouseTheme']>) => void;
@@ -54,7 +53,6 @@ export const DesignPanel = memo(function DesignPanel({
   bgFile,
   setBgFile,
   onResetZoom,
-  onAddManualZoom,
   mouseTheme,
   onUpdateMouseTheme,
   mousePhysics,
@@ -123,20 +121,13 @@ export const DesignPanel = memo(function DesignPanel({
                     <span className="text-[9px] font-mono text-white/40">Z</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     <Button
                      variant="outline"
                      onClick={onResetZoom}
                      className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
                     >
                       {t.editor.resetCamera}
-                    </Button>
-                    <Button
-                     variant="outline"
-                     onClick={() => onAddManualZoom(2.5)}
-                     className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
-                    >
-                      {t.editor.fixZoom}
                     </Button>
                   </div>
                   <p className="text-[10px] text-white/30 leading-relaxed text-center italic">{t.editor.cameraTip}</p>
