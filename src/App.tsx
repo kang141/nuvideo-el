@@ -162,8 +162,8 @@ function App() {
           highlightColor: 'rgba(255,255,255,0.2)'
         },
         mousePhysics: {
-          smoothing: 0.50,
-          speedLimit: 6500
+          smoothing: 0.8,
+          speedLimit: 4000
         },
         camera: {
           intents: [],

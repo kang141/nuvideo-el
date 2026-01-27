@@ -156,10 +156,10 @@ export function useVideoRenderer({
     ctx.scale(s, s);
     ctx.translate(-camera.cx * dw, -camera.cy * dh);
 
-    if (video.readyState >= 2) {
-      ctx.drawImage(video, 0, 0, dw, dh);
-      drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, renderGraph, timestampMs);
-    }
+      if (video.readyState >= 2) {
+        ctx.drawImage(video, 0, 0, dw, dh);
+        drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, dw, dh, renderGraph, timestampMs);
+      }
     ctx.restore();
 
     // --- D. 窗口阴影边框 ---
@@ -238,42 +238,60 @@ export function useVideoRenderer({
     Circle: null, // 圆形直接用 arc 效率更高
   };
 
-  function drawSmoothMouse(ctx: CanvasRenderingContext2D, mx: number, my: number, graph: RenderGraph, t: number) {
+  function drawSmoothMouse(ctx: CanvasRenderingContext2D, mx: number, my: number, dw: number, dh: number, graph: RenderGraph, t: number) {
     const events = graph.mouse;
     const { style, showRipple, size } = graph.mouseTheme;
     if (!events || events.length === 0) return;
 
     let isDown = false;
-    let lastDownT = -9999;
-    for (let i = 0; i < events.length; i++) {
-      if (events[i].t <= t) {
-        if (events[i].type === 'down') {
-          isDown = true;
-          lastDownT = events[i].t;
-        }
-        if (events[i].type === 'up') isDown = false;
-      } else break;
-    }
-
-    ctx.save();
 
     // --- A. 点击涟漪效果 (Ripple) ---
+    // 遍历所有事件以支持多重涟漪 (Rapid Fire)
+    // 并且使用事件本身的坐标 (Fixed Position) 而非跟随鼠标
+    ctx.save();
+    
     if (showRipple) {
-      const age = t - lastDownT;
-      if (age >= 0 && age < 600) {
-        const progress = age / 600;
-        const opacity = Math.pow(1 - progress, 2);
-        const radius = progress * size * 1.5;
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        if (ev.t > t) break; // 已超过当前时间
 
-        ctx.beginPath();
-        ctx.arc(mx, my, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.5})`;
-        ctx.lineWidth = 3 * (1 - progress);
-        ctx.stroke();
+        if (ev.type === 'down') {
+          isDown = true;
+          
+          const age = t - ev.t;
+          if (age >= 0 && age < 600) {
+            const progress = age / 600;
+            const opacity = Math.pow(1 - progress, 2);
+            const r = progress * size * 1.5;
+
+            // 事件坐标归一化转换到当前画布尺寸
+            const rx = ev.x * dw;
+            const ry = ev.y * dh;
+
+            ctx.beginPath();
+            ctx.arc(rx, ry, r, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.5})`;
+            ctx.lineWidth = 3 * (1 - progress);
+            ctx.stroke();
+          }
+        } else if (ev.type === 'up') {
+          isDown = false;
+        }
+      }
+    } else {
+       // 如果不显示涟漪，为了计算 isDown 状态仍需遍历
+       for (let i = 0; i < events.length; i++) {
+        if (events[i].t > t) break;
+        if (events[i].type === 'down') isDown = true;
+        if (events[i].type === 'up') isDown = false;
       }
     }
 
-    // --- B. 绘制光标 ---
+    ctx.restore(); // 恢复 context 以绘制光标（防止上面的样式污染）
+    
+    // --- B. 绘制光标 (Cursor) ---
+    ctx.save(); // 重新 save 为光标绘制
+    
     const clickScale = isDown ? 0.85 : 1.0;
     const visualSize = size * clickScale;
 

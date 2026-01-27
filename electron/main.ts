@@ -193,6 +193,7 @@ ipcMain.handle('sync-clock', async (_event, tClient: number) => {
 
 // --- Sidecar 录制引擎 (FFmpeg) ---
 let ffmpegProcess: any = null
+let mouseMonitorProcess: any = null // PowerShell 鼠标监控进程
 let recordingPath: string = ''
 let mousePollTimer: any = null
 let recordingStartTime: number = 0
@@ -251,6 +252,44 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     shell: false
   })
 
+  // --- 启动从属鼠标点击监控 (PowerShell) ---
+  const scriptPath = path.join(process.env.APP_ROOT, 'resources', 'scripts', 'mouse-monitor.ps1');
+  // 在开发环境和生产环境中路径可能略有不同，做一下兼容
+  // 开发: resources/scripts/mouse-monitor.ps1
+  // 打包(win-unpacked): resources/resources/scripts/mouse-monitor.ps1 (取决于打包配置，通常 extraResources 放根目录)
+  const psPath = fs.existsSync(scriptPath) 
+    ? scriptPath 
+    : path.join(process.resourcesPath, 'scripts', 'mouse-monitor.ps1');
+
+  if (fs.existsSync(psPath) && process.platform === 'win32') {
+    try {
+      mouseMonitorProcess = spawn('powershell.exe', [
+        '-NoProfile', 
+        '-ExecutionPolicy', 'Bypass', 
+        '-File', psPath
+      ], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true
+      });
+      
+      mouseMonitorProcess.stdout.on('data', (data: Buffer) => {
+         const str = data.toString().trim();
+         // 按行分割，防止积压
+         const lines = str.split(/\r?\n/);
+         lines.forEach(line => {
+             const signal = line.trim();
+             if ((signal === 'DOWN' || signal === 'UP') && win && recordingStartTime) {
+                 const t = performance.now() - recordingStartTime;
+                 win.webContents.send('mouse-click', { type: signal.toLowerCase(), t });
+             }
+         });
+      });
+      console.log('[Main] Mouse monitor started:', psPath);
+    } catch (e) {
+       console.error('[Main] Failed to start mouse monitor:', e);
+    }
+  }
+
   // 监控提前崩溃：如果 FFmpeg 没坚持到 spawn 之后 1 秒，认为启动失败
   ffmpegProcess.once('exit', (code: number) => {
     if (code !== 0 && code !== null) {
@@ -306,6 +345,12 @@ ipcMain.handle('stop-sidecar-record', async () => {
      clearInterval(mousePollTimer)
      mousePollTimer = null
   }
+  
+  if (mouseMonitorProcess) {
+      mouseMonitorProcess.kill();
+      mouseMonitorProcess = null;
+  }
+  
   recordingStartTime = 0
   
   if (!ffmpegProcess) return null

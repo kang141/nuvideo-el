@@ -59,7 +59,9 @@ export const DesignPanel = memo(function DesignPanel({
   onUpdateMousePhysics,
   language
 }: DesignPanelProps) {
+  /*
   const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
+  */
   const t = translations[language];
 
   const TABS = [
@@ -68,11 +70,13 @@ export const DesignPanel = memo(function DesignPanel({
     { id: 'cursor', icon: Send, label: t.editor.cursor }
   ];
 
+  /*
   const MOUSE_PHYSICS_PRESETS = [
     { id: 'snappy', label: t.editor.snappy, smoothing: 0.30, speedLimit: 9000 },
     { id: 'balanced', label: t.editor.balanced, smoothing: 0.50, speedLimit: 6500 },
     { id: 'cinematic', label: t.editor.cinematic, smoothing: 0.68, speedLimit: 4800 },
   ] as const;
+  */
 
   return (
     <aside className="w-[320px] border-l border-white/[0.1] bg-white/[0.03] backdrop-blur-3xl flex flex-col z-40 relative">
@@ -198,76 +202,7 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
                 </section>
 
-                {/* 2. 物理效果 */}
-                <section className="space-y-5 pt-6 border-t border-white/[0.04]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.physics}</span>
-                    <div className="flex items-center gap-2 bg-white/[0.03] p-0.5 rounded-lg border border-white/[0.02]">
-                      <button
-                        onClick={() => setShowAdvancedCursorPhysics(false)}
-                        className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", !showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
-                      >{t.editor.preset}</button>
-                      <button
-                        onClick={() => setShowAdvancedCursorPhysics(true)}
-                        className={cn("px-2 py-1 text-[9px] font-bold rounded-md transition-all", showAdvancedCursorPhysics ? "bg-white/10 text-white" : "text-white/20")}
-                      >{t.editor.professional}</button>
-                    </div>
-                  </div>
-
-                  {!showAdvancedCursorPhysics ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {MOUSE_PHYSICS_PRESETS.map((p) => (
-                        <Button
-                          key={p.id}
-                          variant="outline"
-                          onClick={() => onUpdateMousePhysics({ smoothing: p.smoothing, speedLimit: p.speedLimit })}
-                          className={cn(
-                            "h-9 px-0 bg-white/[0.02] border-white/[0.04] text-white/30 hover:bg-white/[0.05] hover:text-white rounded-lg text-[10px] font-medium transition-all",
-                            Math.abs(mousePhysics.smoothing - p.smoothing) < 0.03 && Math.abs(mousePhysics.speedLimit - p.speedLimit) < 120
-                              ? "bg-white/10 text-white border-white/10 shadow-sm"
-                              : ""
-                          )}
-                        >
-                          {p.label}
-                        </Button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.smoothing}</span>
-                          <span className="text-[10px] font-mono text-emerald-400 font-bold">{(mousePhysics.smoothing * 100).toFixed(0)}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="0.95"
-                          step="0.01"
-                          value={mousePhysics.smoothing}
-                          onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
-                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                        />
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.speedLimit}</span>
-                          <span className="text-[10px] font-mono text-emerald-400 font-bold">{Math.round(mousePhysics.speedLimit)} px/s</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="600"
-                          max="9000"
-                          step="50"
-                          value={mousePhysics.speedLimit}
-                          onChange={(e) => onUpdateMousePhysics({ speedLimit: parseFloat(e.target.value) })}
-                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </section>
+      
               </motion.div>
             )}
 

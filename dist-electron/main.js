@@ -1,116 +1,174 @@
-import { protocol as M, ipcMain as a, desktopCapturer as z, app as h, dialog as L, screen as _, shell as j, BrowserWindow as D } from "electron";
-import { fileURLToPath as A } from "node:url";
-import i from "node:path";
-import m from "node:fs";
-import { performance as E } from "node:perf_hooks";
-const T = i.dirname(A(import.meta.url));
-process.env.APP_ROOT = i.join(T, "..");
-const P = process.env.VITE_DEV_SERVER_URL, N = i.join(process.env.APP_ROOT, "dist-electron"), R = i.join(process.env.APP_ROOT, "dist");
-process.env.VITE_PUBLIC = P ? i.join(process.env.APP_ROOT, "public") : R;
-const C = () => {
-  const o = !!P, t = process.platform === "win32" ? "win32" : process.platform, e = process.platform === "win32" ? ".exe" : "";
-  if (o) {
-    const r = i.join(process.env.APP_ROOT, "resources", "bin", t, `ffmpeg${e}`);
-    return m.existsSync(r) ? r : "ffmpeg";
+import { protocol, ipcMain, desktopCapturer, app, dialog, screen, shell, BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import fs from "node:fs";
+import { performance } from "node:perf_hooks";
+const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
+process.env.APP_ROOT = path.join(__dirname$1, "..");
+const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+const getFFmpegPath = () => {
+  const isDev = !!VITE_DEV_SERVER_URL;
+  const platform = process.platform === "win32" ? "win32" : process.platform;
+  const executableIdentifier = process.platform === "win32" ? ".exe" : "";
+  if (isDev) {
+    const localPkgPath = path.join(process.env.APP_ROOT, "resources", "bin", platform, `ffmpeg${executableIdentifier}`);
+    return fs.existsSync(localPkgPath) ? localPkgPath : "ffmpeg";
   }
-  return i.join(process.resourcesPath, "bin", `ffmpeg${e}`);
-}, $ = C();
-let s;
-M.registerSchemesAsPrivileged([
-  { scheme: "nuvideo", privileges: { bypassCSP: !0, stream: !0, secure: !0, standard: !0, supportFetchAPI: !0 } },
-  { scheme: "asset", privileges: { bypassCSP: !0, secure: !0, standard: !0, supportFetchAPI: !0 } }
+  return path.join(process.resourcesPath, "bin", `ffmpeg${executableIdentifier}`);
+};
+const ffmpegPath = getFFmpegPath();
+let win;
+protocol.registerSchemesAsPrivileged([
+  { scheme: "nuvideo", privileges: { bypassCSP: true, stream: true, secure: true, standard: true, supportFetchAPI: true } },
+  { scheme: "asset", privileges: { bypassCSP: true, secure: true, standard: true, supportFetchAPI: true } }
 ]);
-function k() {
-  s = new D({
+function createWindow() {
+  win = new BrowserWindow({
     width: 350,
     height: 500,
-    resizable: !1,
-    frame: !1,
-    transparent: !0,
+    resizable: false,
+    frame: false,
+    transparent: true,
     backgroundColor: "#00000000",
-    show: !1,
+    show: false,
     // 使用 PNG 格式以确保 Windows 任务栏兼容性与图标刷新
-    icon: i.join(process.env.VITE_PUBLIC, "logo.png"),
+    icon: path.join(process.env.VITE_PUBLIC, "logo.png"),
     webPreferences: {
-      preload: i.join(T, "preload.mjs"),
-      webSecurity: !0
+      preload: path.join(__dirname$1, "preload.mjs"),
+      webSecurity: true
     }
-  }), s.center(), s.once("ready-to-show", () => {
-    s == null || s.show();
-  }), s.webContents.on("did-finish-load", () => {
-    s == null || s.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
-  }), P ? s.loadURL(P) : s.loadFile(i.join(R, "index.html"));
+  });
+  win.center();
+  win.once("ready-to-show", () => {
+    win == null ? void 0 : win.show();
+  });
+  win.webContents.on("did-finish-load", () => {
+    win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  });
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL);
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, "index.html"));
+  }
 }
-a.on("resize-window", (o, { width: t, height: e, resizable: r, position: n, mode: c }) => {
-  if (s) {
-    if (c === "recording") {
-      const d = _.getPrimaryDisplay(), { width: g, height: w } = d.bounds;
-      s.setResizable(!0), s.setBounds({ x: 0, y: 0, width: g, height: w }), s.setAlwaysOnTop(!0, "screen-saver"), s.setIgnoreMouseEvents(!0, { forward: !0 });
+ipcMain.on("resize-window", (_event, { width, height, resizable, position, mode }) => {
+  if (win) {
+    if (mode === "recording") {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: sw, height: sh } = primaryDisplay.bounds;
+      win.setResizable(true);
+      win.setBounds({ x: 0, y: 0, width: sw, height: sh });
+      win.setAlwaysOnTop(true, "screen-saver");
+      win.setIgnoreMouseEvents(true, { forward: true });
       return;
     }
-    if (s.setResizable(!0), s.setSize(t, e), s.setResizable(r ?? !0), n === "bottom") {
-      const d = _.getPrimaryDisplay(), { width: g, height: w } = d.workAreaSize, v = Math.floor((g - t) / 2), b = Math.floor(w - e - 40);
-      s.setPosition(v, b), s.setAlwaysOnTop(!0, "screen-saver");
-    } else
-      s.center(), s.setAlwaysOnTop(!1), s.setIgnoreMouseEvents(!1);
+    win.setResizable(true);
+    win.setSize(width, height);
+    win.setResizable(resizable ?? true);
+    if (position === "bottom") {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+      const x = Math.floor((screenWidth - width) / 2);
+      const y = Math.floor(screenHeight - height - 40);
+      win.setPosition(x, y);
+      win.setAlwaysOnTop(true, "screen-saver");
+    } else {
+      win.center();
+      win.setAlwaysOnTop(false);
+      win.setIgnoreMouseEvents(false);
+    }
   }
 });
-a.on("set-ignore-mouse-events", (o, t, e) => {
-  s && s.setIgnoreMouseEvents(t, e);
+ipcMain.on("set-ignore-mouse-events", (_event, ignore, options) => {
+  if (win) {
+    win.setIgnoreMouseEvents(ignore, options);
+  }
 });
-a.handle("get-sources", async () => {
+ipcMain.handle("get-sources", async () => {
   try {
-    return (await z.getSources({
+    const sources = await desktopCapturer.getSources({
       types: ["window", "screen"],
       thumbnailSize: { width: 480, height: 270 },
-      fetchWindowIcons: !0
-    })).filter((e) => e.name !== "").map((e) => ({
-      id: e.id,
-      name: e.name,
-      thumbnail: e.thumbnail.toDataURL(),
-      display_id: e.display_id || ""
+      fetchWindowIcons: true
+    });
+    const validSources = sources.filter((s) => s.name !== "");
+    return validSources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL(),
+      display_id: source.display_id || ""
     }));
-  } catch (o) {
-    return console.error("[Main] get-sources failed:", o), [];
+  } catch (err) {
+    console.error("[Main] get-sources failed:", err);
+    return [];
   }
 });
-a.handle("save-temp-video", async (o, t) => {
+ipcMain.handle("save-temp-video", async (_event, arrayBuffer) => {
   try {
-    const e = h.getPath("temp"), r = `nuvideo_${Date.now()}.mp4`, n = i.join(e, r), c = Buffer.from(t);
-    m.writeFileSync(n, c);
-    const d = `nuvideo://load/${r}`;
-    return console.log("[Main] Video saved to physical path:", n), console.log("[Main] Custom URL for renderer:", d), d;
-  } catch (e) {
-    return console.error("[Main] save-temp-video failed:", e), null;
+    const tempDir = app.getPath("temp");
+    const fileName = `nuvideo_${Date.now()}.mp4`;
+    const tempPath = path.join(tempDir, fileName);
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(tempPath, buffer);
+    const customUrl = `nuvideo://load/${fileName}`;
+    console.log("[Main] Video saved to physical path:", tempPath);
+    console.log("[Main] Custom URL for renderer:", customUrl);
+    return customUrl;
+  } catch (err) {
+    console.error("[Main] save-temp-video failed:", err);
+    return null;
   }
 });
-a.handle("show-save-dialog", async (o, t = {}) => {
-  let e = "";
-  return t.defaultPath ? t.defaultName && !t.defaultPath.toLowerCase().endsWith(".mp4") && !t.defaultPath.toLowerCase().endsWith(".gif") ? e = i.join(t.defaultPath, t.defaultName) : e = t.defaultPath : e = i.join(h.getPath("videos"), t.defaultName || `nuvideo_export_${Date.now()}.mp4`), await L.showSaveDialog({
+ipcMain.handle("show-save-dialog", async (_event, options = {}) => {
+  let initialPath = "";
+  if (options.defaultPath) {
+    if (options.defaultName && !options.defaultPath.toLowerCase().endsWith(".mp4") && !options.defaultPath.toLowerCase().endsWith(".gif")) {
+      initialPath = path.join(options.defaultPath, options.defaultName);
+    } else {
+      initialPath = options.defaultPath;
+    }
+  } else {
+    initialPath = path.join(app.getPath("videos"), options.defaultName || `nuvideo_export_${Date.now()}.mp4`);
+  }
+  return await dialog.showSaveDialog({
     title: "导出视频",
-    defaultPath: e,
+    defaultPath: initialPath,
     filters: [
       { name: "Media Files", extensions: ["mp4", "gif", "webm"] }
     ],
     properties: ["showOverwriteConfirmation"]
   });
 });
-a.handle("sync-clock", async (o, t) => ({ tClient: t, tServer: E.now() }));
-let u = null, F = "", p = null, y = 0;
-a.handle("start-sidecar-record", async (o, t) => {
-  if (u) return { success: !1, error: "Recording already in progress" };
-  const e = _.getAllDisplays();
-  let r = _.getPrimaryDisplay();
-  if (t && t.startsWith("screen:")) {
-    const f = t.split(":")[1], l = e.find((I) => I.id.toString() === f);
-    l && (r = l);
+ipcMain.handle("sync-clock", async (_event, tClient) => {
+  return { tClient, tServer: performance.now() };
+});
+let ffmpegProcess = null;
+let mouseMonitorProcess = null;
+let recordingPath = "";
+let mousePollTimer = null;
+let recordingStartTime = 0;
+ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
+  if (ffmpegProcess) return { success: false, error: "Recording already in progress" };
+  const allDisplays = screen.getAllDisplays();
+  let targetDisplay = screen.getPrimaryDisplay();
+  if (sourceId && sourceId.startsWith("screen:")) {
+    const displayId = sourceId.split(":")[1];
+    const found = allDisplays.find((d) => d.id.toString() === displayId);
+    if (found) targetDisplay = found;
   }
-  const { bounds: n, scaleFactor: c } = r, d = (f) => {
-    const l = Math.round(f);
-    return l % 2 === 0 ? l : l - 1;
-  }, g = d(n.width * c), w = d(n.height * c), v = h.getPath("temp");
-  F = i.join(v, `nuvideo_raw_${Date.now()}.mkv`);
-  const b = [
+  const { bounds, scaleFactor } = targetDisplay;
+  const toEven = (val) => {
+    const v = Math.round(val);
+    return v % 2 === 0 ? v : v - 1;
+  };
+  const physicalW = toEven(bounds.width * scaleFactor);
+  const physicalH = toEven(bounds.height * scaleFactor);
+  const tempDir = app.getPath("temp");
+  recordingPath = path.join(tempDir, `nuvideo_raw_${Date.now()}.mkv`);
+  const args = [
     "-loglevel",
     "info",
     "-thread_queue_size",
@@ -123,11 +181,11 @@ a.handle("start-sidecar-record", async (o, t) => {
     "-draw_mouse",
     "0",
     "-offset_x",
-    Math.round(n.x * c).toString(),
+    Math.round(bounds.x * scaleFactor).toString(),
     "-offset_y",
-    Math.round(n.y * c).toString(),
+    Math.round(bounds.y * scaleFactor).toString(),
     "-video_size",
-    `${g}x${w}`,
+    `${physicalW}x${physicalH}`,
     "-i",
     "desktop",
     "-c:v",
@@ -144,171 +202,280 @@ a.handle("start-sidecar-record", async (o, t) => {
     // 使用所有核心
     "-pix_fmt",
     "yuv420p",
-    F,
+    recordingPath,
     "-y"
-  ], { spawn: S } = await import("node:child_process");
-  return u = S($, b, {
+  ];
+  const { spawn } = await import("node:child_process");
+  ffmpegProcess = spawn(ffmpegPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    shell: !1
-  }), u.once("exit", (f) => {
-    f !== 0 && f !== null && (console.error(`[Main] FFmpeg crashed prematurely with code ${f}`), u = null, p && clearInterval(p), y = 0);
-  }), u.stderr.on("data", (f) => {
-    const l = f.toString();
-    l.includes("frame=") ? process.stdout.write(`\r[FFmpeg Record] ${l.trim()}`) : console.log("[FFmpeg Log]", l.trim());
-  }), p && clearInterval(p), new Promise((f) => {
-    u.once("spawn", () => {
-      y = E.now(), p = setInterval(() => {
-        if (!s || !y) return;
-        const l = _.getCursorScreenPoint(), I = E.now() - y;
-        s.webContents.send("mouse-update", {
-          x: (l.x - n.x) / n.width,
-          y: (l.y - n.y) / n.height,
-          t: I
+    shell: false
+  });
+  const scriptPath = path.join(process.env.APP_ROOT, "resources", "scripts", "mouse-monitor.ps1");
+  const psPath = fs.existsSync(scriptPath) ? scriptPath : path.join(process.resourcesPath, "scripts", "mouse-monitor.ps1");
+  if (fs.existsSync(psPath) && process.platform === "win32") {
+    try {
+      mouseMonitorProcess = spawn("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        psPath
+      ], {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true
+      });
+      mouseMonitorProcess.stdout.on("data", (data) => {
+        const str = data.toString().trim();
+        const lines = str.split(/\r?\n/);
+        lines.forEach((line) => {
+          const signal = line.trim();
+          if ((signal === "DOWN" || signal === "UP") && win && recordingStartTime) {
+            const t = performance.now() - recordingStartTime;
+            win.webContents.send("mouse-click", { type: signal.toLowerCase(), t });
+          }
         });
-      }, 16), f({ success: !0, bounds: n, t0: y });
-    }), u.once("error", (l) => {
-      p && clearInterval(p), u = null, y = 0, f({ success: !1, error: l.message });
+      });
+      console.log("[Main] Mouse monitor started:", psPath);
+    } catch (e) {
+      console.error("[Main] Failed to start mouse monitor:", e);
+    }
+  }
+  ffmpegProcess.once("exit", (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[Main] FFmpeg crashed prematurely with code ${code}`);
+      ffmpegProcess = null;
+      if (mousePollTimer) clearInterval(mousePollTimer);
+      recordingStartTime = 0;
+    }
+  });
+  ffmpegProcess.stderr.on("data", (data) => {
+    const log = data.toString();
+    if (log.includes("frame=")) {
+      process.stdout.write(`\r[FFmpeg Record] ${log.trim()}`);
+    } else {
+      console.log("[FFmpeg Log]", log.trim());
+    }
+  });
+  if (mousePollTimer) clearInterval(mousePollTimer);
+  return new Promise((resolve) => {
+    ffmpegProcess.once("spawn", () => {
+      recordingStartTime = performance.now();
+      mousePollTimer = setInterval(() => {
+        if (!win || !recordingStartTime) return;
+        const point = screen.getCursorScreenPoint();
+        const t = performance.now() - recordingStartTime;
+        win.webContents.send("mouse-update", {
+          x: (point.x - bounds.x) / bounds.width,
+          y: (point.y - bounds.y) / bounds.height,
+          t
+        });
+      }, 16);
+      resolve({ success: true, bounds, t0: recordingStartTime });
+    });
+    ffmpegProcess.once("error", (err) => {
+      if (mousePollTimer) clearInterval(mousePollTimer);
+      ffmpegProcess = null;
+      recordingStartTime = 0;
+      resolve({ success: false, error: err.message });
     });
   });
 });
-a.handle("stop-sidecar-record", async () => {
-  if (p && (clearInterval(p), p = null), y = 0, !u) return null;
-  const o = u;
-  return u = null, new Promise((t) => {
-    const e = setTimeout(() => {
+ipcMain.handle("stop-sidecar-record", async () => {
+  if (mousePollTimer) {
+    clearInterval(mousePollTimer);
+    mousePollTimer = null;
+  }
+  if (mouseMonitorProcess) {
+    mouseMonitorProcess.kill();
+    mouseMonitorProcess = null;
+  }
+  recordingStartTime = 0;
+  if (!ffmpegProcess) return null;
+  const proc = ffmpegProcess;
+  ffmpegProcess = null;
+  return new Promise((resolve) => {
+    const forceKillTimer = setTimeout(() => {
       console.warn("[Main] FFmpeg flush timeout, forcing kill...");
       try {
-        o.kill("SIGKILL");
+        proc.kill("SIGKILL");
       } catch {
       }
     }, 3e3);
-    o.once("close", () => {
-      clearTimeout(e);
-      const r = i.basename(F);
-      t(`nuvideo://load/${r}`);
+    proc.once("close", () => {
+      clearTimeout(forceKillTimer);
+      const fileName = path.basename(recordingPath);
+      resolve(`nuvideo://load/${fileName}`);
     });
     try {
-      o.stdin.write(`q
-`), o.stdin.end();
-    } catch {
-      o.kill("SIGKILL");
+      proc.stdin.write("q\n");
+      proc.stdin.end();
+    } catch (e) {
+      proc.kill("SIGKILL");
     }
   });
 });
-a.handle("save-exported-video", async (o, { arrayBuffer: t, targetPath: e }) => {
+ipcMain.handle("save-exported-video", async (_event, { arrayBuffer, targetPath }) => {
   try {
-    const r = Buffer.from(t);
-    if (!r.length)
+    const buffer = Buffer.from(arrayBuffer);
+    if (!buffer.length) {
       throw new Error("Export failed: empty export buffer (no frames recorded).");
-    return m.writeFileSync(e, r), console.log("[Main] Export successful:", e), { success: !0 };
-  } catch (r) {
-    return console.error("[Main] save-exported-video failed:", r), { success: !1, error: r.message };
+    }
+    fs.writeFileSync(targetPath, buffer);
+    console.log("[Main] Export successful:", targetPath);
+    return { success: true };
+  } catch (err) {
+    console.error("[Main] save-exported-video failed:", err);
+    return { success: false, error: err.message };
   }
 });
-const x = /* @__PURE__ */ new Map();
-a.handle("open-export-stream", async (o, { targetPath: t }) => {
+const activeExportStreams = /* @__PURE__ */ new Map();
+ipcMain.handle("open-export-stream", async (_event, { targetPath }) => {
   try {
-    const e = m.openSync(t, "w"), r = `export_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    return x.set(r, { fd: e, path: t, bytesWritten: 0 }), console.log("[Main] Export stream opened:", t), { success: !0, streamId: r };
-  } catch (e) {
-    return console.error("[Main] open-export-stream failed:", e), { success: !1, error: e.message };
+    const fd = fs.openSync(targetPath, "w");
+    const streamId = `export_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    activeExportStreams.set(streamId, { fd, path: targetPath, bytesWritten: 0 });
+    console.log("[Main] Export stream opened:", targetPath);
+    return { success: true, streamId };
+  } catch (err) {
+    console.error("[Main] open-export-stream failed:", err);
+    return { success: false, error: err.message };
   }
 });
-a.handle("write-export-chunk", async (o, { streamId: t, chunk: e }) => {
+ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk }) => {
   try {
-    const r = x.get(t);
-    if (!r)
-      throw new Error(`Stream ${t} not found`);
-    const n = Buffer.from(e);
-    return m.writeSync(r.fd, n), r.bytesWritten += n.length, { success: !0, bytesWritten: r.bytesWritten };
-  } catch (r) {
-    return console.error("[Main] write-export-chunk failed:", r), { success: !1, error: r.message };
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) {
+      throw new Error(`Stream ${streamId} not found`);
+    }
+    const buffer = Buffer.from(chunk);
+    fs.writeSync(handle.fd, buffer);
+    handle.bytesWritten += buffer.length;
+    return { success: true, bytesWritten: handle.bytesWritten };
+  } catch (err) {
+    console.error("[Main] write-export-chunk failed:", err);
+    return { success: false, error: err.message };
   }
 });
-a.handle("close-export-stream", async (o, { streamId: t }) => {
+ipcMain.handle("close-export-stream", async (_event, { streamId }) => {
   try {
-    const e = x.get(t);
-    if (!e)
-      throw new Error(`Stream ${t} not found`);
-    return m.closeSync(e.fd), x.delete(t), console.log(`[Main] Export stream closed: ${e.path} (${e.bytesWritten} bytes)`), { success: !0, totalBytes: e.bytesWritten };
-  } catch (e) {
-    return console.error("[Main] close-export-stream failed:", e), { success: !1, error: e.message };
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) {
+      throw new Error(`Stream ${streamId} not found`);
+    }
+    fs.closeSync(handle.fd);
+    activeExportStreams.delete(streamId);
+    console.log(`[Main] Export stream closed: ${handle.path} (${handle.bytesWritten} bytes)`);
+    return { success: true, totalBytes: handle.bytesWritten };
+  } catch (err) {
+    console.error("[Main] close-export-stream failed:", err);
+    return { success: false, error: err.message };
   }
 });
-a.handle("show-item-in-folder", async (o, t) => {
-  t && j.showItemInFolder(t);
-});
-a.handle("delete-file", async (o, t) => {
-  try {
-    return m.existsSync(t) ? (m.unlinkSync(t), { success: !0 }) : { success: !1, error: "File not found" };
-  } catch (e) {
-    return { success: !1, error: e.message };
+ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
+  if (filePath) {
+    shell.showItemInFolder(filePath);
   }
 });
-a.handle("convert-mp4-to-gif", async (o, { inputPath: t, outputPath: e, width: r, fps: n = 30 }) => {
+ipcMain.handle("delete-file", async (_event, filePath) => {
   try {
-    const { spawn: c } = await import("node:child_process"), d = `fps=${n},scale=${r}:-1:flags=lanczos:sws_dither=none,split[s0][s1];[s0]palettegen=max_colors=256:stats_mode=full[p];[s1][p]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`, g = [
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return { success: true };
+    }
+    return { success: false, error: "File not found" };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("convert-mp4-to-gif", async (_event, { inputPath, outputPath, width, fps = 30 }) => {
+  try {
+    const { spawn } = await import("node:child_process");
+    const filter = `fps=${fps},scale=${width}:-1:flags=lanczos:sws_dither=none,split[s0][s1];[s0]palettegen=max_colors=256:stats_mode=full[p];[s1][p]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`;
+    const gifArgs = [
       "-i",
-      t,
+      inputPath,
       "-vf",
-      d,
+      filter,
       "-y",
-      e
+      outputPath
     ];
-    return console.log("[Main] Generating optimized GIF with filter:", d), await new Promise((w, v) => {
-      c($, g).on("close", (S) => S === 0 ? w(null) : v(new Error(`GIF generation failed with code ${S}`)));
-    }), m.existsSync(t) && m.unlinkSync(t), { success: !0 };
-  } catch (c) {
-    return console.error("[Main] convert-mp4-to-gif failed:", c), { success: !1, error: c.message };
+    console.log("[Main] Generating optimized GIF with filter:", filter);
+    await new Promise((resolve, reject) => {
+      const p = spawn(ffmpegPath, gifArgs);
+      p.on("close", (code) => code === 0 ? resolve(null) : reject(new Error(`GIF generation failed with code ${code}`)));
+    });
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    return { success: true };
+  } catch (err) {
+    console.error("[Main] convert-mp4-to-gif failed:", err);
+    return { success: false, error: err.message };
   }
 });
-h.on("will-quit", () => {
-  u && u.kill("SIGKILL");
+app.on("will-quit", () => {
+  if (ffmpegProcess) {
+    ffmpegProcess.kill("SIGKILL");
+  }
 });
-h.on("window-all-closed", () => {
-  process.platform !== "darwin" && (h.quit(), s = null);
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+    win = null;
+  }
 });
-h.on("activate", () => {
-  D.getAllWindows().length === 0 && k();
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
-h.whenReady().then(() => {
-  M.registerFileProtocol("nuvideo", (o, t) => {
-    const e = o.url.replace("nuvideo://load/", "");
+app.whenReady().then(() => {
+  protocol.registerFileProtocol("nuvideo", (request, callback) => {
+    const url = request.url.replace("nuvideo://load/", "");
     try {
-      const r = i.join(h.getPath("temp"), e);
-      t({ path: r });
-    } catch (r) {
-      console.error("Failed to register protocol", r);
+      const filePath = path.join(app.getPath("temp"), url);
+      callback({ path: filePath });
+    } catch (error) {
+      console.error("Failed to register protocol", error);
     }
-  }), M.registerFileProtocol("asset", (o, t) => {
-    let e = o.url.replace("asset://", "");
-    e.startsWith("/") && (e = e.substring(1));
-    let r = "";
-    P ? r = i.join(process.env.VITE_PUBLIC, e) : r = i.join(R, e), t({ path: i.normalize(r) });
-  }), k();
+  });
+  protocol.registerFileProtocol("asset", (request, callback) => {
+    let assetPath = request.url.replace("asset://", "");
+    if (assetPath.startsWith("/")) assetPath = assetPath.substring(1);
+    let fullPath = "";
+    if (VITE_DEV_SERVER_URL) {
+      fullPath = path.join(process.env.VITE_PUBLIC, assetPath);
+    } else {
+      fullPath = path.join(RENDERER_DIST, assetPath);
+    }
+    callback({ path: path.normalize(fullPath) });
+  });
+  createWindow();
 });
-a.on("window-control", (o, t, e) => {
-  if (s)
-    switch (t) {
-      case "set-content-protection":
-        s.setContentProtection(!!e);
-        break;
-      case "minimize":
-        s.minimize();
-        break;
-      case "toggle-maximize":
-        s.isMaximized() ? s.unmaximize() : s.maximize();
-        break;
-      case "toggle-fullscreen":
-        s.setFullScreen(!s.isFullScreen());
-        break;
-      case "close":
-        s.close();
-        break;
-    }
+ipcMain.on("window-control", (_event, action, value) => {
+  if (!win) return;
+  switch (action) {
+    case "set-content-protection":
+      win.setContentProtection(!!value);
+      break;
+    case "minimize":
+      win.minimize();
+      break;
+    case "toggle-maximize":
+      if (win.isMaximized()) {
+        win.unmaximize();
+      } else {
+        win.maximize();
+      }
+      break;
+    case "toggle-fullscreen":
+      win.setFullScreen(!win.isFullScreen());
+      break;
+    case "close":
+      win.close();
+      break;
+  }
 });
 export {
-  N as MAIN_DIST,
-  R as RENDERER_DIST,
-  P as VITE_DEV_SERVER_URL
+  MAIN_DIST,
+  RENDERER_DIST,
+  VITE_DEV_SERVER_URL
 };

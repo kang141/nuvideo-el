@@ -169,10 +169,7 @@ export function useVideoExport({
           const processFrame = async (_now: number, metadata: VideoFrameCallbackMetadata) => {
             if (!isExportingRef.current || encoderError) {
               video.pause();
-              // 取消后续帧回调
-              if (typeof (video as any).cancelVideoFrameCallback === 'function') {
-                (video as any).cancelVideoFrameCallback(vfcId);
-              }
+              cleanup(); // 清理监听器
               if (encoderError) reject(encoderError);
               else resolve();
               return;
@@ -184,6 +181,7 @@ export function useVideoExport({
             // 检查是否超过导出时长
             if (mediaTimeSec >= durationSeconds) {
               video.pause();
+              cleanup();
               resolve();
               return;
             }
@@ -224,10 +222,27 @@ export function useVideoExport({
             vfcId = (video as any).requestVideoFrameCallback(processFrame);
           };
 
+          // 监听视频自然结束 (防止源视频短于预期导致 rVFC 停止触发而挂起)
+          const onVideoEnded = () => {
+             console.warn('[useVideoExport] Video ended prematurely, finishing export');
+             cleanup();
+             resolve();
+          };
+
+          const cleanup = () => {
+             video.removeEventListener('ended', onVideoEnded);
+             if (vfcId) (video as any).cancelVideoFrameCallback(vfcId);
+          };
+
+          video.addEventListener('ended', onVideoEnded);
+
           // 开始播放并捕获帧
           vfcId = (video as any).requestVideoFrameCallback(processFrame);
           video.playbackRate = 1.0; // 实时速度
-          video.play().catch(reject);
+          video.play().catch((e) => {
+             cleanup();
+             reject(e);
+          });
         });
       } else {
         // Fallback：逐帧 seek 模式（保留兼容性）

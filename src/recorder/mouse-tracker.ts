@@ -30,25 +30,21 @@ export class MouseTracker {
       });
     });
 
-    window.addEventListener('mousedown', () => {
-      const t = this.getRelativeTime();
-      if (t === null) return;
-      const last = this.events[this.events.length - 1];
-      if (last) {
-        const tt = Math.max(t, this.lastEventT);
-      this.lastEventT = tt;
-      this.events.push({ ...last, type: 'down', t: tt });
-      }
-    });
+    (window as any).ipcRenderer.on('mouse-click', (_: any, payload: { type: 'down' | 'up', t: number }) => {
+      if (!this.isTracking) return;
+      const t = Math.max(payload.t, this.lastEventT);
+      this.lastEventT = t;
 
-    window.addEventListener('mouseup', () => {
-      const t = this.getRelativeTime();
-      if (t === null) return;
       const last = this.events[this.events.length - 1];
+      // 如果没有 move 事件作为参照坐标 (虽然很少见)，只能丢弃或假设(0,0)
+      // 但由于 move 是高频轮询，通常肯定会有 last
       if (last) {
-        const tt = Math.max(t, this.lastEventT);
-      this.lastEventT = tt;
-      this.events.push({ ...last, type: 'up', t: tt });
+        this.events.push({
+          t,
+          x: last.x,
+          y: last.y,
+          type: payload.type
+        });
       }
     });
   }
