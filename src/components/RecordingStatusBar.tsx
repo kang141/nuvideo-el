@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { Language, translations } from '@/i18n/translations';
 import { motion } from 'framer-motion';
+import { useRef, useEffect } from 'react';
 
 interface RecordingStatusBarProps {
   duration: number;
@@ -23,6 +24,7 @@ export function RecordingStatusBar({
   language
 }: RecordingStatusBarProps) {
   const t = translations[language];
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -34,16 +36,32 @@ export function RecordingStatusBar({
   };
 
   const handleMouseEnter = () => {
+    // 清除之前的延迟切换，立即切换到可交互
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
     (window as any).ipcRenderer?.send('set-ignore-mouse-events', false);
   };
 
   const handleMouseLeave = () => {
-    (window as any).ipcRenderer?.send('set-ignore-mouse-events', true, { forward: true });
+    // 延迟 150ms 再切换回穿透，避免快速进出时频繁切换
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      (window as any).ipcRenderer?.send('set-ignore-mouse-events', true, { forward: true });
+    }, 150);
   };
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="fixed inset-x-0 bottom-10 flex items-center justify-center z-[999999] pointer-events-none px-10">
-      <motion.div 
+      <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         onMouseEnter={handleMouseEnter}
@@ -66,7 +84,7 @@ export function RecordingStatusBar({
         {/* 控制组 */}
         <div className="flex items-center gap-0.5">
           {/* 暂停/继续 */}
-          <button 
+          <button
             onClick={isPaused ? onResume : onPause}
             className={`p-2.5 rounded-full transition-all ${isPaused ? 'text-amber-500 hover:bg-amber-500/10' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}`}
           >
@@ -76,7 +94,7 @@ export function RecordingStatusBar({
           <div className="w-px h-5 bg-white/10 mx-1.5" />
 
           {/* STOP 按钮 */}
-          <button 
+          <button
             onClick={onStop}
             className="ml-2 group relative flex h-10 px-4 items-center justify-center gap-2 rounded-full bg-white text-black font-bold text-sm hover:scale-105 active:scale-95 transition-all shadow-[0_4px_15px_rgba(255,255,255,0.3)] overflow-hidden"
           >

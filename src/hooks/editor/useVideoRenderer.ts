@@ -2,6 +2,7 @@
 import { EDITOR_CANVAS_SIZE } from '../../constants/editor';
 import { RenderGraph } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
+import { VideoFrameManager } from '../../core/video-decoder';
 
 interface UseVideoRendererOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -27,6 +28,8 @@ export function useVideoRenderer({
   const vfcRef = useRef<number | null>(null);
   const videoSizeRef = useRef({ width: 1920, height: 1080 });
   const layoutRef = useRef({ dx: 0, dy: 0, dw: 0, dh: 0, r: 32 });
+  const frameManagerRef = useRef<VideoFrameManager | null>(null);
+  const lastDrawnTsRef = useRef<number>(-1);
 
   // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
@@ -34,7 +37,7 @@ export function useVideoRenderer({
   // 绘制/刷新离屏静态层
   const updateOffscreen = (vw: number, vh: number) => {
     if (!bgImageRef.current) return;
-    
+
     if (!offscreenRef.current) {
       offscreenRef.current = document.createElement('canvas');
       offscreenRef.current.width = EDITOR_CANVAS_SIZE.width;
@@ -48,10 +51,10 @@ export function useVideoRenderer({
 
     const { width: W, height: H } = EDITOR_CANVAS_SIZE;
     oCtx.clearRect(0, 0, W, H);
-    
+
     // 1. 绘制底图
     oCtx.drawImage(img, 0, 0, W, H);
-    
+
     // 2. 根据视频比例计算布局并绘制窗口阴影 + 黑底
     const layout = calculateLayout(W, H, vw, vh);
     layoutRef.current = layout; // 缓存布局
@@ -80,13 +83,33 @@ export function useVideoRenderer({
         setIsReady(true);
         isFirstLoadRef.current = false;
       }
-      
+
       const video = videoRef.current;
-      if (video) requestAnimationFrame(() => renderFrame(video.currentTime * 1000));
+      if (video) requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
     };
   }, [bgCategory, bgFile]);
 
-  // 监听视频元数据变化
+  // 启动 WebCodecs FrameManager
+  useEffect(() => {
+    const videoSource = renderGraph.videoSource;
+    if (!videoSource) return;
+
+    const manager = new VideoFrameManager();
+    frameManagerRef.current = manager;
+
+    manager.initialize(videoSource).then(() => {
+      // 解码器就绪后，我们可能需要根据视频实际尺寸更新布局
+      // 注意：WebCodecs 解码器加载后会自动解析尺寸
+      console.log('[useVideoRenderer] WebCodecs Manager initialized');
+    });
+
+    return () => {
+      manager.destroy();
+      frameManagerRef.current = null;
+    };
+  }, [renderGraph.videoSource]);
+
+  // 监听视频元数据变化 (保持兼容性，用于获取尺寸和初始触发)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -95,8 +118,7 @@ export function useVideoRenderer({
       if (video.videoWidth && video.videoHeight) {
         videoSizeRef.current = { width: video.videoWidth, height: video.videoHeight };
         updateOffscreen(video.videoWidth, video.videoHeight);
-        // 元数据加载后强制刷新一帧
-        requestAnimationFrame(() => renderFrame(video.currentTime * 1000));
+        requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
       }
     };
 
@@ -104,7 +126,7 @@ export function useVideoRenderer({
     if (video.readyState >= 1) onMetadata();
 
     return () => video.removeEventListener('loadedmetadata', onMetadata);
-  }, [videoRef, isReady]);
+  }, [videoRef, isReady, renderGraph.videoSource]);
 
   // 辅助函数：计算布局
   const calculateLayout = (W: number, H: number, videoW: number, videoH: number) => {
@@ -128,7 +150,7 @@ export function useVideoRenderer({
 
   // 核心渲染逻辑 (可重复调用)
   // 注意：调用前需确保 canvas.width/height 已正确设置
-  const renderFrame = (timestampMs: number) => {
+  const renderFrame = async (timestampMs: number) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) return;
@@ -150,16 +172,42 @@ export function useVideoRenderer({
     ctx.beginPath();
     ctx.roundRect(dx, dy, dw, dh, r);
     ctx.clip();
-    
+
     // 内容变换
     ctx.translate(dx + dw / 2, dy + dh / 2);
     ctx.scale(s, s);
     ctx.translate(-camera.cx * dw, -camera.cy * dh);
 
-      if (video.readyState >= 2) {
-        ctx.drawImage(video, 0, 0, dw, dh);
+    // --- WebCodecs 核心渲染逻辑 ---
+    const manager = frameManagerRef.current;
+    if (manager) {
+      const requestedTs = timestampMs;
+
+      try {
+        const frame = await manager.getFrame(requestedTs);
+        const isStale = requestedTs < lastDrawnTsRef.current;
+        if (!isStale) {
+          if (frame) {
+            // translate/clip 已经处理了坐标系，这里从 0, 0 开始画
+            ctx.drawImage(frame, 0, 0, dw, dh);
+            lastDrawnTsRef.current = requestedTs;
+          } else if (video.readyState >= 2) {
+            ctx.drawImage(video, 0, 0, dw, dh);
+          }
+        }
+
+        // 无论帧是否过期，鼠标都要画出来，避免闪烁/消失
         drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, dw, dh, renderGraph, timestampMs);
+      } catch {
+        if (video.readyState >= 2) {
+          ctx.drawImage(video, 0, 0, dw, dh);
+          drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, dw, dh, renderGraph, timestampMs);
+        }
       }
+    } else if (video.readyState >= 2) {
+      ctx.drawImage(video, 0, 0, dw, dh);
+      drawSmoothMouse(ctx, camera.mx * dw, camera.my * dh, dw, dh, renderGraph, timestampMs);
+    }
     ctx.restore();
 
     // --- D. 窗口阴影边框 ---
@@ -187,7 +235,7 @@ export function useVideoRenderer({
 
     const renderFromCurrentTime = () => {
       if (stopped) return;
-      renderFrame(video.currentTime * 1000);
+      void renderFrame(video.currentTime * 1000);
     };
 
     // 暂停/拖动进度条时没有新帧，事件触发时手动重绘一次。
@@ -204,7 +252,7 @@ export function useVideoRenderer({
     if (hasVfc) {
       const onVfc = (_now: number, metadata: VideoFrameCallbackMetadata) => {
         if (stopped) return;
-        renderFrame(metadata.mediaTime * 1000);
+        void renderFrame(metadata.mediaTime * 1000);
         vfcRef.current = (video as any).requestVideoFrameCallback(onVfc);
       };
       vfcRef.current = (video as any).requestVideoFrameCallback(onVfc);
@@ -227,7 +275,7 @@ export function useVideoRenderer({
       video.removeEventListener('loadeddata', onLoadedData);
 
       if (vfcRef.current != null && typeof (video as any).cancelVideoFrameCallback === 'function') {
-        try { (video as any).cancelVideoFrameCallback(vfcRef.current); } catch {}
+        try { (video as any).cancelVideoFrameCallback(vfcRef.current); } catch { }
         vfcRef.current = null;
       }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -251,7 +299,7 @@ export function useVideoRenderer({
     // 遍历所有事件以支持多重涟漪 (Rapid Fire)
     // 并且使用事件本身的坐标 (Fixed Position) 而非跟随鼠标
     ctx.save();
-    
+
     if (showRipple) {
       for (let i = 0; i < events.length; i++) {
         const ev = events[i];
@@ -259,7 +307,7 @@ export function useVideoRenderer({
 
         if (ev.type === 'down') {
           isDown = true;
-          
+
           const age = t - ev.t;
           if (age >= 0 && age < 600) {
             const progress = age / 600;
@@ -281,8 +329,8 @@ export function useVideoRenderer({
         }
       }
     } else {
-       // 如果不显示涟漪，为了计算 isDown 状态仍需遍历
-       for (let i = 0; i < events.length; i++) {
+      // 如果不显示涟漪，为了计算 isDown 状态仍需遍历
+      for (let i = 0; i < events.length; i++) {
         if (events[i].t > t) break;
         if (events[i].type === 'down') isDown = true;
         if (events[i].type === 'up') isDown = false;
@@ -290,10 +338,10 @@ export function useVideoRenderer({
     }
 
     ctx.restore(); // 恢复 context 以绘制光标（防止上面的样式污染）
-    
+
     // --- B. 绘制光标 (Cursor) ---
     ctx.save(); // 重新 save 为光标绘制
-    
+
     const clickScale = isDown ? 0.85 : 1.0;
     const visualSize = size * clickScale;
 

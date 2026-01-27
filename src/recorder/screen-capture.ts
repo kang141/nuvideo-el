@@ -39,8 +39,8 @@ export class ScreenRecorder {
   /**
    * 停止录制并返回视频路径
    */
-  async stop(): Promise<string> {
-    if (!this._isRecording || this._isStopping) return '';
+  async stop(): Promise<{ recordingPath: string, sessionId: string } | null> {
+    if (!this._isRecording || this._isStopping) return null;
     this._isStopping = true;
 
     try {
@@ -49,19 +49,17 @@ export class ScreenRecorder {
       // 1. 关闭内容保护
       await (window as any).ipcRenderer.send('window-control', 'set-content-protection', false);
 
-      // 2. 调用主进程停止 FFmpeg 并获取路径
-      const videoUrl = await (window as any).ipcRenderer.invoke('stop-sidecar-record');
+      const result = await (window as any).ipcRenderer.invoke('stop-sidecar-record');
       
       this._isRecording = false;
       this._isStopping = false;
-      console.log('[ScreenRecorder] Sidecar stopped. URL:', videoUrl);
       
-      return videoUrl || '';
+      return result || null;
     } catch (err) {
       console.error('[ScreenRecorder] Stop failed:', err);
       this._isRecording = false;
       this._isStopping = false;
-      return '';
+      return null;
     }
   }
 

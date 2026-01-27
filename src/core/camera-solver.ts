@@ -121,26 +121,30 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   const sm = Math.max(0, Math.min(1, graph.mousePhysics.smoothing));
   const isInstantMouse = sm < 0.001;
 
-  // 镜头配置 - 强制使用极慢的丝滑参数（ScreenStudio 风格）
-  // 注意：这里暂时忽略 graph.camera.springConfig，确保旧项目也能立刻享受到如丝般顺滑
-  const camConfig = {
-    stiffness: 40,   // 从 80 再降到 40，极慢，像电影镜头一样
-    damping: 20,     // 配合 stiffness 40 的过阻尼 (Ratio ~1.58)，无回弹
-  };
+  // 镜头配置：优先使用 graph.camera.springConfig；否则使用更慢、更阻尼的默认值
+  const camConfig = (() => {
+    const cfg = graph.camera?.springConfig;
+    const stiffness = typeof cfg?.stiffness === 'number' ? cfg.stiffness : 28;
+    const damping = typeof cfg?.damping === 'number' ? cfg.damping : 18;
+    return {
+      stiffness: Math.max(1, stiffness),
+      damping: Math.max(0, damping),
+    };
+  })();
 
   // 鼠标物理配置优化（核心：确保过阻尼，消除震荡）
   const mouseConfig = (() => {
-    // 刚度随平滑度降低而增加
-    const stiffness = 2800 - sm * 1600;
-    // 阻尼比：必须 >= 1.0 (临界阻尼) 才能保证没有回弹晃动
-    const dampingRatio = 1.15 + sm * 1.5;
-    const damping = 2 * Math.sqrt(stiffness) * dampingRatio;
+    // 刚度随平滑度降低而增加（整体降速，避免“太快眩晕”）
+    const stiffness = 1600 - sm * 1200;
+    // 阻尼比：保持过阻尼，避免回弹晃动
+    const dampingRatio = 1.35 + sm * 1.6;
+    const damping = 2 * Math.sqrt(Math.max(1, stiffness)) * dampingRatio;
 
     const outW = graph.config.outputWidth || 1920;
     const speedLimitPx = graph.mousePhysics.speedLimit || 6000;
-    const maxSpeed = Math.max(0.25, speedLimitPx / outW);
+    const maxSpeed = Math.max(0.12, (speedLimitPx / outW) * 0.6);
 
-    return { stiffness, damping, maxSpeed };
+    return { stiffness: Math.max(1, stiffness), damping: Math.max(0, damping), maxSpeed };
   })();
 
   // ============ 增量模式：从缓存继续积分 ============
@@ -225,14 +229,14 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     // 2. 镜头跟随
     // 如果开启了 autoZoom 且当前没有强制覆盖的 intent（或者只有全局 intent），则应用自动逻辑
     const hasManualIntent = intents.some(i => i.t > 10); // 简单判定：T>10ms 的通常是手动添加的
-    
+
     let targetScale = active.targetScale;
     let targetCx = state.cx;
     let targetCy = state.cy;
 
     // 自动缩放逻辑：当开启了全局 autoZoom 且当前没有活跃的手动覆盖意图时生效
     if (graph.autoZoom && !hasManualIntent && rawMouse) {
-        targetScale = AUTO_ZOOM_SCALE;
+      targetScale = AUTO_ZOOM_SCALE;
     }
 
     if (targetScale > 1.01 && rawMouse) {

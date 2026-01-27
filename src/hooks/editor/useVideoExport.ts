@@ -10,7 +10,7 @@ interface UseVideoExportOptions {
   exportDuration?: number;
   onSeek: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
-  renderFrame: (timestampMs: number) => void;
+  renderFrame: (timestampMs: number) => void | Promise<void>;
   isExporting: boolean;
   setIsExporting: (v: boolean) => void;
 }
@@ -87,7 +87,7 @@ export function useVideoExport({
 
       const width = canvas.width;
       const height = canvas.height;
-      
+
       // 使用 mp4-muxer 自带的 StreamTarget 以通过 instanceof 检查
       const muxerTarget = new StreamTarget({
         onData: (chunk, position) => {
@@ -103,7 +103,7 @@ export function useVideoExport({
 
       // 2. 选择编码器 (如果是 GIF 模式则优先尝试 VP9 以获得更好色彩)
       const configCandidates: VideoEncoderConfig[] = [];
-      
+
       if (isGif) {
         configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' });
         configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' });
@@ -160,7 +160,7 @@ export function useVideoExport({
       // video.muted = true; // 保持静音以避免干扰，或者如果我们需要捕获音频，这里需要调整
       setIsPlaying(false);
       onSeek(0);
-      
+
       await new Promise(r => {
         const onSeeked = () => {
           video.removeEventListener('seeked', onSeeked);
@@ -220,7 +220,7 @@ export function useVideoExport({
             }
 
             // 渲染当前帧
-            renderFrame(mediaTimeMs);
+            await renderFrame(mediaTimeMs);
 
             // 编码当前帧
             const timestampUs = Math.round(mediaTimeSec * 1_000_000);
@@ -245,14 +245,14 @@ export function useVideoExport({
 
           // 监听视频自然结束 (防止源视频短于预期导致 rVFC 停止触发而挂起)
           const onVideoEnded = () => {
-             console.warn('[useVideoExport] Video ended prematurely, finishing export');
-             cleanup();
-             resolve();
+            console.warn('[useVideoExport] Video ended prematurely, finishing export');
+            cleanup();
+            resolve();
           };
 
           const cleanup = () => {
-             video.removeEventListener('ended', onVideoEnded);
-             if (vfcId) (video as any).cancelVideoFrameCallback(vfcId);
+            video.removeEventListener('ended', onVideoEnded);
+            if (vfcId) (video as any).cancelVideoFrameCallback(vfcId);
           };
 
           video.addEventListener('ended', onVideoEnded);
@@ -261,8 +261,8 @@ export function useVideoExport({
           vfcId = (video as any).requestVideoFrameCallback(processFrame);
           video.playbackRate = 1.0; // 实时速度
           video.play().catch((e) => {
-             cleanup();
-             reject(e);
+            cleanup();
+            reject(e);
           });
         });
       } else {
@@ -275,10 +275,10 @@ export function useVideoExport({
           if (!isExportingRef.current) break;
 
           const mediaTime = i * timeStep;
-          
+
           // 手动驱动视频到目标时间点
           video.currentTime = mediaTime;
-          
+
           // 等待 Seek 完成
           await new Promise(r => {
             const onSeeked = () => {
@@ -296,7 +296,7 @@ export function useVideoExport({
           }
 
           // 同步渲染 Canvas
-          renderFrame(mediaTime * 1000);
+          await renderFrame(mediaTime * 1000);
 
           // 发送到编码器
           const timestampUs = Math.round(mediaTime * 1_000_000);
@@ -318,17 +318,17 @@ export function useVideoExport({
 
       await encoder.flush();
       encoder.close();
-      
+
       // Muxer finalize 可能会触发 moov Header 的回填写入
-      muxer.finalize(); 
-      
+      muxer.finalize();
+
       // 这里的 finalize 是同步的吗？mp4-muxer 文档说是同步的，但我们的 Target.write 是 async。
       // mp4-muxer 在调用 write 时不等待 Promise？
       // 注意：由于 JS 单线程，mp4-muxer 内部逻辑是同步执行的，它会连续发出多个 write 调用。
       // 我们的 ElectronStreamTarget.write 会返回 Promise，但 mp4-muxer 可能忽略了它。
       // 为确保所有写入（特别是 moov）都已发给主进程，我们需要一个短暂的 buffer 刷新机制。
       // 不过由于 IPC 是顺序的，只要 finalize 执行完，所有请求应该都已入队。
-      
+
       // 给一点时间让最后的 IPC 飞一会儿
       await new Promise(r => setTimeout(r, 200));
 
@@ -344,7 +344,7 @@ export function useVideoExport({
       const closeResult = await (window as any).ipcRenderer.invoke('close-export-stream', {
         streamId
       });
-      
+
       if (!closeResult.success) {
         throw new Error(`Failed to close export stream: ${closeResult.error}`);
       }
@@ -353,7 +353,7 @@ export function useVideoExport({
 
       const elapsed = (performance.now() - startTime) / 1000;
       console.log(`[useVideoExport] Export finished: ${encodedFrames} frames in ${elapsed.toFixed(2)}s (${(encodedFrames / elapsed).toFixed(1)} fps)`);
-      
+
       // ============ Phase 6: GIF 模式分流处理 ============
       if (isGif) {
         console.log('[useVideoExport] Rendering finished, starting high-quality GIF conversion...');
@@ -363,7 +363,7 @@ export function useVideoExport({
           inputPath: workPath,    // 临时 MP4
           outputPath: finalPath,  // 最终 GIF 路径
           // 提升 GIF 默认宽度到 1080，如果原始宽度更小则保持原样
-          width: Math.min(canvas.width, 1080), 
+          width: Math.min(canvas.width, 1080),
           fps: 30 // 提升帧率到 30fps，保证流畅度
         });
 
