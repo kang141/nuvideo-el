@@ -173,13 +173,16 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
     "info",
     "-thread_queue_size",
     "8192",
-    // 极致缓冲区
     "-f",
     "gdigrab",
     "-framerate",
-    "60",
+    "30",
+    // 主动对齐到 30fps，减轻系统负担从而缓解闪烁
     "-draw_mouse",
     "0",
+    "-rtbufsize",
+    "500M",
+    // 增加实时缓冲区
     "-offset_x",
     Math.round(bounds.x * scaleFactor).toString(),
     "-offset_y",
@@ -195,11 +198,10 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
     "-tune",
     "zerolatency",
     "-crf",
-    "23",
-    // 稍微降低一点码率以换取巨大的性能提升
+    "25",
+    // 略微放宽质量，优先保证录制不闪烁
     "-threads",
     "0",
-    // 使用所有核心
     "-pix_fmt",
     "yuv420p",
     recordingPath,
@@ -269,7 +271,7 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
           y: (point.y - bounds.y) / bounds.height,
           t
         });
-      }, 16);
+      }, 30);
       resolve({ success: true, bounds, t0: recordingStartTime });
     });
     ffmpegProcess.once("error", (err) => {
@@ -341,15 +343,19 @@ ipcMain.handle("open-export-stream", async (_event, { targetPath }) => {
     return { success: false, error: err.message };
   }
 });
-ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk }) => {
+ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk, position }) => {
   try {
     const handle = activeExportStreams.get(streamId);
     if (!handle) {
       throw new Error(`Stream ${streamId} not found`);
     }
     const buffer = Buffer.from(chunk);
-    fs.writeSync(handle.fd, buffer);
-    handle.bytesWritten += buffer.length;
+    if (typeof position === "number") {
+      fs.writeSync(handle.fd, buffer, 0, buffer.length, position);
+    } else {
+      fs.writeSync(handle.fd, buffer, 0, buffer.length, null);
+      handle.bytesWritten += buffer.length;
+    }
     return { success: true, bytesWritten: handle.bytesWritten };
   } catch (err) {
     console.error("[Main] write-export-chunk failed:", err);

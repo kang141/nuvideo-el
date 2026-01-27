@@ -198,6 +198,8 @@ export function useVideoRenderer({
     video.addEventListener('pause', onPause);
     video.addEventListener('loadeddata', onLoadedData);
 
+    // 优先使用 requestVideoFrameCallback (rVFC) 以获得完美的帧同步和性能
+    // 这避免了 "卡卡的感觉" (Jitter)，即 RAF 和视频刷新率不匹配导致的问题
     const hasVfc = typeof (video as any).requestVideoFrameCallback === 'function';
     if (hasVfc) {
       const onVfc = (_now: number, metadata: VideoFrameCallbackMetadata) => {

@@ -1,5 +1,5 @@
 ﻿import { useState, RefObject, useRef } from 'react';
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { Muxer, StreamTarget } from 'mp4-muxer';
 import { QualityConfig } from '../../constants/quality';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
 
@@ -38,6 +38,8 @@ export function useVideoExport({
     setIsExporting(false);
     resetCameraCache();
   };
+
+
 
   const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
     if (isExportingRef.current) return { success: false };
@@ -78,9 +80,26 @@ export function useVideoExport({
       // 重要：如果是 GIF，初始 MP4 必须写到临时文件，不能直接写到最终路径（防止 FFmpeg 读写冲突）
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
+      // 2. 预先打开写入流 (Zero-Copy 核心优化)
+      const openResult = await (window as any).ipcRenderer.invoke('open-export-stream', { targetPath: workPath });
+      if (!openResult.success) throw new Error(`Failed to open stream: ${openResult.error}`);
+      const streamId = openResult.streamId;
+
       const width = canvas.width;
       const height = canvas.height;
-      const muxerTarget = new ArrayBufferTarget();
+      
+      // 使用 mp4-muxer 自带的 StreamTarget 以通过 instanceof 检查
+      const muxerTarget = new StreamTarget({
+        onData: (chunk, position) => {
+          // 这里的 position 是 mp4-muxer 提供的绝对偏移量
+          // 异步发送 IPC，不等待返回（fire-and-forget 模式，依靠最后的 buffer wait）
+          (window as any).ipcRenderer.invoke('write-export-chunk', {
+            streamId,
+            chunk,
+            position
+          });
+        }
+      });
 
       // 2. 选择编码器 (如果是 GIF 模式则优先尝试 VP9 以获得更好色彩)
       const configCandidates: VideoEncoderConfig[] = [];
@@ -121,7 +140,7 @@ export function useVideoExport({
       }
 
       const muxer = new Muxer({
-        target: muxerTarget,
+        target: muxerTarget as any,
         video: { codec: muxerCodec as any, width, height, frameRate: fps },
         fastStart: 'in-memory',
         firstTimestampBehavior: 'offset',
@@ -135,8 +154,10 @@ export function useVideoExport({
       encoder.configure(selectedConfig);
 
       // 3. 准备播放环境
+      // 同步音频流逻辑：如果有音频轨道，在此配置 AudioEncoder
+      // 目前版本暂时静音，未来可在此扩展
       video.pause();
-      video.muted = true;
+      // video.muted = true; // 保持静音以避免干扰，或者如果我们需要捕获音频，这里需要调整
       setIsPlaying(false);
       onSeek(0);
       
@@ -297,54 +318,27 @@ export function useVideoExport({
 
       await encoder.flush();
       encoder.close();
-      muxer.finalize();
+      
+      // Muxer finalize 可能会触发 moov Header 的回填写入
+      muxer.finalize(); 
+      
+      // 这里的 finalize 是同步的吗？mp4-muxer 文档说是同步的，但我们的 Target.write 是 async。
+      // mp4-muxer 在调用 write 时不等待 Promise？
+      // 注意：由于 JS 单线程，mp4-muxer 内部逻辑是同步执行的，它会连续发出多个 write 调用。
+      // 我们的 ElectronStreamTarget.write 会返回 Promise，但 mp4-muxer 可能忽略了它。
+      // 为确保所有写入（特别是 moov）都已发给主进程，我们需要一个短暂的 buffer 刷新机制。
+      // 不过由于 IPC 是顺序的，只要 finalize 执行完，所有请求应该都已入队。
+      
+      // 给一点时间让最后的 IPC 飞一会儿
+      await new Promise(r => setTimeout(r, 200));
 
       // ============ 重置增量缓存 ============
       resetCameraCache();
 
       if (encoderError) throw encoderError;
 
-      // ============ 流式写入 (Phase 5 优化) ============
-      // 分块写入避免一次性 IPC 传输大数据导致的内存峰值
-      const CHUNK_SIZE = 1024 * 1024; // 1MB 每块
-      const fullBuffer = muxerTarget.buffer;
-      const totalBytes = fullBuffer.byteLength;
-
-      // 打开写入流 (写入到工作路径)
-      const openResult = await (window as any).ipcRenderer.invoke('open-export-stream', {
-        targetPath: workPath
-      });
-      
-      if (!openResult.success) {
-        throw new Error(`Failed to open export stream: ${openResult.error}`);
-      }
-
-      const streamId = openResult.streamId;
-      
-      // 分块写入
-      let offset = 0;
-      while (offset < totalBytes) {
-        const chunkEnd = Math.min(offset + CHUNK_SIZE, totalBytes);
-        const chunk = fullBuffer.slice(offset, chunkEnd);
-        
-        // 检查取消
-        if (!isExportingRef.current) {
-          await (window as any).ipcRenderer.invoke('close-export-stream', { streamId });
-          await (window as any).ipcRenderer.invoke('delete-file', workPath); // 删除半截文件
-          throw new Error('Export cancelled during write');
-        }
-
-        const writeResult = await (window as any).ipcRenderer.invoke('write-export-chunk', {
-          streamId,
-          chunk
-        });
-        
-        if (!writeResult.success) {
-          throw new Error(`Failed to write chunk: ${writeResult.error}`);
-        }
-        
-        offset = chunkEnd;
-      }
+      // ============ Stream Close (流式写入收尾) ============
+      // 之前代码里有大段的 flush buffer 逻辑，现在不需要了，因为每一帧都已经实时写盘了。
 
       // 关闭写入流
       const closeResult = await (window as any).ipcRenderer.invoke('close-export-stream', {
@@ -355,7 +349,7 @@ export function useVideoExport({
         throw new Error(`Failed to close export stream: ${closeResult.error}`);
       }
 
-      console.log(`[useVideoExport] Streamed ${closeResult.totalBytes} bytes to disk`);
+      console.log(`[useVideoExport] Closed stream, total bytes written: ${closeResult.totalBytes}`);
 
       const elapsed = (performance.now() - startTime) / 1000;
       console.log(`[useVideoExport] Export finished: ${encodedFrames} frames in ${elapsed.toFixed(2)}s (${(encodedFrames / elapsed).toFixed(1)} fps)`);

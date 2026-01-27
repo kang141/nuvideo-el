@@ -228,10 +228,11 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   
   const args = [
     '-loglevel', 'info', 
-    '-thread_queue_size', '8192', // 极致缓冲区
+    '-thread_queue_size', '8192',
     '-f', 'gdigrab',
-    '-framerate', '60',
+    '-framerate', '30',          // 主动对齐到 30fps，减轻系统负担从而缓解闪烁
     '-draw_mouse', '0',
+    '-rtbufsize', '500M',        // 增加实时缓冲区
     '-offset_x', Math.round(bounds.x * scaleFactor).toString(),
     '-offset_y', Math.round(bounds.y * scaleFactor).toString(),
     '-video_size', `${physicalW}x${physicalH}`,
@@ -239,8 +240,8 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-tune', 'zerolatency',
-    '-crf', '23', // 稍微降低一点码率以换取巨大的性能提升
-    '-threads', '0', // 使用所有核心
+    '-crf', '25',                // 略微放宽质量，优先保证录制不闪烁
+    '-threads', '0',
     '-pix_fmt', 'yuv420p',
     recordingPath,
     '-y'
@@ -326,7 +327,7 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
           y: (point.y - bounds.y) / bounds.height,
           t
         })
-      }, 16)
+      }, 30)
 
       resolve({ success: true, bounds: bounds, t0: recordingStartTime })
     })
@@ -424,8 +425,8 @@ ipcMain.handle('open-export-stream', async (_event, { targetPath }) => {
   }
 });
 
-// 写入数据块
-ipcMain.handle('write-export-chunk', async (_event, { streamId, chunk }) => {
+// 写入数据块 (支持随机写入，用于 MP4 moov 回填)
+ipcMain.handle('write-export-chunk', async (_event, { streamId, chunk, position }) => {
   try {
     const handle = activeExportStreams.get(streamId);
     if (!handle) {
@@ -433,8 +434,17 @@ ipcMain.handle('write-export-chunk', async (_event, { streamId, chunk }) => {
     }
     
     const buffer = Buffer.from(chunk);
-    fs.writeSync(handle.fd, buffer);
-    handle.bytesWritten += buffer.length;
+    
+    if (typeof position === 'number') {
+      // 随机写入 (用于回填 Header)
+      fs.writeSync(handle.fd, buffer, 0, buffer.length, position);
+      // 注意：随机写入不更新 bytesWritten 统计，因为它不是 append
+      // 但对于 moov 更新，我们通常不需要关心总大小的变化，因为它只是覆盖占位符
+    } else {
+      // 追加写入
+      fs.writeSync(handle.fd, buffer, 0, buffer.length, null); // null means current position
+      handle.bytesWritten += buffer.length;
+    }
     
     return { success: true, bytesWritten: handle.bytesWritten };
   } catch (err) {
