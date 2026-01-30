@@ -1,9 +1,12 @@
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ImageIcon, 
   Video, 
-  Send
+  Square,
+  Circle,
+  MousePointer2,
+  Volume2
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -29,6 +32,16 @@ interface DesignPanelProps {
   mousePhysics: RenderGraph['mousePhysics'];
   onUpdateMousePhysics: (updates: Partial<RenderGraph['mousePhysics']>) => void;
   language: Language;
+  audioTracks?: RenderGraph['audio'] | undefined;
+  onToggleSystemAudio?: (enabled: boolean) => void;
+  onToggleMicrophoneAudio?: (enabled: boolean) => void;
+  onSetSystemVolume?: (v: number) => void;
+  onSetMicrophoneVolume?: (v: number) => void;
+  webcamEnabled?: boolean;
+  webcamShape?: 'circle' | 'rect';
+  webcamSize?: number;
+  onToggleWebcam?: (enabled: boolean) => void;
+  onUpdateWebcam?: (updates: Partial<{ isEnabled: boolean; shape: 'circle' | 'rect'; size: number }>) => void;
 }
 
 
@@ -55,9 +68,17 @@ export const DesignPanel = memo(function DesignPanel({
   onResetZoom,
   mouseTheme,
   onUpdateMouseTheme,
-  mousePhysics,
-  onUpdateMousePhysics,
-  language
+  language,
+  audioTracks,
+  onToggleSystemAudio,
+  onToggleMicrophoneAudio,
+  onSetSystemVolume,
+  onSetMicrophoneVolume,
+  webcamEnabled,
+  webcamShape = 'circle',
+  webcamSize = 360,
+  onToggleWebcam,
+  onUpdateWebcam
 }: DesignPanelProps) {
   /*
   const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
@@ -67,7 +88,8 @@ export const DesignPanel = memo(function DesignPanel({
   const TABS = [
     { id: 'appearance', icon: ImageIcon, label: t.editor.appearance },
     { id: 'camera', icon: Video, label: t.editor.camera },
-    { id: 'cursor', icon: Send, label: t.editor.cursor }
+    { id: 'cursor', icon: MousePointer2, label: t.editor.cursor },
+    { id: 'audio', icon: Volume2, label: t.editor.audio }
   ];
 
   /*
@@ -120,6 +142,69 @@ export const DesignPanel = memo(function DesignPanel({
               >
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">{t.editor.webcam}</span>
+                    <div className="h-px flex-1 bg-white/[0.08]" />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-white/60 tracking-tight">{t.editor.webcam}</span>
+                    <Switch
+                      checked={webcamEnabled}
+                      onCheckedChange={onToggleWebcam}
+                      className="scale-[0.8] origin-right"
+                    />
+                  </div>
+
+                  {webcamEnabled && (
+                    <div className="space-y-3 pt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-widest">{t.editor.webcamShape}</span>
+                        <div className="h-px flex-1 bg-white/[0.06]" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: 'circle', icon: Circle, label: t.editor.shapeCircle },
+                          { id: 'rect', icon: Square, label: t.editor.shapeRect }
+                        ].map(shape => (
+                          <button
+                            key={shape.id}
+                            onClick={() => onUpdateWebcam?.({ shape: shape.id as any })}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-2 h-16 rounded-xl border transition-all duration-300",
+                              webcamShape === shape.id
+                                ? "bg-white/10 border-white/10 text-white shadow-lg"
+                                : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:bg-white/[0.04] hover:text-white/40"
+                            )}
+                          >
+                            <shape.icon size={14} className={shape.id === 'rect' ? 'rounded-sm overflow-hidden' : ''} />
+                            <span className="text-[9px] font-bold tracking-tight">{shape.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {webcamEnabled && (
+                    <div className="space-y-4 pt-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-white/60 tracking-tight">{t.editor.webcamSize}</span>
+                        <span className="text-[10px] font-mono text-white/40 px-1.5 py-0.5 bg-white/[0.06] rounded border border-white/[0.1]">{webcamSize}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="120"
+                        max="600"
+                        step="1"
+                        value={webcamSize}
+                        onChange={(e) => onUpdateWebcam?.({ size: parseInt(e.target.value) })}
+                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                      />
+                    </div>
+                  )}
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">{t.editor.cameraControl}</span>
                     <div className="h-px flex-1 bg-white/[0.08]" />
                     <span className="text-[9px] font-mono text-white/40">Z</span>
@@ -129,12 +214,12 @@ export const DesignPanel = memo(function DesignPanel({
                     <Button
                      variant="outline"
                      onClick={onResetZoom}
-                     className="w-full h-9 bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.08] hover:text-white hover:border-white/[0.2] rounded-lg text-[11px] font-bold transition-all"
+                     className="w-full h-9 bg-white/[0.08] border-white/[0.15] text-white/80 hover:bg-white/[0.12] hover:text-white hover:border-white/[0.3] rounded-lg text-[11px] font-bold transition-all"
                     >
                       {t.editor.resetCamera}
                     </Button>
                   </div>
-                  <p className="text-[10px] text-white/30 leading-relaxed text-center italic">{t.editor.cameraTip}</p>
+                  <p className="text-[10px] text-white/50 leading-relaxed text-center italic">{t.editor.cameraTip}</p>
                 </section>
               </motion.div>
             )}
@@ -169,7 +254,7 @@ export const DesignPanel = memo(function DesignPanel({
                           "w-6 h-6 flex items-center justify-center",
                           style === 'Circle' ? "rounded-full bg-current opacity-80" : ""
                         )}>
-                          {style === 'macOS' && <Send size={14} className="-rotate-45" />}
+                          {style === 'macOS' && <MousePointer2 size={14} />}
                         </div>
                         <span className="text-[10px] font-medium tracking-tight">{style === 'macOS' ? t.editor.macOSCursor : t.editor.circleCursor}</span>
                       </button>
@@ -178,8 +263,8 @@ export const DesignPanel = memo(function DesignPanel({
 
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.cursorSize}</span>
-                      <span className="text-[10px] font-mono text-white/20 px-1.5 py-0.5 bg-white/[0.03] rounded border border-white/[0.05]">{mouseTheme.size}px</span>
+                      <span className="text-[11px] font-medium text-white/60 tracking-tight">{t.editor.cursorSize}</span>
+                      <span className="text-[10px] font-mono text-white/40 px-1.5 py-0.5 bg-white/[0.06] rounded border border-white/[0.1]">{mouseTheme.size}px</span>
                     </div>
                     <input
                       type="range"
@@ -193,11 +278,11 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <span className="text-[11px] font-medium text-white/40 tracking-tight">{t.editor.rippleEffect}</span>
+                    <span className="text-[11px] font-medium text-white/60 tracking-tight">{t.editor.rippleEffect}</span>
                     <Switch
                       checked={mouseTheme.showRipple}
                       onCheckedChange={(checked) => onUpdateMouseTheme({ showRipple: checked })}
-                      className="data-[state=checked]:bg-emerald-600 scale-[0.8] origin-right"
+                      className="scale-[0.8] origin-right"
                     />
                   </div>
                 </section>
@@ -269,6 +354,75 @@ export const DesignPanel = memo(function DesignPanel({
                 </section>
 
               
+              </motion.div>
+            )}
+
+            {activeTab === 'audio' && (
+              <motion.div
+                key="audio"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="space-y-8"
+              >
+                <section className="space-y-5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">{t.editor.audio}</span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
+                  </div>
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-white/80">{t.editor.systemAudio}</span>
+                        <Switch
+                          checked={!!audioTracks?.tracks?.some(tr => tr.source === 'system')}
+                          onCheckedChange={(checked) => onToggleSystemAudio?.(checked)}
+                          className="scale-[0.8] origin-right"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-medium text-white/40">{t.editor.audioVolume}</span>
+                        <span className="text-[10px] font-mono text-white/20 px-1.5 py-0.5 bg-white/[0.03] rounded border border-white/[0.05]">
+                          {Math.round(((audioTracks?.tracks?.find(tr => tr.source === 'system')?.volume ?? 1) * 100))}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={audioTracks?.tracks?.find(tr => tr.source === 'system')?.volume ?? 1}
+                        onChange={(e) => onSetSystemVolume?.(parseFloat(e.target.value))}
+                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-white/80">{t.editor.micAudio}</span>
+                        <Switch
+                          checked={!!audioTracks?.tracks?.some(tr => tr.source === 'microphone')}
+                          onCheckedChange={(checked) => onToggleMicrophoneAudio?.(checked)}
+                          className="scale-[0.8] origin-right"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-medium text-white/50">{t.editor.audioVolume}</span>
+                        <span className="text-[10px] font-mono text-white/40 px-1.5 py-0.5 bg-white/[0.06] rounded border border-white/[0.1]">
+                          {Math.round(((audioTracks?.tracks?.find(tr => tr.source === 'microphone')?.volume ?? 1) * 100))}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={audioTracks?.tracks?.find(tr => tr.source === 'microphone')?.volume ?? 1}
+                        onChange={(e) => onSetMicrophoneVolume?.(parseFloat(e.target.value))}
+                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </section>
               </motion.div>
             )}
           </AnimatePresence>

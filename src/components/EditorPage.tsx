@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import type { RenderGraph, CameraIntent } from '../types';
 import { Language } from '../i18n/translations';
 import { cn } from '@/lib/utils';
@@ -63,16 +64,11 @@ export function EditorPage({
   useEffect(() => {
     const cachedDir = localStorage.getItem(LAST_DIR_KEY);
     if (cachedDir && !exportPath) {
-      // 如果有缓存目录，自动拼接当前文件名作为预设路径
       const pathSeparator = cachedDir.includes('\\') ? '\\' : '/';
       const lastChar = cachedDir.charAt(cachedDir.length - 1);
       const isPathEndWithSlash = lastChar === '/' || lastChar === '\\';
       const initialPath = isPathEndWithSlash ? `${cachedDir}${filename}` : `${cachedDir}${pathSeparator}${filename}`;
-      
-      // 注意：如果是 GIF 模式且 finalPath 还是 .mp4，强制修复
       const correctedPath = initialGraph?.config?.targetFormat === 'gif' ? initialPath.replace(/\.mp4$/i, '.gif') : initialPath;
-      
-      console.log('[EditorPage] Using cached directory:', cachedDir, 'Path:', correctedPath);
       setExportPath(correctedPath);
     }
   }, [filename]);
@@ -114,6 +110,7 @@ export function EditorPage({
 
   // 2. 引用
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // 3. 处理全屏逻辑
@@ -162,7 +159,7 @@ export function EditorPage({
     maxDuration,
     togglePlay,
     handleSeek
-  } = useVideoPlayback(videoRef, graph);
+  } = useVideoPlayback(videoRef, audioRef, graph);
 
   // 监听键盘快捷键 (ESC 退出全屏, Space 播放/暂停, Z 添加缩放)
   useEffect(() => {
@@ -332,6 +329,46 @@ export function EditorPage({
     setActiveWallpaper({ category: browsingCategory, file });
   }, [browsingCategory]);
 
+  const handleToggleSystemAudio = useCallback((enabled: boolean) => {
+    if (!graph) return;
+    const tracks = graph.audio?.tracks || [];
+    const has = tracks.some(t => t.source === 'system');
+    let nextTracks = tracks.slice();
+    if (enabled && !has) {
+      nextTracks.push({ source: 'system', startTime: 0, volume: 1.0, fadeIn: 300, fadeOut: 300 });
+    } else if (!enabled && has) {
+      nextTracks = nextTracks.filter(t => t.source !== 'system');
+    }
+    setGraph({ ...graph, audio: { tracks: nextTracks } });
+  }, [graph]);
+
+  const handleToggleMicrophoneAudio = useCallback((enabled: boolean) => {
+    if (!graph) return;
+    const tracks = graph.audio?.tracks || [];
+    const has = tracks.some(t => t.source === 'microphone');
+    let nextTracks = tracks.slice();
+    if (enabled && !has) {
+      nextTracks.push({ source: 'microphone', startTime: 0, volume: 1.0, fadeIn: 300, fadeOut: 300 });
+    } else if (!enabled && has) {
+      nextTracks = nextTracks.filter(t => t.source !== 'microphone');
+    }
+    setGraph({ ...graph, audio: { tracks: nextTracks } });
+  }, [graph]);
+
+  const handleSetSystemVolume = useCallback((v: number) => {
+    if (!graph) return;
+    const tracks = graph.audio?.tracks || [];
+    const nextTracks = tracks.map(t => t.source === 'system' ? { ...t, volume: Math.max(0, Math.min(1, v)) } : t);
+    setGraph({ ...graph, audio: { tracks: nextTracks } });
+  }, [graph]);
+
+  const handleSetMicrophoneVolume = useCallback((v: number) => {
+    if (!graph) return;
+    const tracks = graph.audio?.tracks || [];
+    const nextTracks = tracks.map(t => t.source === 'microphone' ? { ...t, volume: Math.max(0, Math.min(1, v)) } : t);
+    setGraph({ ...graph, audio: { tracks: nextTracks } });
+  }, [graph]);
+
   // 点击画布手动定焦
   const handleFocusSpot = useCallback((cx: number, cy: number) => {
     if (!graph) return;
@@ -384,6 +421,14 @@ export function EditorPage({
     });
   }, [graph]);
 
+  const handleUpdateWebcam = useCallback((updates: Partial<{ isEnabled: boolean; shape: 'circle' | 'rect'; size: number }>) => {
+    if (!graph) return;
+    setGraph({
+      ...graph,
+      webcam: { ...graph.webcam, ...updates } as any
+    });
+  }, [graph]);
+
   const handleOpenFile = useCallback(() => {
     if (lastExportPath) {
       (window as any).ipcRenderer.invoke('show-item-in-folder', lastExportPath);
@@ -397,10 +442,32 @@ export function EditorPage({
   if (!graph) return null;
 
   return (
-    <div className={cn(
-      "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans transition-opacity duration-300",
-      isReady ? "opacity-100" : "opacity-0"
-    )}>
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: isReady ? 1 : 0.6 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className={cn(
+        "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans",
+      )}
+    >
+      {/* 加载指示器 */}
+      {!isReady && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 z-[200] flex items-center justify-center bg-[#0e0e0e]/80 backdrop-blur-sm"
+        >
+          <div className="flex flex-col items-center gap-4">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="h-12 w-12 rounded-full border-4 border-white/10 border-t-white/60"
+            />
+            <p className="text-sm text-white/60">正在加载编辑器...</p>
+          </div>
+        </motion.div>
+      )}
       <ExportOverlay 
         isExporting={isExporting} 
         progress={exportProgress} 
@@ -412,20 +479,25 @@ export function EditorPage({
       />
 
       {!isFullscreenPreview && (
-        <div className="relative z-50">
+        <motion.div 
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.4, delay: 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
+          className="relative z-50"
+        >
           <EditorHeader 
             onBack={onBack} 
             onDelete={handleDelete}
             onExport={handleExport} 
             isExporting={isExporting} 
-            filename={filename}
+            filename={exportPath ? filename : '未设置导出位置'}
             onPickAddress={handlePickAddress}
             language={language}
             setLanguage={setLanguage}
             autoZoomEnabled={autoZoomEnabled}
             onToggleAutoZoom={onToggleAutoZoom}
           />
-        </div>
+        </motion.div>
       )}
 
       <div className={cn(
@@ -435,6 +507,7 @@ export function EditorPage({
         <div className="flex flex-1 min-h-0 min-w-0 flex-col relative bg-[#101010] overflow-hidden">
           <CanvasPreview 
             videoRef={videoRef} 
+            audioRef={audioRef}
             canvasRef={canvasRef} 
             onEnded={() => setIsPlaying(false)} 
             onFocusSpot={handleFocusSpot}
@@ -453,12 +526,18 @@ export function EditorPage({
               onTogglePlay={togglePlay}
               isFullscreen={isFullscreenPreview}
               onToggleFullscreen={toggleFullscreen}
+              videoRef={videoRef}
             />
           </div>
         </div>
 
         {!isFullscreenPreview && (
-          <DesignPanel 
+          <motion.div
+            initial={{ x: 20, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.15, ease: [0.25, 0.46, 0.45, 0.94] }}
+          >
+            <DesignPanel 
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             bgCategory={browsingCategory}
@@ -473,12 +552,28 @@ export function EditorPage({
             mousePhysics={graph.mousePhysics}
             onUpdateMousePhysics={handleUpdateMousePhysics}
             language={language}
+            audioTracks={graph.audio}
+            onToggleSystemAudio={handleToggleSystemAudio}
+            onToggleMicrophoneAudio={handleToggleMicrophoneAudio}
+            onSetSystemVolume={handleSetSystemVolume}
+            onSetMicrophoneVolume={handleSetMicrophoneVolume}
+            webcamEnabled={graph.webcam?.isEnabled}
+            webcamShape={graph.webcam?.shape}
+            webcamSize={graph.webcam?.size}
+            onToggleWebcam={(enabled) => handleUpdateWebcam({ isEnabled: enabled })}
+            onUpdateWebcam={handleUpdateWebcam}
           />
+          </motion.div>
         )}
       </div>
 
       {!isFullscreenPreview && (
-        <TimelineSectionMemo 
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.4, delay: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
+          <TimelineSectionMemo 
           duration={maxDuration}
           currentTime={currentTime}
           videoRef={videoRef}
@@ -487,7 +582,8 @@ export function EditorPage({
           onUpdateIntents={handleUpdateIntents}
           language={language}
         />
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }

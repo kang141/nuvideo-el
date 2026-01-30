@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import crypto from 'node:crypto'
+import './audio-handler'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -41,13 +42,22 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 function createWindow() {
+  // 采用横向 Dashboard 布局，确保所有功能一眼全览
+  const WINDOW_WIDTH = 720
+  const WINDOW_HEIGHT = 480
+
   win = new BrowserWindow({
-    width: 350,
-    height: 500,
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    minWidth: WINDOW_WIDTH,
+    minHeight: WINDOW_HEIGHT,
+    maxWidth: WINDOW_WIDTH,
+    maxHeight: WINDOW_HEIGHT,
     resizable: false,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
+    hasShadow: true,
     show: false,
     // 使用 PNG 格式以确保 Windows 任务栏兼容性与图标刷新
     icon: path.join(process.env.VITE_PUBLIC, 'logo.png'),
@@ -81,13 +91,19 @@ function createWindow() {
 ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode }) => {
   if (win) {
     if (mode === 'recording') {
-      // 录制模式：同步全屏尺寸，但保持透明和交互穿透
-      const primaryDisplay = screen.getPrimaryDisplay()
-      const { width: sw, height: sh } = primaryDisplay.bounds
+      // 录制模式：不再强制全屏，直接使用传入的尺寸并停靠底端
       win.setResizable(true)
-      win.setBounds({ x: 0, y: 0, width: sw, height: sh })
+      win.setSize(width, height)
+      win.setResizable(false)
+
+      const primaryDisplay = screen.getPrimaryDisplay()
+      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
+      const x = Math.floor((screenWidth - width) / 2)
+      const y = Math.floor(screenHeight - height - 40)
+      
+      win.setPosition(x, y)
       win.setAlwaysOnTop(true, 'screen-saver')
-      win.setIgnoreMouseEvents(true, { forward: true }) // 核心：开启全局轨迹监听的前提，同时不阻塞点击
+      win.setIgnoreMouseEvents(false) // 只有覆盖全屏时才需要开启穿透，现在不需要了
       return
     }
 
@@ -123,21 +139,18 @@ ipcMain.handle('get-sources', async () => {
   try {
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],
-      thumbnailSize: { width: 480, height: 270 },
-      fetchWindowIcons: true
+      thumbnailSize: { width: 400, height: 225 }, // 略微提升分辨率以匹配 UI 宽度 (清晰度+)
+      fetchWindowIcons: false // 首页暂不需要图标，减少开销
     })
-
-    const validSources = sources.filter(s => s.name !== '');
-
-    return validSources.map(source => ({
+    return sources.map(source => ({
       id: source.id,
       name: source.name,
-      thumbnail: source.thumbnail.toDataURL(),
-      display_id: (source as any).display_id || '',
+      // 使用 85% 质量的 JPEG，平衡清晰度与性能
+      thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString('base64')}`
     }))
   } catch (err) {
-    console.error('[Main] get-sources failed:', err);
-    return [];
+    console.error('Failed to get sources:', err)
+    return []
   }
 })
 
@@ -279,6 +292,13 @@ class SessionRecorder {
     // 1. 启动 FFmpeg
     this.ffmpegProcess = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], shell: false });
 
+    // 防止 stdin 写入错误（如 EPIPE）导致整个主进程崩溃
+    if (this.ffmpegProcess.stdin) {
+      this.ffmpegProcess.stdin.on('error', (err: any) => {
+        console.error(`[Session] FFmpeg stdin error:`, err);
+      });
+    }
+
     return new Promise((resolve) => {
       let resolved = false;
 
@@ -396,9 +416,14 @@ class SessionRecorder {
       });
 
       try {
-        proc.stdin.write('q\n');
-        proc.stdin.end();
+        if (proc.stdin && proc.stdin.writable) {
+          proc.stdin.write('q\n');
+          proc.stdin.end();
+        } else {
+          proc.kill('SIGKILL');
+        }
       } catch (e) {
+        console.error('[Session] Error stopping recording gracefully:', e);
         proc.kill('SIGKILL');
       }
     });
@@ -411,6 +436,36 @@ class SessionRecorder {
 
 let currentSession: SessionRecorder | null = null;
 const allSessions = new Map<string, SessionRecorder>();
+
+/**
+ * 助手函数：构建带音频支持的 FFmpeg 参数
+ */
+function buildFFmpegArgs(videoInputFiles: string[][], outputPath: string) {
+  const args = [
+    '-loglevel', 'info',
+    '-thread_queue_size', '8192',
+  ];
+
+  // 1. 视频输入 (索引为 0)
+  for (const vInput of videoInputFiles) {
+    args.push(...vInput);
+  }
+
+  // 2. 视频编码
+  args.push(
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-tune', 'zerolatency',
+    '-crf', '25',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-threads', '0',
+    '-pix_fmt', 'yuv420p',
+    outputPath,
+    '-y'
+  );
+
+  return args;
+}
 
 ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   if (currentSession) return { success: false, error: 'Recording already in progress' }
@@ -438,41 +493,24 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
   const recordingPath = currentSession.videoPath;
 
   // --- 尝试方案 A: ddagrab (现代引擎) ---
-  const argsDda = [
-    '-loglevel', 'info',
-    '-thread_queue_size', '8192',
-    '-f', 'ddagrab',
-    '-framerate', '60',
-    '-draw_mouse', '0',
-    '-output_idx', outputIdx.toString(),
-    '-rtbufsize', '500M',
-    '-i', 'desktop',
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-tune', 'zerolatency',
-    '-crf', '25',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-threads', '0',
-    '-pix_fmt', 'yuv420p',
-    recordingPath,
-    '-y'
-  ]
+  const videoInputDda = [
+    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '500M', '-i', 'desktop']
+  ];
+  
+  const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
 
   const scriptPath = path.join(process.env.APP_ROOT || '', 'resources', 'scripts', 'mouse-monitor.ps1');
   const psPath = fs.existsSync(scriptPath)
     ? scriptPath
     : path.join(process.resourcesPath, 'scripts', 'mouse-monitor.ps1');
 
-  console.log('[Main] Attempting ddagrab capture...');
+  console.log('[Main] Attempting ddagrab capture (Video Only)...');
   let result = await currentSession.start(ffmpegPath, argsDda, psPath);
 
   if (!result.success) {
     console.warn(`[Main] ddagrab failed: ${result.error}. Falling back to gdigrab...`);
-
-    // 清理之前的进程（如果已经创建但没成功开始录制）
     await currentSession.stop();
 
-    // --- 尝试方案 B: gdigrab (稳定后备) ---
     const toEven = (val: number) => {
       const v = Math.round(val);
       return v % 2 === 0 ? v : v - 1;
@@ -480,37 +518,19 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     const physicalW = toEven(bounds.width * scaleFactor);
     const physicalH = toEven(bounds.height * scaleFactor);
 
-    // 重新创建一个会话对象（重置路径等）
     currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
 
-    const argsGdi = [
-      '-loglevel', 'info',
-      '-thread_queue_size', '8192',
-      '-f', 'gdigrab',
-      '-framerate', '30',
-      '-draw_mouse', '0',
-      '-rtbufsize', '500M',
-      '-offset_x', Math.round(bounds.x * scaleFactor).toString(),
-      '-offset_y', Math.round(bounds.y * scaleFactor).toString(),
-      '-video_size', `${physicalW}x${physicalH}`,
-      '-i', 'desktop',
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-crf', '25',
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-threads', '0',
-      '-pix_fmt', 'yuv420p',
-      currentSession.videoPath,
-      '-y'
-    ]
+    const videoInputGdi = [
+      ['-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '0', '-rtbufsize', '500M', '-offset_x', Math.round(bounds.x * scaleFactor).toString(), '-offset_y', Math.round(bounds.y * scaleFactor).toString(), '-video_size', `${physicalW}x${physicalH}`, '-i', 'desktop']
+    ];
 
+    const argsGdi = buildFFmpegArgs(videoInputGdi, currentSession.videoPath);
     result = await currentSession.start(ffmpegPath, argsGdi, psPath);
   }
 
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
-    return { success: true, sessionId: currentSession.sessionId, bounds };
+    return { success: true, sessionId: currentSession.sessionId, bounds, t0: performance.now() };
   } else {
     currentSession = null;
     return result;

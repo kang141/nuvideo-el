@@ -70,12 +70,12 @@ export function AppSettingsMenu({
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5 text-left">
                 <span className="text-[11px] font-semibold text-white/90">{t.home.autoZoom}</span>
-                <span className="text-[10px] text-white/30 leading-tight max-w-[120px]">{t.home.autoZoomDesc}</span>
+                <span className="text-[10px] text-white/50 leading-tight max-w-[120px]">{t.home.autoZoomDesc}</span>
               </div>
               <Switch 
                 checked={autoZoomEnabled}
                 onCheckedChange={onToggleAutoZoom}
-                className="data-[state=checked]:bg-emerald-500 scale-[0.8] origin-right shrink-0"
+                className="scale-[0.8] origin-right shrink-0"
               />
             </div>
 

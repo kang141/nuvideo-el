@@ -60,9 +60,9 @@ export function RecordingStatusBar({
   }, []);
 
   return (
-    <div className="fixed inset-x-0 bottom-10 flex items-center justify-center z-[999999] pointer-events-none px-10">
+    <div className="flex items-center justify-center w-full h-full pointer-events-none">
       <motion.div
-        initial={{ y: 20, opacity: 0 }}
+        initial={{ y: 10, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}

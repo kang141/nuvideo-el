@@ -10,6 +10,7 @@ export class VideoFrameManager {
   private lastDecodedFrame: VideoFrame | null = null;
   private currentTimestamp: number = -1;
   private isConfigured: boolean = false;
+  private isClosed: boolean = false;
   private decoderConfig: VideoDecoderConfig | null = null;
 
   private frameCache: Map<number, VideoFrame> = new Map();
@@ -19,9 +20,12 @@ export class VideoFrameManager {
     this.demuxer = new VideoDemuxer();
     this.decoder = new VideoDecoder({
       output: (frame) => {
+        if (this.isClosed) {
+          frame.close();
+          return;
+        }
         const ts = Math.round(frame.timestamp / 1000);
         
-        // 限制缓存大小以防内存溢出 (60 帧约等于 2 秒缓存)
         if (this.frameCache.size > 60) {
           const firstKey = this.frameCache.keys().next().value;
           if (firstKey !== undefined) {
@@ -31,11 +35,8 @@ export class VideoFrameManager {
           }
         }
         
-        // 复制一份存储，因为原始 frame 会在回调结束后被内部回收（取决于具体浏览器实现，但复制更安全）
-        // 实际上 VideoFrame 是引用计数的，直接存也可以，但需要管理 close
         this.frameCache.set(ts, frame);
         
-        // 触发等待该帧的 Promise
         if (this.pendingFrames.has(ts)) {
           this.pendingFrames.get(ts)!(frame);
           this.pendingFrames.delete(ts);
@@ -43,89 +44,115 @@ export class VideoFrameManager {
         
         this.lastDecodedFrame = frame;
       },
-      error: (e) => console.error('[VideoDecoder] Error:', e),
+      error: (e) => {
+        if (!this.isClosed) console.error('[VideoDecoder] Error:', e);
+      },
     });
   }
 
   async initialize(url: string) {
     return new Promise<void>((resolve) => {
       this.demuxer.load(url, (config) => {
+        if (this.isClosed) return resolve();
         this.decoderConfig = config;
-        this.decoder.configure(config);
-        this.isConfigured = true;
-        this.samples = this.demuxer.getSamples();
+        try {
+          this.decoder.configure(config);
+          this.isConfigured = true;
+          this.samples = this.demuxer.getSamples();
+        } catch (e) {
+          console.error('[VideoDecoder] Configure failed:', e);
+        }
         resolve();
       });
     });
   }
 
   async getFrame(timestampMs: number): Promise<VideoFrame | null> {
-    if (!this.isConfigured || this.samples.length === 0) return null;
+    if (this.isClosed || !this.isConfigured || this.samples.length === 0) return null;
 
     const roundedTs = Math.round(timestampMs);
     
-    // 1. 检查缓存
     if (this.frameCache.has(roundedTs)) {
       return this.frameCache.get(roundedTs)!;
     }
 
-    // 2. 寻找样本
     let targetIdx = this.samples.findIndex(s => s.cts >= roundedTs);
     if (targetIdx === -1) targetIdx = this.samples.length - 1;
     
     const sample = this.samples[targetIdx];
     const sampleTs = Math.round(sample.cts);
 
-    // 3. 构建同步等待逻辑
     const framePromise = new Promise<VideoFrame | null>((resolve) => {
-      const timer = setTimeout(() => resolve(this.lastDecodedFrame), 100); // 超时机制
+      const timer = setTimeout(() => resolve(this.lastDecodedFrame), 200); // 增加超时到 200ms
       this.pendingFrames.set(sampleTs, (f) => {
         clearTimeout(timer);
         resolve(f);
       });
     });
 
-    // 4. 解码逻辑（与之前类似，但增加逻辑去重）
     const isForwardClose = roundedTs >= this.currentTimestamp && roundedTs - this.currentTimestamp < 300;
     
-    if (!isForwardClose) {
-      this.decoder.reset();
-      this.decoder.configure(this.decoderConfig!);
-      
-      let keyIdx = targetIdx;
-      while (keyIdx > 0 && !this.samples[keyIdx].isKeyFrame) {
-        keyIdx--;
-      }
+    try {
+      if (!isForwardClose) {
+        this.decoder.reset();
+        this.decoder.configure(this.decoderConfig!);
+        
+        let keyIdx = targetIdx;
+        while (keyIdx > 0 && !this.samples[keyIdx].isKeyFrame) {
+          keyIdx--;
+        }
 
-      for (let i = keyIdx; i <= targetIdx; i++) {
-        this.decodeSample(this.samples[i]);
-      }
-    } else {
-      const nextIdx = this.samples.findIndex(s => s.cts > this.currentTimestamp);
-      if (nextIdx !== -1) {
-        for (let i = nextIdx; i <= targetIdx; i++) {
+        for (let i = keyIdx; i <= targetIdx; i++) {
+          if (this.isClosed) break;
           this.decodeSample(this.samples[i]);
         }
+      } else {
+        const nextIdx = this.samples.findIndex(s => s.cts > this.currentTimestamp);
+        if (nextIdx !== -1) {
+          for (let i = nextIdx; i <= targetIdx; i++) {
+            if (this.isClosed) break;
+            this.decodeSample(this.samples[i]);
+          }
+        }
       }
+    } catch (e) {
+      if (!this.isClosed) console.error('[VideoDecoder] Decode queue failed:', e);
     }
 
     this.currentTimestamp = roundedTs;
-    return framePromise;
+    const result = await framePromise;
+    if (this.isClosed) return null;
+    return result;
   }
 
   private decodeSample(sample: VideoSample) {
-    const chunk = new EncodedVideoChunk({
-      type: sample.isKeyFrame ? 'key' : 'delta',
-      timestamp: sample.cts * 1000,
-      duration: sample.duration * 1000,
-      data: sample.data,
-    });
-    this.decoder.decode(chunk);
+    if (this.isClosed || this.decoder.state === 'closed') return;
+    try {
+      const chunk = new EncodedVideoChunk({
+        type: sample.isKeyFrame ? 'key' : 'delta',
+        timestamp: sample.cts * 1000,
+        duration: sample.duration * 1000,
+        data: sample.data,
+      });
+      this.decoder.decode(chunk);
+    } catch (e) {
+      if (!this.isClosed) console.warn('[VideoDecoder] Sample decode failed:', e);
+    }
   }
 
   destroy() {
+    this.isClosed = true;
+    this.isConfigured = false;
     this.frameCache.forEach(f => f.close());
     this.frameCache.clear();
-    this.decoder.close();
+    this.pendingFrames.forEach(callback => callback(null));
+    this.pendingFrames.clear();
+    if (this.decoder.state !== 'closed') {
+      try {
+        this.decoder.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+    }
   }
 }

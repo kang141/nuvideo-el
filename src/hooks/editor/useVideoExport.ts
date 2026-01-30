@@ -1,4 +1,4 @@
-﻿import { useState, RefObject, useRef } from 'react';
+import { useState, RefObject, useRef } from 'react';
 import { Muxer, StreamTarget } from 'mp4-muxer';
 import { QualityConfig } from '../../constants/quality';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
@@ -33,6 +33,9 @@ export function useVideoExport({
 }: UseVideoExportOptions) {
   const [exportProgress, setExportProgress] = useState(0);
   const isExportingRef = useRef(false);
+  const LAST_DIR_KEY = 'nuvideo_last_export_dir';
+  type RendererIPC = { invoke: (channel: string, payload?: unknown) => Promise<unknown> };
+  const ipc = ((window as unknown) as { ipcRenderer?: RendererIPC }).ipcRenderer!;
   const cancelExport = () => {
     isExportingRef.current = false;
     setIsExporting(false);
@@ -46,6 +49,7 @@ export function useVideoExport({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return { success: false };
+    let streamId: string | null = null;
 
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
     // 如果是 GIF 导出，中间件 MP4 必须使用极高码率 (150Mbps) 以保证转码前的清晰度
@@ -64,15 +68,18 @@ export function useVideoExport({
         // 如果外部没有传入路径（比如直接点击导出），则请求主进程显示对话框，并建议当前文件名
         const ext = isGif ? '.gif' : '.mp4';
         const suggestName = `nuvideo_export_${Date.now()}${ext}`;
-        const saveResult = await (window as any).ipcRenderer.invoke('show-save-dialog', { defaultName: suggestName });
+        const saveResult = await ipc.invoke('show-save-dialog', { defaultName: suggestName }) as { canceled: boolean; filePath?: string };
         if (saveResult.canceled || !saveResult.filePath) {
-          isExportingRef.current = false;
-          setIsExporting(false);
           isExportingRef.current = false;
           setIsExporting(false);
           return { success: false };
         }
         finalPath = saveResult.filePath;
+        const lastSlashIndex = Math.max(finalPath.lastIndexOf('/'), finalPath.lastIndexOf('\\'));
+        if (lastSlashIndex > -1) {
+          const dir = finalPath.substring(0, lastSlashIndex);
+          try { localStorage.setItem(LAST_DIR_KEY, dir); } catch {}
+        }
       }
 
       // Re-evaluate isGif based on finalPath if targetPath was initially null
@@ -81,9 +88,9 @@ export function useVideoExport({
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
       // 2. 预先打开写入流 (Zero-Copy 核心优化)
-      const openResult = await (window as any).ipcRenderer.invoke('open-export-stream', { targetPath: workPath });
+      const openResult = await ipc.invoke('open-export-stream', { targetPath: workPath }) as { success: boolean; streamId?: string; error?: string };
       if (!openResult.success) throw new Error(`Failed to open stream: ${openResult.error}`);
-      const streamId = openResult.streamId;
+      streamId = openResult.streamId || null;
 
       const width = canvas.width;
       const height = canvas.height;
@@ -93,7 +100,7 @@ export function useVideoExport({
         onData: (chunk, position) => {
           // 这里的 position 是 mp4-muxer 提供的绝对偏移量
           // 异步发送 IPC，不等待返回（fire-and-forget 模式，依靠最后的 buffer wait）
-          (window as any).ipcRenderer.invoke('write-export-chunk', {
+          ipc.invoke('write-export-chunk', {
             streamId,
             chunk,
             position
@@ -180,7 +187,11 @@ export function useVideoExport({
 
       // ============ 核心优化：连续取帧替代逐帧 seek ============
       // 使用 requestVideoFrameCallback 连续取帧，避免每帧 seek 的巨大开销
-      const hasVfc = typeof (video as any).requestVideoFrameCallback === 'function';
+      const vVideo = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: (now: number, metadata: VideoFrameCallbackMetadata) => void) => number;
+        cancelVideoFrameCallback?: (id: number) => void;
+      };
+      const hasVfc = typeof vVideo.requestVideoFrameCallback === 'function';
 
       if (hasVfc) {
         // 使用 requestVideoFrameCallback 连续取帧
@@ -192,7 +203,7 @@ export function useVideoExport({
               video.pause();
               cleanup(); // 清理监听器
               if (encoderError) reject(encoderError);
-              else resolve();
+              else reject(new Error('ExportCanceled'));
               return;
             }
 
@@ -240,7 +251,7 @@ export function useVideoExport({
             }
 
             // 继续请求下一帧
-            vfcId = (video as any).requestVideoFrameCallback(processFrame);
+            vfcId = vVideo.requestVideoFrameCallback!(processFrame);
           };
 
           // 监听视频自然结束 (防止源视频短于预期导致 rVFC 停止触发而挂起)
@@ -252,13 +263,13 @@ export function useVideoExport({
 
           const cleanup = () => {
             video.removeEventListener('ended', onVideoEnded);
-            if (vfcId) (video as any).cancelVideoFrameCallback(vfcId);
+            if (vfcId && typeof vVideo.cancelVideoFrameCallback === 'function') vVideo.cancelVideoFrameCallback(vfcId);
           };
 
           video.addEventListener('ended', onVideoEnded);
 
           // 开始播放并捕获帧
-          vfcId = (video as any).requestVideoFrameCallback(processFrame);
+          vfcId = vVideo.requestVideoFrameCallback!(processFrame);
           video.playbackRate = 1.0; // 实时速度
           video.play().catch((e) => {
             cleanup();
@@ -270,9 +281,10 @@ export function useVideoExport({
         console.warn('[useVideoExport] requestVideoFrameCallback not available, falling back to seek mode');
         const totalFrames = Math.floor(durationSeconds * fps);
         const timeStep = 1 / fps;
+        let canceled = false;
 
         for (let i = 0; i <= totalFrames; i++) {
-          if (!isExportingRef.current) break;
+          if (!isExportingRef.current) { canceled = true; break; }
 
           const mediaTime = i * timeStep;
 
@@ -313,6 +325,9 @@ export function useVideoExport({
             setExportProgress(weightedProgress);
             lastProgressUpdate = now;
           }
+        }
+        if (canceled) {
+          throw new Error('ExportCanceled');
         }
       }
 
@@ -387,6 +402,11 @@ export function useVideoExport({
       resetCameraCache(); // 确保错误时也重置缓存
       isExportingRef.current = false;
       setIsExporting(false);
+      try {
+        if (typeof streamId === 'string' && streamId) {
+          await ipc.invoke('close-export-stream', { streamId });
+        }
+      } catch { }
       return { success: false };
     }
   };

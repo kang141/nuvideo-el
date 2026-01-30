@@ -23,11 +23,11 @@ export interface AutoZoomConfig {
 }
 
 const DEFAULT_CONFIG: AutoZoomConfig = {
-  zoomScale: 1.8,
-  dwellThreshold: 600,      // 停留 600ms 以上触发 (过滤短暂停留)
-  speedThreshold: 0.2,      // 速度低于 0.2/秒 (更严格)
-  zoomDuration: 2500,       // 缩放持续 2.5 秒 (更从容)
-  minInterval: 3000,        // 两个缩放点至少间隔 3 秒 (减少跳动)
+  zoomScale: 2.2,
+  dwellThreshold: 450,
+  speedThreshold: 0.25,
+  zoomDuration: 1200,
+  minInterval: 2000,
 };
 
 /**

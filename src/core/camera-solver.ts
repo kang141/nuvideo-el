@@ -24,11 +24,13 @@ const defaultIntent: CameraIntent = {
   targetScale: 1.0,
 };
 
-const DEADZONE_W = 0.05;
-const DEADZONE_H = 0.04;
+// Deadzone：放大时鼠标可以在这个区域内自由移动而不触发镜头跟随
+// 数值越大，放大后画面越稳定（鼠标需要移动到更靠近边缘才会拖动镜头）
+const DEADZONE_W = 0.15; // 横向死区（占画面宽度的 15%）
+const DEADZONE_H = 0.12; // 纵向死区（占画面高度的 12%）
 
 // 自动对焦时的缩放力度
-const AUTO_ZOOM_SCALE = 1.8;
+const AUTO_ZOOM_SCALE = 2.0; // Screen Studio 风格：更大幅度的局部特写
 
 // ============ 增量缓存系统 ============
 // 用于导出时避免 O(n²) 重复计算
@@ -121,28 +123,34 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   const sm = Math.max(0, Math.min(1, graph.mousePhysics.smoothing));
   const isInstantMouse = sm < 0.001;
 
-  // 镜头配置：优先使用 graph.camera.springConfig；否则使用更慢、更阻尼的默认值
+  // 镜头配置：优先使用 graph.camera.springConfig
   const camConfig = (() => {
     const cfg = graph.camera?.springConfig;
-    const stiffness = typeof cfg?.stiffness === 'number' ? cfg.stiffness : 28;
-    const damping = typeof cfg?.damping === 'number' ? cfg.damping : 18;
+    
+    // Screen Studio 核心调校：临界阻尼 (Critically Damped)
+    // 刚度 320 提供足够的加速度 (快)，阻尼 36 确保准确停车 (无回弹/震荡)
+    // 2 * sqrt(320) ≈ 35.77，取 36 略微过阻尼，实现"如丝般顺滑且精准"的停顿
+    const fallback = { stiffness: 320, damping: 36 };
+    
+    const stiffness = typeof cfg?.stiffness === 'number' ? cfg.stiffness : fallback.stiffness;
+    const damping = typeof cfg?.damping === 'number' ? cfg.damping : fallback.damping;
     return {
       stiffness: Math.max(1, stiffness),
       damping: Math.max(0, damping),
     };
   })();
 
-  // 鼠标物理配置优化（核心：确保过阻尼，消除震荡）
+  // 鼠标物理配置优化
   const mouseConfig = (() => {
-    // 刚度随平滑度降低而增加（整体降速，避免“太快眩晕”）
-    const stiffness = 1600 - sm * 1200;
-    // 阻尼比：保持过阻尼，避免回弹晃动
-    const dampingRatio = 1.35 + sm * 1.6;
+    // 降低一点刚度，增加"重量感"，让鼠标像是在流体中运动一样平滑
+    const stiffness = 2500 - sm * 1500;
+    // 保持过阻尼，过滤掉所有手抖
+    const dampingRatio = 1.2 + sm * 1.5;
     const damping = 2 * Math.sqrt(Math.max(1, stiffness)) * dampingRatio;
 
     const outW = graph.config.outputWidth || 1920;
-    const speedLimitPx = graph.mousePhysics.speedLimit || 6000;
-    const maxSpeed = Math.max(0.12, (speedLimitPx / outW) * 0.6);
+    const speedLimitPx = graph.mousePhysics.speedLimit || 8000;
+    const maxSpeed = Math.max(0.15, (speedLimitPx / outW) * 0.9);
 
     return { stiffness: Math.max(1, stiffness), damping: Math.max(0, damping), maxSpeed };
   })();
@@ -197,8 +205,8 @@ export function computeCameraState(graph: RenderGraph, t: number) {
         const dym = rawMouse.y - state.my;
         const dist = Math.sqrt(dxm * dxm + dym * dym);
 
-        // 过远补偿：如果落后太远（>40% 屏幕），直接同步，防止产生幻影
-        if (dist > 0.4) {
+        // 过远补偿：阈值从 0.4 缩小到 0.12，防止在大幅移动时产生明显的拖后感
+        if (dist > 0.12) {
           state.mx = rawMouse.x;
           state.my = rawMouse.y;
           state.mvx = 0;
@@ -261,23 +269,44 @@ export function computeCameraState(graph: RenderGraph, t: number) {
       targetCy = 0.5;
     }
 
-    // 3. 镜头物理
+    // 3. 镜头物理（Scale 使用独立的更快参数）
+    // Scale 专用：快速但绝对稳定（临界阻尼）
+    const scaleStiffness = camConfig.stiffness * 1.8; // 进一步提速
+    // 临界阻尼公式：D = 2 * sqrt(k)，确保零震荡
+    const scaleDamping = 2 * Math.sqrt(scaleStiffness);
+    
     const fS =
-      -camConfig.stiffness * (state.scale - targetScale) -
-      camConfig.damping * state.vs;
+      -scaleStiffness * (state.scale - targetScale) -
+      scaleDamping * state.vs;
     state.vs += fS * factor;
+    {
+      const maxVs = 3.0; // 提高速度上限以配合更高刚度
+      if (state.vs > maxVs) state.vs = maxVs;
+      else if (state.vs < -maxVs) state.vs = -maxVs;
+    }
     state.scale += state.vs * factor;
 
+    // Position 保持原有的平滑参数
     const fX =
       -camConfig.stiffness * (state.cx - targetCx) -
       camConfig.damping * state.vx;
     state.vx += fX * factor;
+    {
+      const maxV = 2.8;
+      if (state.vx > maxV) state.vx = maxV;
+      else if (state.vx < -maxV) state.vx = -maxV;
+    }
     state.cx += state.vx * factor;
 
     const fY =
       -camConfig.stiffness * (state.cy - targetCy) -
       camConfig.damping * state.vy;
     state.vy += fY * factor;
+    {
+      const maxV = 2.8;
+      if (state.vy > maxV) state.vy = maxV;
+      else if (state.vy < -maxV) state.vy = -maxV;
+    }
     state.cy += state.vy * factor;
 
     currentT = nextT;

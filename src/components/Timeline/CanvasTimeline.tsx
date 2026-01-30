@@ -16,6 +16,19 @@ interface CanvasTimelineProps {
 // 拖拽状态类型
 type DragMode = 'none' | 'seek' | 'move-zoom' | 'resize-left' | 'resize-right';
 
+// 时间轴布局常量
+const TIMELINE_CONSTANTS = {
+  PADDING_LEFT: 30,
+  TRACK_HEIGHT: 40,
+  TRACK_GAP: 8,
+  TRACKS_START_Y: 45,
+  MIN_INTENT_GAP: 100, // ms
+  EDGE_HOTZONE: 12, // px
+  ZOOM_BAR_PADDING: 3, // px
+  ABSOLUTE_MIN_PPS: 20, // 最小像素/秒，保证操作手感
+  MAX_PPS: 2000, // 最大缩放
+} as const;
+
 export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   duration,
   videoRef,
@@ -42,19 +55,20 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number>(-1); // 新增：选中状态
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartIntents, setDragStartIntents] = useState<CameraIntent[]>([]);
-
-  // 1. 基础计算
-  const ABSOLUTE_MIN_PPS = 20; // 即使在最小时，1秒也要占 20px，保证操作手感
+  
+  // 音频声纹数据
+  const [waveformPeaks, setWaveformPeaks] = useState<number[]>([]);
+  const isProcessingAudio = useRef(false);
   
   const minPPS = useMemo(() => {
-    if (width <= 0 || duration <= 0) return ABSOLUTE_MIN_PPS;
-    // 基础 minPPS 是“刚好铺满全屏”的比例，但不能低于绝对最小值
-    return Math.max(ABSOLUTE_MIN_PPS, (width - 60) / duration);
+    if (width <= 0 || duration <= 0) return TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS;
+    // 基础 minPPS 是"刚好铺满全屏"的比例，但不能低于绝对最小值
+    return Math.max(TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS, (width - 60) / duration);
   }, [width, duration]);
-
+  
   const pps = useMemo(() => {
     if (userPPS === null) return minPPS;
-    return Math.max(ABSOLUTE_MIN_PPS, userPPS);
+    return Math.max(TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS, userPPS);
   }, [minPPS, userPPS]);
 
   const totalWidth = useMemo(() => Math.max(width, duration * pps + 100), [width, duration, pps]);
@@ -92,23 +106,20 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
     ctx.clearRect(0, 0, width, height);
 
-    const paddingLeft = 30;
+    const { PADDING_LEFT, TRACK_HEIGHT, TRACK_GAP, TRACKS_START_Y, ZOOM_BAR_PADDING } = TIMELINE_CONSTANTS;
     // 强制 duration 最小值，防止 pps 飙升
     const safeDuration = Math.max(duration, 0.1);
-    const timeToX = (t: number) => paddingLeft + t * pps - scrollLeft;
-    const xToTime = (x: number) => (x - paddingLeft + scrollLeft) / pps;
+    const timeToX = (t: number) => PADDING_LEFT + t * pps - scrollLeft;
+    const xToTime = (x: number) => (x - PADDING_LEFT + scrollLeft) / pps;
 
     const trackCount = 2;
-    const trackH = 40;
-    const trackGap = 8;
-    const tracksStartY = 45;
 
     // 绘制轨道槽位
-    const contentWidth = width - paddingLeft * 2;
+    const contentWidth = width - PADDING_LEFT * 2;
     for (let i = 0; i < trackCount; i++) {
-        const ty = tracksStartY + i * (trackH + trackGap);
+        const ty = TRACKS_START_Y + i * (TRACK_HEIGHT + TRACK_GAP);
         ctx.beginPath();
-        ctx.roundRect(paddingLeft, ty, contentWidth, trackH, 10);
+        ctx.roundRect(PADDING_LEFT, ty, contentWidth, TRACK_HEIGHT, 10);
         ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
@@ -124,7 +135,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     for (let t = startT; t <= endT; t += tickStep) {
       if (t < 0 || t > safeDuration) continue;
       const x = Math.round(timeToX(t));
-      if (x < paddingLeft || x > width - paddingLeft) continue;
+      if (x < PADDING_LEFT || x > width - PADDING_LEFT) continue;
 
       const isMajor = Math.abs(t % 1) < 0.001 || Math.abs(t - safeDuration) < 0.001;
       if (isMajor) {
@@ -139,7 +150,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     }
 
     // 绘制 Zoom 条
-    const zoomTrackY = tracksStartY;
+    const zoomTrackY = TRACKS_START_Y;
     const intents = renderGraph.camera.intents || [];
     intents.forEach((current, i) => {
       const next = intents[i + 1];
@@ -147,8 +158,8 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         const startX = timeToX(current.t / 1000);
         const endX = next ? timeToX(next.t / 1000) : timeToX(duration);
         const rw = Math.max(4, endX - startX);
-        const ry = zoomTrackY + 3;
-        const rh = trackH - 6;
+        const ry = zoomTrackY + ZOOM_BAR_PADDING;
+        const rh = TRACK_HEIGHT - ZOOM_BAR_PADDING * 2;
         const isSelected = i === selectedZoomIndex;
 
         ctx.save();
@@ -174,12 +185,67 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       }
     });
 
-    // 绘制轨道 2
-    const videoTrackY = tracksStartY + 1 * (trackH + trackGap);
+    // 绘制轨道 2 (视频 + 音频声纹)
+    const videoTrackY = TRACKS_START_Y + 1 * (TRACK_HEIGHT + TRACK_GAP);
+    const vty = videoTrackY + 4;
+    const vth = TRACK_HEIGHT - 8;
+    
+    ctx.save();
     ctx.beginPath();
-    ctx.roundRect(paddingLeft, videoTrackY + 4, contentWidth, trackH - 8, 8);
+    ctx.roundRect(PADDING_LEFT, vty, contentWidth, vth, 8);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.fill();
+    ctx.clip(); // 裁剪以确保波形不超出轨道
+
+    // 绘制声纹 (Waveform) - 升级为单向向上波形 (只往上，不往下)
+    if (waveformPeaks.length > 0) {
+      const baselineY = vty + vth - 2; // 基准线移到轨道底部（预留 2px 边距）
+      const maxBarHeight = vth * 0.85;
+      
+      const stepPx = 2;
+      
+      // 准备从底向上的渐变色
+      const gradient = ctx.createLinearGradient(0, baselineY, 0, vty + 4);
+      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.8)'); // 底部较深
+      gradient.addColorStop(1, 'rgba(147, 210, 255, 0.4)'); // 顶部较浅，通透感
+
+      ctx.save();
+      ctx.beginPath();
+      
+      // 线回到起始基准点
+      ctx.moveTo(PADDING_LEFT, baselineY);
+
+      // 绘制顶部起伏轮廓
+      for (let x = PADDING_LEFT; x < width - PADDING_LEFT; x += stepPx) {
+        const t = (x - PADDING_LEFT + scrollLeft) / pps;
+        if (t < 0 || t > duration) continue;
+
+        const peakIdx = Math.floor((t / duration) * waveformPeaks.length);
+        const peak = waveformPeaks[peakIdx] || 0;
+        
+        // 增强视觉起伏
+        const h = Math.max(1, Math.sqrt(peak) * maxBarHeight);
+        const y = baselineY - h;
+
+        ctx.lineTo(x, y);
+      }
+
+      // 闭合到右下角并回到左下角
+      ctx.lineTo(width - PADDING_LEFT, baselineY);
+      ctx.closePath();
+
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // 加上一层精细的描边
+      ctx.strokeStyle = 'rgba(147, 197, 253, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      
+      ctx.restore();
+    }
+    ctx.restore();
   }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex, language]);
 
   // 4. 驱动播放头的高频同步循环
@@ -208,16 +274,15 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
       ctx.clearRect(0, 0, width, height);
 
-      const paddingLeft = 30;
-      const timeToX = (t: number) => paddingLeft + t * pps - scrollLeft;
+      const { PADDING_LEFT, TRACK_HEIGHT, TRACK_GAP, TRACKS_START_Y } = TIMELINE_CONSTANTS;
+      const timeToX = (t: number) => PADDING_LEFT + t * pps - scrollLeft;
       
       const curTime = video.currentTime;
       const phX = Math.round(timeToX(curTime));
 
-      if (phX >= paddingLeft && phX <= width - paddingLeft) {
+      if (phX >= PADDING_LEFT && phX <= width - PADDING_LEFT) {
         const playheadColor = '#ff4757';
-        const tracksStartY = 45;
-        const totalContentH = (40 + 8) * 2;
+        const totalContentH = (TRACK_HEIGHT + TRACK_GAP) * 2;
 
         // --- 绘制极致精美的红针 ---
         ctx.save();
@@ -241,7 +306,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         // 3. 极细指向针 (1px 物理对齐)
         ctx.beginPath();
         ctx.moveTo(phX, 32);
-        ctx.lineTo(phX, tracksStartY + totalContentH + 10);
+        ctx.lineTo(phX, TRACKS_START_Y + totalContentH + 10);
         ctx.strokeStyle = playheadColor;
         ctx.lineWidth = 1;
         ctx.stroke();
@@ -257,10 +322,10 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
       // 悬浮预览线
       if (hoverX !== null) {
-        const hx = Math.round(Math.max(paddingLeft, Math.min(width - paddingLeft, hoverX)));
+        const hx = Math.round(Math.max(PADDING_LEFT, Math.min(width - PADDING_LEFT, hoverX)));
         ctx.beginPath();
-        ctx.moveTo(hx, 45);
-        ctx.lineTo(hx, 45 + (40 + 8) * 2);
+        ctx.moveTo(hx, TRACKS_START_Y);
+        ctx.lineTo(hx, TRACKS_START_Y + (TRACK_HEIGHT + TRACK_GAP) * 2);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
@@ -275,22 +340,81 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     return () => cancelAnimationFrame(raf);
   }, [width, height, pps, scrollLeft, hoverX, videoRef]);
 
+  // 加载并解析音频波形
+  useEffect(() => {
+    const source = renderGraph.audioSource;
+    if (!source || isProcessingAudio.current) return;
+
+    const processAudio = async () => {
+      isProcessingAudio.current = true;
+      try {
+        const response = await fetch(source);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const decodedData = await audioCtx.decodeAudioData(arrayBuffer);
+        
+        const channelData = decodedData.getChannelData(0);
+        const step = Math.ceil(channelData.length / 1500); // 采样 1500 个点
+        const peaks = [];
+        
+        for (let i = 0; i < 1500; i++) {
+          let max = 0;
+          const start = i * step;
+          const end = Math.min(start + step, channelData.length);
+          for (let j = start; j < end; j += 10) { // 步进采样提升性能
+            const val = Math.abs(channelData[j]);
+            if (val > max) max = val;
+          }
+          // 对 peak 进行一点平滑处理，视觉更美观
+          peaks.push(Math.pow(max, 0.8)); 
+        }
+        
+        setWaveformPeaks(peaks);
+        await audioCtx.close();
+      } catch (err) {
+        console.warn('[CanvasTimeline] Waveform generation failed:', err);
+      } finally {
+        isProcessingAudio.current = false;
+      }
+    };
+
+    processAudio();
+  }, [renderGraph.audioSource]);
+
   // 这里的关键：所有可能影响静态层的状态变化都要触发重绘
   useEffect(() => {
     drawStatic();
-  }, [drawStatic, duration, renderGraph]);
+  }, [drawStatic, duration, renderGraph, waveformPeaks]);
 
   const isDragging = useRef(false);
-  const paddingLeft = 30;
+  const snapMs = useCallback((ms: number) => {
+    const fps = renderGraph.config?.fps || 30;
+    const step = Math.max(1, Math.round(1000 / fps));
+    return Math.round(ms / step) * step;
+  }, [renderGraph.config?.fps]);
+  const normalizeIntents = useCallback((intents: CameraIntent[]) => {
+    const fps = renderGraph.config?.fps || 30;
+    const step = Math.max(1, Math.round(1000 / fps));
+    const gap = Math.max(step, 50);
+    const dur = Math.round(duration * 1000);
+    const arr = intents.map(i => ({ ...i, t: Math.max(0, Math.min(dur, Math.round(i.t))) })).sort((a, b) => a.t - b.t);
+    for (let i = 1; i < arr.length; i++) {
+      const prev = arr[i - 1];
+      const cur = arr[i];
+      if (cur.t <= prev.t + gap) {
+        arr[i] = { ...cur, t: Math.min(dur, prev.t + gap) };
+      }
+    }
+    return arr;
+  }, [renderGraph.config?.fps, duration]);
 
   // 辅助函数：检测点击位置是否在某个缩放条上
   const hitTestZoomBar = useCallback((x: number, y: number): { index: number; edge: 'left' | 'right' | 'center' } | null => {
     const intents = renderGraph.camera.intents || [];
-    const trackH = 40;
-    const tracksStartY = 45;
-    const zoomTrackY = tracksStartY;
+    const { PADDING_LEFT, TRACK_HEIGHT, TRACKS_START_Y, ZOOM_BAR_PADDING, EDGE_HOTZONE } = TIMELINE_CONSTANTS;
+    const zoomTrackY = TRACKS_START_Y;
     
-    const timeToX = (t: number) => paddingLeft + t * pps - scrollLeft;
+    const timeToX = (t: number) => PADDING_LEFT + t * pps - scrollLeft;
     
     for (let i = 0; i < intents.length; i++) {
       const current = intents[i];
@@ -299,14 +423,14 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       if (current.targetScale > 1.0) {
         const startX = timeToX(current.t / 1000);
         const endX = next ? timeToX(next.t / 1000) : timeToX(duration);
-        const ry = zoomTrackY + 3;
-        const rh = trackH - 6;
+        const ry = zoomTrackY + ZOOM_BAR_PADDING;
+        const rh = TRACK_HEIGHT - ZOOM_BAR_PADDING * 2;
         
         // 检查 Y 范围
         if (y >= ry && y <= ry + rh) {
-          // 检查左右边缘 (12px 的热区)
-          if (Math.abs(x - startX) < 12) return { index: i, edge: 'left' };
-          if (Math.abs(x - endX) < 12) return { index: i, edge: 'right' };
+          // 检查左右边缘
+          if (Math.abs(x - startX) < EDGE_HOTZONE) return { index: i, edge: 'left' };
+          if (Math.abs(x - endX) < EDGE_HOTZONE) return { index: i, edge: 'right' };
           // 检查中间区域
           if (x >= startX && x <= endX) return { index: i, edge: 'center' };
         }
@@ -384,7 +508,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       setSelectedZoomIndex(-1); // 取消选中
       isDragging.current = true;
       setDragMode('seek');
-      const time = (x - paddingLeft + scrollLeft) / pps;
+      const time = (x - TIMELINE_CONSTANTS.PADDING_LEFT + scrollLeft) / pps;
       onSeek(Math.max(0, Math.min(duration, time)));
     }
   }, [hitTestZoomBar, renderGraph.camera.intents, scrollLeft, pps, duration, onSeek, onUpdateIntents]);
@@ -421,44 +545,54 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
     // 处理拖拽
     if (dragMode === 'seek' && isDragging.current) {
-      const time = (x - paddingLeft + scrollLeft) / pps;
+      const time = (x - TIMELINE_CONSTANTS.PADDING_LEFT + scrollLeft) / pps;
       onSeek(Math.max(0, Math.min(duration, time)));
     } else if (dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0) {
       const deltaX = x - dragStartX;
       const deltaTime = Math.round((deltaX / pps) * 1000); // 转换为毫秒
       
+      // 性能优化：拖动过程中不进行 snap 对齐，减少计算开销
       const newIntents = [...dragStartIntents];
       const current = dragStartIntents[dragZoomIndex];
       const prev = dragStartIntents[dragZoomIndex - 1];
       const next = dragStartIntents[dragZoomIndex + 1];
       
-      const MIN_GAP = 100; // 最小 100ms 间距
+      const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
       
       if (dragMode === 'move-zoom') {
         // 移动整个区间 (需要同时移动开始和结束点)
         // 这里的 logic 是：current 是缩放开始，next 是缩放恢复
         if (next && next.targetScale === 1.0) {
           const duration_ms = (next.t - current.t);
+          // 拖动中使用原始值，不 snap，提升流畅度
           let newStartT = current.t + deltaTime;
-          
-          // 限制范围
+                  
+          // 限制范围（拖动中使用宽松的边界检查）
           const minT = prev ? prev.t + MIN_GAP : 0;
           const nextNext = dragStartIntents[dragZoomIndex + 2];
-          const maxT = nextNext ? nextNext.t - duration_ms - MIN_GAP : duration * 1000 - duration_ms;
-          
-          newStartT = Math.max(minT, Math.min(maxT, newStartT));
-          
+          const rawMaxT = nextNext ? nextNext.t - duration_ms - MIN_GAP : duration * 1000 - duration_ms;
+                  
+          newStartT = Math.max(minT, Math.min(rawMaxT, newStartT));
+                  
+          const newEndT = newStartT + duration_ms;
+                  
+          // 二次检查：确保结束点不会超出边界
+          const absoluteMaxEndT = nextNext ? nextNext.t - MIN_GAP : duration * 1000;
+          if (newEndT > absoluteMaxEndT) {
+            newStartT = absoluteMaxEndT - duration_ms;
+          }
+                  
           newIntents[dragZoomIndex] = { ...current, t: newStartT };
           newIntents[dragZoomIndex + 1] = { ...next, t: newStartT + duration_ms };
         }
       } else if (dragMode === 'resize-left') {
-        // 调整左边缘
+        // 调整左边缘（拖动中不 snap）
         let newT = current.t + deltaTime;
         const minT = prev ? prev.t + MIN_GAP : 0;
         const maxT = next ? next.t - MIN_GAP : duration * 1000 - MIN_GAP;
         newIntents[dragZoomIndex] = { ...current, t: Math.max(minT, Math.min(maxT, newT)) };
       } else if (dragMode === 'resize-right') {
-        // 调整右边缘 (即修改 next 的时间)
+        // 调整右边缘 (即修改 next 的时间，拖动中不 snap)
         if (next) {
           let newT = next.t + deltaTime;
           const minT = current.t + MIN_GAP;
@@ -468,6 +602,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         }
       }
       
+      // 拖动中直接更新，不进行标准化和推挤（在 mouseup 时统一处理）
       onUpdateIntents(newIntents);
     }
   }, [dragMode, dragZoomIndex, dragStartX, dragStartIntents, pps, scrollLeft, duration, onSeek, onUpdateIntents, hitTestZoomBar]);
@@ -477,10 +612,60 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   };
 
   const handleMouseUp = useCallback(() => {
+    const wasDraggingZoom = dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0;
+    
     isDragging.current = false;
     setDragMode('none');
     setDragZoomIndex(-1);
-  }, []);
+    
+    // 如果刚才在拖动 zoom 块，需要进行 snap 对齐和推挤处理
+    if (wasDraggingZoom) {
+      const intents = renderGraph.camera.intents || [];
+      const snappedIntents = intents.map(intent => ({
+        ...intent,
+        t: snapMs(intent.t)
+      }));
+      
+      // 应用推挤逻辑，确保最小间距
+      const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
+      const durMs = Math.round(duration * 1000);
+      
+      for (let i = 1; i < snappedIntents.length; i++) {
+        const prev = snappedIntents[i - 1];
+        const cur = snappedIntents[i];
+        if (cur.t <= prev.t + MIN_GAP) {
+          snappedIntents[i] = { ...cur, t: snapMs(Math.min(durMs, prev.t + MIN_GAP)) };
+        }
+      }
+      
+      // 最终标准化
+      const normalized = normalizeIntents(snappedIntents);
+      onUpdateIntents(normalized);
+    } else {
+      // 普通情况，只做标准化
+      const intents = renderGraph.camera.intents || [];
+      const normalized = normalizeIntents(intents);
+      onUpdateIntents(normalized);
+    }
+  }, [dragMode, dragZoomIndex, renderGraph.camera.intents, normalizeIntents, onUpdateIntents, snapMs, duration]);
+
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setUserPPS(prev => {
+        const current = prev || minPPS;
+        return Math.max(TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS, Math.min(current * delta, TIMELINE_CONSTANTS.MAX_PPS));
+      });
+    } else {
+      const delta = e.deltaX || e.deltaY;
+      setScrollLeft(prev => {
+        const next = prev + delta;
+        const maxScroll = Math.max(0, totalWidth - (width - 60));
+        return Math.max(0, Math.min(next, maxScroll));
+      });
+    }
+  }, [minPPS, totalWidth, width]);
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove);
@@ -498,26 +683,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         container.removeEventListener('wheel', handleWheel);
       }
     };
-  }, [handleMouseMove, handleMouseUp, pps, scrollLeft, duration, width]);
-
-
-  const handleWheel = (e: WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      setUserPPS(prev => {
-        const current = prev || minPPS;
-        return Math.max(ABSOLUTE_MIN_PPS, Math.min(current * delta, 2000));
-      });
-    } else {
-      const delta = e.deltaX || e.deltaY;
-      setScrollLeft(prev => {
-        const next = prev + delta;
-        const maxScroll = Math.max(0, totalWidth - (width - 60));
-        return Math.max(0, Math.min(next, maxScroll));
-      });
-    }
-  };
+  }, [handleMouseMove, handleMouseUp, handleWheel]);
 
   return (
     <div 

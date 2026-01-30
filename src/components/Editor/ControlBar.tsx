@@ -1,6 +1,7 @@
 import { Play, Pause, Maximize2 } from 'lucide-react';
 import { formatTime } from '../../utils/time';
 import { cn } from '@/lib/utils';
+import { useRef, useEffect } from 'react';
 
 interface ControlBarProps {
   currentTime: number;
@@ -9,6 +10,7 @@ interface ControlBarProps {
   onTogglePlay: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  videoRef: React.RefObject<HTMLVideoElement>;
 }
 
 export function ControlBar({
@@ -17,14 +19,39 @@ export function ControlBar({
   isPlaying,
   onTogglePlay,
   isFullscreen,
-  onToggleFullscreen
+  onToggleFullscreen,
+  videoRef
 }: ControlBarProps) {
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
+
+  // 独立的 UI 更新循环：绕过 React Render
+  useEffect(() => {
+    let raf: number;
+    const update = () => {
+      if (videoRef.current && timeDisplayRef.current) {
+        timeDisplayRef.current.innerText = formatTime(videoRef.current.currentTime);
+      }
+      if (isPlaying) {
+        raf = requestAnimationFrame(update);
+      }
+    };
+
+    if (isPlaying) {
+      raf = requestAnimationFrame(update);
+    } else {
+      if (timeDisplayRef.current) {
+         timeDisplayRef.current.innerText = formatTime(currentTime);
+      }
+    }
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, currentTime, videoRef]);
+
   return (
     <div className="h-16 flex-shrink-0 flex items-center justify-between px-8 border-t border-white/[0.03] bg-[#090909]">
       {/* 左侧：时间显示 */}
       <div className="flex items-center gap-4 min-w-[140px]">
         <span className="font-mono text-[12px] font-medium tracking-tight text-white/40 tabular-nums">
-          <span className="text-white/80">{formatTime(currentTime)}</span>
+          <span ref={timeDisplayRef} className="text-white/80">{formatTime(currentTime)}</span>
           <span className="text-white/10 mx-1.5">/</span>
           {formatTime(maxDuration)}
         </span>

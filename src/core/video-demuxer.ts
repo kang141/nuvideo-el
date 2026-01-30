@@ -44,13 +44,24 @@ export class VideoDemuxer {
         description: this.getExtraData(),
       };
 
-      // 修复: 某些版本可能没有 setExtractionConfig 或者名称略有不同
+      // 修复: 尝试多种可能的提取配置方法
+      const id = this.videoTrack.id;
+      const options = { nb_samples: 10000 };
+      
       if (typeof this.mp4box.setExtractionConfig === 'function') {
-        this.mp4box.setExtractionConfig(this.videoTrack.id, null, { nb_samples: 10000 });
+        this.mp4box.setExtractionConfig(id, null, options);
       } else if (typeof this.mp4box.setExtractConfig === 'function') {
-        this.mp4box.setExtractConfig(this.videoTrack.id, null, { nb_samples: 10000 });
+        this.mp4box.setExtractConfig(id, null, options);
+      } else if (typeof this.mp4box.setTrackOptions === 'function') {
+        // 部分版本使用 setTrackOptions 触发提取
+        this.mp4box.setTrackOptions(id, options);
       } else {
-        console.error('[VideoDemuxer] setExtractionConfig method missing on mp4box instance');
+        console.warn('[VideoDemuxer] No known extraction config method found on mp4box. Falling back to active track selection.');
+      }
+      
+      // 必须显式激活轨道
+      if (typeof this.mp4box.selectTrack === 'function') {
+        this.mp4box.selectTrack(id);
       }
 
       if (this.onReadyCallback) this.onReadyCallback(config);
@@ -75,14 +86,22 @@ export class VideoDemuxer {
     if (!reader) return;
 
     let offset = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      const buffer = value.buffer as any;
-      buffer.fileStart = offset;
-      this.mp4box.appendBuffer(buffer);
-      offset += value.byteLength;
+        // 关键修复: 必须提取 Uint8Array 实际引用的数据块。
+        // 直接使用 value.buffer 可能会因为 Buffer Pool 重用而导致数据偏移错误。
+        const chunk = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        (chunk as any).fileStart = offset;
+        
+        this.mp4box.appendBuffer(chunk);
+        offset += value.byteLength;
+      }
+      this.mp4box.flush(); // 确保所有数据都被处理
+    } catch (e) {
+      console.error('[VideoDemuxer] Failed to read stream:', e);
     }
   }
 

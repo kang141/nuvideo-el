@@ -2,6 +2,7 @@ import { RefObject } from 'react';
 
 interface CanvasPreviewProps {
   videoRef: RefObject<HTMLVideoElement>;
+  audioRef: RefObject<HTMLAudioElement>;
   canvasRef: RefObject<HTMLCanvasElement>;
   onEnded: () => void;
   onFocusSpot?: (cx: number, cy: number) => void;
@@ -9,6 +10,7 @@ interface CanvasPreviewProps {
 
 export function CanvasPreview({
   videoRef,
+  audioRef,
   canvasRef,
   onEnded,
   onFocusSpot
@@ -39,6 +41,10 @@ export function CanvasPreview({
             muted 
             playsInline 
             onEnded={onEnded} 
+          />
+          <audio 
+            ref={audioRef}
+            className="hidden"
           />
           <canvas 
             ref={canvasRef} 

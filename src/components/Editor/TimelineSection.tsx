@@ -1,4 +1,4 @@
-import { Search, Scissors, Plus } from 'lucide-react';
+import { Search, AudioLines, Plus } from 'lucide-react';
 import React from 'react';
 import { CanvasTimelineMemo } from '../Timeline/CanvasTimeline';
 import type { RenderGraph, CameraIntent } from '../../types';
@@ -41,11 +41,11 @@ export function TimelineSection({
         {/* 轨道间距 */}
         <div className="h-[8px]" />
 
-        {/* 对齐第二条轨道 (Video/Cut) */}
+        {/* 对齐第二条轨道 (Audio Waveform) */}
         <div className="h-[40px] flex items-center justify-center">
-          <button title={t.editor.cutTool} className="h-8 w-8 flex items-center justify-center rounded-lg text-white/20 hover:bg-white/5 hover:text-white transition-all">
-            <Scissors size={16} />
-          </button>
+          <div className="h-8 w-8 flex items-center justify-center rounded-lg text-blue-400/50 bg-blue-500/5 border border-blue-500/10">
+            <AudioLines size={16} />
+          </div>
         </div>
 
         {/* 底部其他操作 */}

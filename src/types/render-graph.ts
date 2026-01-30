@@ -46,6 +46,12 @@ export interface RenderGraph {
   videoSource: string;
   /** 录制总时长（毫秒） */
   duration: number;
+  /** 原音音频源路径 (可选) */
+  audioSource?: string;
+  /** 音频相对于视频开始的延迟（毫秒） (可选) */
+  audioDelay?: number;
+  /** 摄像头视频文件路径 (可选) */
+  webcamSource?: string;
   /** 鼠标事件序列 */
   mouse: MouseEvent[];
   /** 鼠标样式与特效配置 */
@@ -64,6 +70,12 @@ export interface RenderGraph {
   };
   /** 镜头配置 */
   camera: CameraConfig;
+  /** 摄像头显示选项 (可选) */
+  webcam?: {
+    isEnabled: boolean;
+    shape?: 'circle' | 'rect';
+    size?: number;
+  };
   /** 音频配置（可选） */
   audio?: AudioConfig;
   /** 渲染配置 */
