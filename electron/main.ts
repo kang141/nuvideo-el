@@ -239,6 +239,7 @@ class SessionRecorder {
   private mouseMonitorProcess: any = null;
   private mousePollTimer: any = null;
   private startTime: number = 0;
+  private readyOffset: number = 0; // 关键：从 FFmpeg 启动到产生第一帧的毫秒数
   private isStopping: boolean = false;
 
   constructor(sourceId: string, bounds: any, scaleFactor: number) {
@@ -287,7 +288,7 @@ class SessionRecorder {
     }
   }
 
-  async start(ffmpegPath: string, args: string[], monitorPath: string): Promise<{ success: boolean; error?: string }> {
+  async start(ffmpegPath: string, args: string[], monitorPath: string): Promise<{ success: boolean; error?: string; readyOffset?: number }> {
     const { spawn } = await import('node:child_process');
 
     // 1. 启动 FFmpeg
@@ -309,7 +310,8 @@ class SessionRecorder {
           process.stdout.write(`\r[FFmpeg Record] ${log}`);
           if (!resolved) {
             resolved = true;
-            resolve({ success: true });
+            this.readyOffset = performance.now() - this.startTime;
+            resolve({ success: true, readyOffset: this.readyOffset });
           }
         } else {
           console.log('[FFmpeg Log]', log);
@@ -531,7 +533,13 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
-    return { success: true, sessionId: currentSession.sessionId, bounds, t0: performance.now() };
+    return { 
+      success: true, 
+      sessionId: currentSession.sessionId, 
+      bounds, 
+      t0: performance.now(),
+      readyOffset: result.readyOffset || 0 
+    };
   } else {
     currentSession = null;
     return result;

@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, RefObject, useState } from 'react';
+import { useEffect, useRef, RefObject, useState } from 'react';
 import { EDITOR_CANVAS_SIZE } from '../../constants/editor';
 import { RenderGraph } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
@@ -33,7 +33,6 @@ export function useVideoRenderer({
   const webcamFrameManagerRef = useRef<VideoFrameManager | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const lastDrawnTsRef = useRef<number>(-1);
-  const lastWebcamDrawnTsRef = useRef<number>(-1);
   // 核心修复：视频帧缓存备份，彻底消除 seek 时的黑屏闪烁
   const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null); 
   const webcamCacheRef = useRef<HTMLCanvasElement | null>(null);
@@ -195,39 +194,44 @@ export function useVideoRenderer({
     // 状态同步逻辑：让摄像头播放器跟随主视频状态
     const mainVideo = videoRef.current;
     
+    // 状态切换同步：处理播放、暂停、速率
     const syncState = () => {
       if (!mainVideo || !video) return;
       video.playbackRate = mainVideo.playbackRate;
-      
-      const delay = (renderGraph.webcamDelay || 0) / 1000;
-      const targetTime = Math.max(0, mainVideo.currentTime - delay);
-      
-      // 容差同步，避免频繁 seek 导致的性能损耗
-      if (Math.abs(video.currentTime - targetTime) > 0.1) {
-        video.currentTime = targetTime;
-      }
-
       if (mainVideo.paused && !video.paused) video.pause();
       if (!mainVideo.paused && video.paused) video.play().catch(() => {});
     };
 
+    // 强校准：仅在进度拖动或开始播放时对齐时间轴
+    const hardSync = () => {
+      if (!mainVideo || !video) return;
+      const delay = (renderGraph.webcamDelay || 0) / 1000;
+      const targetTime = Math.max(0, mainVideo.currentTime - delay);
+      
+      // 容差判定：如果偏差过大（>0.1s），执行一次 Seek
+      if (Math.abs(video.currentTime - targetTime) > 0.1) {
+        video.currentTime = targetTime;
+      }
+      syncState();
+    };
+
     if (mainVideo) {
-      mainVideo.addEventListener('play', syncState);
+      mainVideo.addEventListener('play', hardSync);
       mainVideo.addEventListener('pause', syncState);
       mainVideo.addEventListener('ratechange', syncState);
-      mainVideo.addEventListener('timeupdate', syncState);
+      mainVideo.addEventListener('seeked', hardSync);
       // 初始化状态
-      syncState();
+      hardSync();
     }
 
-    console.log('[useVideoRenderer] Webcam native player initialized:', webcamSource, 'delay:', renderGraph.webcamDelay);
+    console.log('[useVideoRenderer] Webcam sync optimized (Low-overhead mode)');
 
     return () => {
       if (mainVideo) {
-        mainVideo.removeEventListener('play', syncState);
+        mainVideo.removeEventListener('play', hardSync);
         mainVideo.removeEventListener('pause', syncState);
         mainVideo.removeEventListener('ratechange', syncState);
-        mainVideo.removeEventListener('timeupdate', syncState);
+        mainVideo.removeEventListener('seeked', hardSync);
       }
       video.pause();
       video.src = '';

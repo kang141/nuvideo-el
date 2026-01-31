@@ -25,6 +25,7 @@ function App() {
   const lastVideoUrlRef = useRef<string | null>(null);
   const audioDelayRef = useRef<number>(0);
   const webcamDelayRef = useRef<number>(0);
+  const readyOffsetRef = useRef<number>(0);
 
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
@@ -160,9 +161,11 @@ function App() {
       }
       
       if (startResult?.t0) {
+        readyOffsetRef.current = startResult.readyOffset;
         mouseTracker.align(startResult.t0);
         // 计算音频相对于视频的延迟戳
-        // +150ms: 补偿屏幕采集管线(DXGI/GDI)的物理延迟。如果不加，声音会比画面快（抢跑）。
+        // 注意：这里的 startResult.t0 是 Ready 时刻，音频也是在这个时刻左右启动的。
+        // 如果音频比视频 READY 晚，audioDelay 为正；反之为负。
         audioDelayRef.current = ((audioT0 || performance.now()) - startResult.t0) + 150;
       }
 
@@ -205,9 +208,7 @@ function App() {
       let lastY = 0.5;
 
       for (const raw of parsed) {
-        const t = typeof raw.t === "number" ? raw.t : raw.ts;
-        if (typeof t !== "number") continue;
-
+        // 1. 始终优先提取坐标（即使该事件后续被过滤），保证位置继承链不中断
         const hasXY = typeof raw.x === "number" && typeof raw.y === "number";
         const x = hasXY ? raw.x : lastX;
         const y = hasXY ? raw.y : lastY;
@@ -215,6 +216,14 @@ function App() {
           lastX = x;
           lastY = y;
         }
+
+        // 2. 减去准备时间偏移。
+        const rawT = typeof raw.t === "number" ? raw.t : raw.ts;
+        if (typeof rawT !== "number") continue;
+
+        const t = rawT - readyOffsetRef.current;
+        // 过滤掉视频开始之前的鼠标动作
+        if (t < 0) continue;
 
         if (
           raw.type !== "move" &&

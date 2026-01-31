@@ -20,8 +20,8 @@ export class ScreenRecorder {
       microphoneLabel: string | null;
       systemAudio: boolean 
     }
-  ): Promise<{ bounds: any; t0: number }> {
-    if (this._isRecording || this._isStopping) return { bounds: null, t0: 0 };
+  ): Promise<{ bounds: any; t0: number; readyOffset: number }> {
+    if (this._isRecording || this._isStopping) return { bounds: null, t0: 0, readyOffset: 0 };
     console.log('[ScreenRecorder] Requesting Sidecar start...', sourceId, 'Audio:', audioConfig);
 
     try {
@@ -36,10 +36,14 @@ export class ScreenRecorder {
       }
 
       this._isRecording = true;
-      console.log('[ScreenRecorder] Sidecar recording started with bounds:', result.bounds);
+      console.log('[ScreenRecorder] Sidecar recording started. readyOffset:', result.readyOffset);
 
       // 使用渲染进程的 performance.now() 作为统一的时间基准，避免跨进程时钟偏差
-      return { bounds: result.bounds, t0: performance.now() };
+      return { 
+        bounds: result.bounds, 
+        t0: performance.now(), 
+        readyOffset: result.readyOffset || 0 
+      };
     } catch (err) {
       console.error('[ScreenRecorder] Start failed:', err);
       this._isRecording = false;

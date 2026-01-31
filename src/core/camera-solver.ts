@@ -164,8 +164,15 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     state = { ...incrementalCache.state };
     currentT = incrementalCache.lastT;
     lastMouseIdx = incrementalCache.mouseIdx;
+
+    // 重点：如果是增量模式的第一帧（t=0 或第一次积分），确保位置从首帧开始而非中心点
+    if (currentT === 0 && mouseEvents.length > 0) {
+      state.mx = mouseEvents[0].x;
+      state.my = mouseEvents[0].y;
+    }
   } else {
     // 非增量模式或时间回退：从头开始
+    const firstMouse = mouseEvents[0];
     state = {
       cx: 0.5,
       cy: 0.5,
@@ -173,8 +180,8 @@ export function computeCameraState(graph: RenderGraph, t: number) {
       vx: 0,
       vy: 0,
       vs: 0,
-      mx: 0.5,
-      my: 0.5,
+      mx: firstMouse ? firstMouse.x : 0.5,
+      my: firstMouse ? firstMouse.y : 0.5,
       mvx: 0,
       mvy: 0,
     };

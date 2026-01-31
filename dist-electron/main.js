@@ -218,6 +218,8 @@ class SessionRecorder {
     __publicField(this, "mouseMonitorProcess", null);
     __publicField(this, "mousePollTimer", null);
     __publicField(this, "startTime", 0);
+    __publicField(this, "readyOffset", 0);
+    // 关键：从 FFmpeg 启动到产生第一帧的毫秒数
     __publicField(this, "isStopping", false);
     this.sessionId = crypto.randomUUID();
     this.bounds = bounds;
@@ -271,7 +273,8 @@ class SessionRecorder {
           process.stdout.write(`\r[FFmpeg Record] ${log}`);
           if (!resolved) {
             resolved = true;
-            resolve({ success: true });
+            this.readyOffset = performance.now() - this.startTime;
+            resolve({ success: true, readyOffset: this.readyOffset });
           }
         } else {
           console.log("[FFmpeg Log]", log);
@@ -457,7 +460,13 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
   }
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
-    return { success: true, sessionId: currentSession.sessionId, bounds, t0: performance.now() };
+    return {
+      success: true,
+      sessionId: currentSession.sessionId,
+      bounds,
+      t0: performance.now(),
+      readyOffset: result.readyOffset || 0
+    };
   } else {
     currentSession = null;
     return result;
