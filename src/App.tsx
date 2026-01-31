@@ -24,6 +24,7 @@ function App() {
   const [renderGraph, setRenderGraph] = useState<RenderGraph | null>(null);
   const lastVideoUrlRef = useRef<string | null>(null);
   const audioDelayRef = useRef<number>(0);
+  const webcamDelayRef = useRef<number>(0);
 
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
@@ -151,7 +152,11 @@ function App() {
       
       // 启动摄像头录制
       if (webcamConfig.enabled && webcamConfig.deviceId) {
-        await webcamRecorder.start(webcamConfig.deviceId);
+        const webcamT0 = await webcamRecorder.start(webcamConfig.deviceId);
+        if (startResult?.t0) {
+          // 记录摄像头相对于主录制的启动延迟
+          webcamDelayRef.current = Math.max(0, webcamT0 - startResult.t0);
+        }
       }
       
       if (startResult?.t0) {
@@ -238,7 +243,8 @@ function App() {
     if (!recordingState.isRecording) return;
 
     try {
-      setRecordingState((prev) => ({ ...prev, isPaused: false }));
+      // 关键修复：立即标记停止录制，防止计时器继续累加（IPC 通信期间可能产生几百毫秒误差）
+      setRecordingState((prev) => ({ ...prev, isRecording: false, isPaused: false }));
 
       mouseTracker.stop();
       console.log(
@@ -309,7 +315,7 @@ function App() {
       }
       const mouseEvents = await fetchSessionEvents(sessionId);
 
-      const tailPaddingMs = 500;
+      const tailPaddingMs = 150;
       const lastEventT =
         mouseEvents.length > 0 ? mouseEvents[mouseEvents.length - 1].t : 0;
       const finalDurationMs = Math.max(
@@ -325,6 +331,7 @@ function App() {
           tracks: audioTracks
         },
         webcamSource: finalWebcamPath,
+        webcamDelay: webcamDelayRef.current,
         mouse: mouseEvents,
         mouseTheme: {
           style: "macOS",

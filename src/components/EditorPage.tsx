@@ -333,6 +333,7 @@ export function EditorPage({
     renderFrame,
     isExporting,
     setIsExporting,
+    renderGraph: graph || undefined,
   });
 
   const handleExport = useCallback(

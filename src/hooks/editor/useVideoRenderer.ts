@@ -198,6 +198,15 @@ export function useVideoRenderer({
     const syncState = () => {
       if (!mainVideo || !video) return;
       video.playbackRate = mainVideo.playbackRate;
+      
+      const delay = (renderGraph.webcamDelay || 0) / 1000;
+      const targetTime = Math.max(0, mainVideo.currentTime - delay);
+      
+      // 容差同步，避免频繁 seek 导致的性能损耗
+      if (Math.abs(video.currentTime - targetTime) > 0.1) {
+        video.currentTime = targetTime;
+      }
+
       if (mainVideo.paused && !video.paused) video.pause();
       if (!mainVideo.paused && video.paused) video.play().catch(() => {});
     };
@@ -206,17 +215,19 @@ export function useVideoRenderer({
       mainVideo.addEventListener('play', syncState);
       mainVideo.addEventListener('pause', syncState);
       mainVideo.addEventListener('ratechange', syncState);
+      mainVideo.addEventListener('timeupdate', syncState);
       // 初始化状态
       syncState();
     }
 
-    console.log('[useVideoRenderer] Webcam native player initialized:', webcamSource);
+    console.log('[useVideoRenderer] Webcam native player initialized:', webcamSource, 'delay:', renderGraph.webcamDelay);
 
     return () => {
       if (mainVideo) {
         mainVideo.removeEventListener('play', syncState);
         mainVideo.removeEventListener('pause', syncState);
         mainVideo.removeEventListener('ratechange', syncState);
+        mainVideo.removeEventListener('timeupdate', syncState);
       }
       video.pause();
       video.src = '';
@@ -365,9 +376,12 @@ export function useVideoRenderer({
       const px = EDITOR_CANVAS_SIZE.width - pipSize/2 - padding;
       const py = EDITOR_CANVAS_SIZE.height - pipSize/2 - padding;
 
+      // 计算摄像头采样时间戳：减去延迟量。如果结果为负，说明摄像头还没开始录制
+      const webcamDelay = renderGraph.webcamDelay || 0;
+      const adjWebcamTs = timestampMs - webcamDelay;
+
       const drawPip = (source: CanvasImageSource) => {
         ctx.save();
-        // 优化：移除重型 shadowBlur，改用简单的半透明背景和描边
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.beginPath();
         if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize/2, py - pipSize/2, pipSize, pipSize, 40);
@@ -393,25 +407,27 @@ export function useVideoRenderer({
         ctx.restore();
       };
 
-      const webcamManager = webcamFrameManagerRef.current;
-      const cacheCanvas = webcamCacheRef.current || document.createElement('canvas');
-      if (!webcamCacheRef.current) webcamCacheRef.current = cacheCanvas;
+      if (adjWebcamTs >= 0) {
+        const webcamManager = webcamFrameManagerRef.current;
+        const cacheCanvas = webcamCacheRef.current || document.createElement('canvas');
+        if (!webcamCacheRef.current) webcamCacheRef.current = cacheCanvas;
 
-      let webcamProcessed = false;
-      if (webcamManager) {
-        try {
-          const frame = await webcamManager.getFrame(timestampMs);
-          if (frame) { drawPip(frame); webcamProcessed = true; }
-        } catch {}
-      }
-
-      if (!webcamProcessed) {
-        const isReady = webcamVideo.readyState >= 2;
-        if (isReady && webcamVideo.videoWidth > 0) {
-          if (cacheCanvas.width !== webcamVideo.videoWidth) { cacheCanvas.width = webcamVideo.videoWidth; cacheCanvas.height = webcamVideo.videoHeight; }
-          cacheCanvas.getContext('2d')?.drawImage(webcamVideo, 0, 0);
+        let webcamProcessed = false;
+        if (webcamManager) {
+          try {
+            const frame = await webcamManager.getFrame(adjWebcamTs);
+            if (frame) { drawPip(frame); webcamProcessed = true; }
+          } catch {}
         }
-        if (isReady || (cacheCanvas.width > 0)) drawPip(isReady ? webcamVideo : cacheCanvas);
+
+        if (!webcamProcessed) {
+          const isReady = webcamVideo.readyState >= 2;
+          if (isReady && webcamVideo.videoWidth > 0) {
+            if (cacheCanvas.width !== webcamVideo.videoWidth) { cacheCanvas.width = webcamVideo.videoWidth; cacheCanvas.height = webcamVideo.videoHeight; }
+            cacheCanvas.getContext('2d')?.drawImage(webcamVideo, 0, 0);
+          }
+          if (isReady || (cacheCanvas.width > 0)) drawPip(isReady ? webcamVideo : cacheCanvas);
+        }
       }
     }
   };

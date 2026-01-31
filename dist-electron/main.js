@@ -90,7 +90,9 @@ function createWindow() {
     icon: path$1.join(process.env.VITE_PUBLIC, "logo.png"),
     webPreferences: {
       preload: path$1.join(__dirname$1, "preload.mjs"),
-      webSecurity: true
+      webSecurity: true,
+      backgroundThrottling: false
+      // 关键：防止后台导出时由于节能导致的解码/渲染暂停
     }
   });
   win.center();

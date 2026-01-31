@@ -46,10 +46,24 @@ export function useVideoExport({
   };
 
   const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
+    console.log('[useVideoExport] handleExport called', { 
+      quality, 
+      targetPath, 
+      hasRenderGraph: !!renderGraph,
+      audioTracks: renderGraph?.audio?.tracks?.length,
+      videoSource: renderGraph?.videoSource 
+    });
+    if (renderGraph) {
+      console.log('[useVideoExport] RenderGraph details:', JSON.stringify(renderGraph, (k,v) => k === 'mouse' ? undefined : v, 2));
+    }
+
     if (isExportingRef.current) return { success: false };
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return { success: false };
+    if (!video || !canvas) {
+      console.error('[useVideoExport] Required DOM elements missing:', { video: !!video, canvas: !!canvas });
+      return { success: false };
+    }
     
     let streamId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
@@ -83,22 +97,82 @@ export function useVideoExport({
       isGif = finalPath!.toLowerCase().endsWith('.gif');
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
-      // 2. 预解码音轨
+      // 2. 预解码并混合音轨
       let decodedAudio: AudioBuffer | null = null;
-      if (renderGraph?.videoSource?.startsWith('nuvideo://session/')) {
-        const sessionId = renderGraph.videoSource.split('/').pop();
-        if (sessionId) {
-          try {
-            const audioPath = `asset://sessions/${sessionId}/audio_native.webm`;
-            const resp = await fetch(audioPath);
-            const arrayBuffer = await resp.arrayBuffer();
-            const audioCtx = new AudioContext({ sampleRate: 48000 });
-            decodedAudio = await audioCtx.decodeAudioData(arrayBuffer);
-            console.log('[useVideoExport] Audio decoded successfully');
-          } catch (e) {
-            console.warn('[useVideoExport] Native audio skip (decoding error or missing):', e);
+      console.log('[useVideoExport] Entering audio processing block...');
+      
+      if (renderGraph?.audio?.tracks) {
+        try {
+          const audioCtx = new AudioContext({ sampleRate: 48000 });
+          const totalSamples = Math.ceil(durationSeconds * 48000);
+          const mixedBuffer = audioCtx.createBuffer(2, totalSamples, 48000);
+          
+          let hasAnyAudio = false;
+          const tracks = renderGraph.audio.tracks;
+          console.log('[useVideoExport] Audio mixing start. Track count:', tracks.length, 'Duration:', durationSeconds);
+
+          if (tracks.length === 0) {
+            console.warn('[useVideoExport] Audio track list is EMPTY.');
           }
+
+          for (const track of tracks) {
+            const trackPath = track.path || track.filePath;
+            if (!trackPath) {
+              console.warn('[useVideoExport] Track missing path:', track);
+              continue;
+            }
+
+            const targetUrl = trackPath;
+            console.log(`[useVideoExport] Processing track: ${track.source}, URL: ${targetUrl}`);
+            
+            try {
+              const resp = await fetch(targetUrl);
+              if (!resp.ok) {
+                console.error(`[useVideoExport] Fetch failed for ${track.source}: ${resp.status} ${resp.statusText}`);
+                continue;
+              }
+              const arrayBuffer = await resp.arrayBuffer();
+              console.log(`[useVideoExport] Decoded raw size: ${arrayBuffer.byteLength} bytes`);
+              
+              const trackBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+              console.log(`[useVideoExport] Track decoded: ${track.source}, Duration: ${trackBuffer.duration.toFixed(2)}s, Channels: ${trackBuffer.numberOfChannels}`);
+              
+              // 混合到 mixedBuffer
+              const startOffset = Math.max(0, Math.floor(((track.startTime || 0) + (renderGraph.audioDelay || 0)) / 1000 * 48000));
+              const vol = track.volume ?? 1.0;
+              console.log(`[useVideoExport] Mixing ${track.source} at offset: ${startOffset}, volume: ${vol}`);
+              
+              for (let channel = 0; channel < Math.min(mixedBuffer.numberOfChannels, trackBuffer.numberOfChannels); channel++) {
+                const targetData = mixedBuffer.getChannelData(channel);
+                const sourceData = trackBuffer.getChannelData(channel);
+                const copyLen = Math.min(sourceData.length, targetData.length - startOffset);
+                
+                for (let i = 0; i < copyLen; i++) {
+                  targetData[startOffset + i] += sourceData[i] * vol;
+                }
+              }
+              hasAnyAudio = true;
+            } catch (trackErr) {
+              console.error(`[useVideoExport] Critical error mixing track ${track.source}:`, trackErr);
+            }
+          }
+          
+          if (hasAnyAudio) {
+            let maxAmp = 0;
+            const testData = mixedBuffer.getChannelData(0);
+            for (let i = 0; i < Math.min(testData.length, 100000); i += 100) {
+              maxAmp = Math.max(maxAmp, Math.abs(testData[i]));
+            }
+            console.log(`[useVideoExport] Audio mixing complete. Max amplitude sample: ${maxAmp.toFixed(4)}`);
+            decodedAudio = mixedBuffer;
+          } else {
+            console.warn('[useVideoExport] No audio tracks were successfully processed.');
+          }
+        } catch (e) {
+          console.error('[useVideoExport] Audio mixing crash:', e);
         }
+      } else {
+        console.warn('[useVideoExport] renderGraph.audio or .tracks is missing!');
       }
 
       // 3. 准备编码器探测
@@ -166,9 +240,10 @@ export function useVideoExport({
         target: muxerTarget as any,
         video: { codec: (videoConfig.codec.startsWith('vp') ? 'vp9' : 'avc') as any, width, height, frameRate: fps },
         audio: decodedAudio ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
-        fastStart: false, // 禁用内存缓冲，支持 2K 流式写入
+        fastStart: 'in-memory', // 改为内存缓冲模式，对于短视频（数分钟内）来说更稳定，避免回填失败
         firstTimestampBehavior: 'offset',
       });
+      console.log('[useVideoExport] Muxer initialized with fastStart: in-memory');
 
       let encoderError: Error | null = null;
       let encoderOutputCount = 0;
@@ -210,6 +285,7 @@ export function useVideoExport({
       // 6. 视频导出循环 (使用 VFC 同步)
       const vVideo = video as any;
       if (typeof vVideo.requestVideoFrameCallback === 'function') {
+        console.log('[useVideoExport] Export via VFC started...');
         await new Promise<void>((resolve, reject) => {
           let vfcId: number;
           let timeoutId: NodeJS.Timeout;
@@ -228,9 +304,9 @@ export function useVideoExport({
               return; 
             }
             
-            // 修正：稍微提前一点判定结束，防止最后一帧因为微小时间差不触发导致 98% 挂起
-            if (meta.mediaTime >= durationSeconds - 0.05) { 
-              console.log('[useVideoExport] VFC Reached end time:', meta.mediaTime, '/', durationSeconds);
+            // 改进：增加一个小冗余，确保能捕捉到最后一秒
+            if (meta.mediaTime >= durationSeconds - 0.016) { 
+              console.log('[useVideoExport] VFC Reached target end time:', meta.mediaTime, '/', durationSeconds);
               video.pause();
               cleanup();
               resolve(); 
@@ -250,54 +326,63 @@ export function useVideoExport({
             encodedCount++;
 
             if (encodedCount % 60 === 0) {
-              console.log(`[useVideoExport] Stats - Time: ${meta.mediaTime.toFixed(2)}s, Encoded: ${encodedCount}, Encoder Output: ${encoderOutputCount}, Queue: ${videoEncoder.encodeQueueSize}`);
+              console.log(`[useVideoExport] Progress - Time: ${meta.mediaTime.toFixed(2)}s, Encoded Frames: ${encodedCount}, Encoder Output: ${encoderOutputCount}`);
             }
 
             if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
               const progressRatio = meta.mediaTime / durationSeconds;
               const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
-              setExportProgress(Math.min(0.99, displayProgress));
+              setExportProgress(Math.min(0.95, displayProgress));
               lastProgressAt = performance.now();
             }
             vfcId = vVideo.requestVideoFrameCallback(onFrame);
           };
 
-          // 安全收尾逻辑：防止 VFC 在最后一秒不触发
           const onEnded = () => { 
-            console.log('[useVideoExport] Video native ended event fired. Resolving...');
+            console.log('[useVideoExport] Video native ended. Finalizing frames...');
             cleanup();
             resolve(); 
           };
           video.addEventListener('ended', onEnded);
           
-          // 超时保护：如果视频时长 + 5秒后还没结束，强制结束
+          // 增加超时保护到 10 秒，防止大型项目后台运行略微变慢被误杀
           timeoutId = setTimeout(() => {
-            console.warn('[useVideoExport] Export timeout! Forcing completion...');
+            console.warn('[useVideoExport] Export timeout reached, resolving current frames.');
             video.pause();
             cleanup();
             resolve();
-          }, (durationSeconds + 5) * 1000);
+          }, (durationSeconds + 10) * 1000);
 
           vfcId = vVideo.requestVideoFrameCallback(onFrame);
           video.play().catch((err) => {
+            console.error('[useVideoExport] Video play failed during export:', err);
             cleanup();
             reject(err);
           });
         });
       } else {
         // Fallback for non-VFC browsers
+        console.log('[useVideoExport] VFC not supported, using manual seek fallback...');
         for (let t = 0; t < durationSeconds; t += 1/fps) {
-          if (!isExportingRef.current) break;
+          if (!isExportingRef.current || encoderError) break;
           video.currentTime = t;
-          await new Promise(r => video.onseeked = r);
+          await new Promise(r => {
+            const onSd = () => { video.removeEventListener('seeked', onSd); r(null); };
+            video.addEventListener('seeked', onSd);
+            setTimeout(onSd, 500); // 兜底处理
+          });
           await renderFrame(t * 1000);
           const vFrame = new VideoFrame(canvas, { timestamp: Math.round(t * 1_000_000) });
           videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
           vFrame.close();
           encodedCount++;
-          const progressRatio = t / durationSeconds;
-          const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
-          setExportProgress(Math.min(0.99, displayProgress));
+          
+          if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
+            const progressRatio = t / durationSeconds;
+            const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
+            setExportProgress(Math.min(0.95, displayProgress));
+            lastProgressAt = performance.now();
+          }
         }
       }
 

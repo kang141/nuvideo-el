@@ -52,6 +52,8 @@ export interface RenderGraph {
   audioDelay?: number;
   /** 摄像头视频文件路径 (可选) */
   webcamSource?: string;
+  /** 摄像头开始相对于视频开始的延迟（毫秒） (可选) */
+  webcamDelay?: number;
   /** 鼠标事件序列 */
   mouse: MouseEvent[];
   /** 鼠标样式与特效配置 */

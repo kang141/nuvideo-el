@@ -64,6 +64,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       webSecurity: true,
+      backgroundThrottling: false, // 关键：防止后台导出时由于节能导致的解码/渲染暂停
     },
   })
 
