@@ -1,23 +1,23 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
-import type { RenderGraph, CameraIntent } from '../types';
-import { Language } from '../i18n/translations';
-import { cn } from '@/lib/utils';
-import { QualityConfig } from '../constants/quality';
-import { generateAutoZoomIntents } from '../core/auto-zoom';
+import { useState, useRef, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import type { RenderGraph, CameraIntent } from "../types";
+import { Language } from "../i18n/translations";
+import { cn } from "@/lib/utils";
+import { QualityConfig } from "../constants/quality";
+import { generateAutoZoomIntents } from "../core/auto-zoom";
 
 // Hooks
-import { useVideoPlayback } from '../hooks/editor/useVideoPlayback';
-import { useVideoRenderer } from '../hooks/editor/useVideoRenderer';
-import { useVideoExport } from '../hooks/editor/useVideoExport';
+import { useVideoPlayback } from "../hooks/editor/useVideoPlayback";
+import { useVideoRenderer } from "../hooks/editor/useVideoRenderer";
+import { useVideoExport } from "../hooks/editor/useVideoExport";
 
 // Components
-import { EditorHeader } from './Editor/EditorHeader';
-import { DesignPanel } from './Editor/DesignPanel';
-import { ControlBar } from './Editor/ControlBar';
-import { CanvasPreview } from './Editor/CanvasPreview';
-import { TimelineSectionMemo } from './Editor/TimelineSection';
-import { ExportOverlay } from './Editor/ExportOverlay';
+import { EditorHeader } from "./Editor/EditorHeader";
+import { DesignPanel } from "./Editor/DesignPanel";
+import { ControlBar } from "./Editor/ControlBar";
+import { CanvasPreview } from "./Editor/CanvasPreview";
+import { TimelineSectionMemo } from "./Editor/TimelineSection";
+import { ExportOverlay } from "./Editor/ExportOverlay";
 
 interface EditorPageProps {
   renderGraph: RenderGraph | null;
@@ -28,54 +28,61 @@ interface EditorPageProps {
   onToggleAutoZoom: (enabled: boolean) => void;
 }
 
-
-export function EditorPage({ 
-  renderGraph: initialGraph, 
-  onBack, 
-  language, 
+export function EditorPage({
+  renderGraph: initialGraph,
+  onBack,
+  language,
   setLanguage,
   autoZoomEnabled,
-  onToggleAutoZoom
+  onToggleAutoZoom,
 }: EditorPageProps) {
   // 1. 数据状态 (Single Source of Truth)
   const [graph, setGraph] = useState<RenderGraph | null>(initialGraph);
 
   // 2. UI 状态
-  const [browsingCategory, setBrowsingCategory] = useState('macOS');
-  const [activeWallpaper, setActiveWallpaper] = useState({ category: 'macOS', file: 'sequoia-dark.jpg' });
-  const [activeTab, setActiveTab] = useState('appearance');
+  const [browsingCategory, setBrowsingCategory] = useState("macOS");
+  const [activeWallpaper, setActiveWallpaper] = useState({
+    category: "macOS",
+    file: "sequoia-dark.jpg",
+  });
+  const [activeTab, setActiveTab] = useState("appearance");
   const [hideIdle, setHideIdle] = useState(false);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
-  
+
   // 生成默认文件名 (根据模式自适应后缀，包含秒以防止重复)
-  const ext = initialGraph?.config?.targetFormat === 'gif' ? '.gif' : '.mp4';
+  const ext = initialGraph?.config?.targetFormat === "gif" ? ".gif" : ".mp4";
   const now = new Date();
-  const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, '0')}.${now.getSeconds().toString().padStart(2, '0')}`;
-  const defaultFileName = `nubideo ${now.toLocaleDateString().replace(/\//g, '-')} at ${timeStr}${ext}`;
+  const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, "0")}.${now.getSeconds().toString().padStart(2, "0")}`;
+  const defaultFileName = `nubideo ${now.toLocaleDateString().replace(/\//g, "-")} at ${timeStr}${ext}`;
   const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [lastExportPath, setLastExportPath] = useState<string | null>(null);
 
-  const LAST_DIR_KEY = 'nuvideo_last_export_dir';
+  const LAST_DIR_KEY = "nuvideo_last_export_dir";
 
   // 初始化：尝试从缓存加载目录并预设路径
   useEffect(() => {
     const cachedDir = localStorage.getItem(LAST_DIR_KEY);
     if (cachedDir && !exportPath) {
-      const pathSeparator = cachedDir.includes('\\') ? '\\' : '/';
+      const pathSeparator = cachedDir.includes("\\") ? "\\" : "/";
       const lastChar = cachedDir.charAt(cachedDir.length - 1);
-      const isPathEndWithSlash = lastChar === '/' || lastChar === '\\';
-      const initialPath = isPathEndWithSlash ? `${cachedDir}${filename}` : `${cachedDir}${pathSeparator}${filename}`;
-      const correctedPath = initialGraph?.config?.targetFormat === 'gif' ? initialPath.replace(/\.mp4$/i, '.gif') : initialPath;
+      const isPathEndWithSlash = lastChar === "/" || lastChar === "\\";
+      const initialPath = isPathEndWithSlash
+        ? `${cachedDir}${filename}`
+        : `${cachedDir}${pathSeparator}${filename}`;
+      const correctedPath =
+        initialGraph?.config?.targetFormat === "gif"
+          ? initialPath.replace(/\.mp4$/i, ".gif")
+          : initialPath;
       setExportPath(correctedPath);
     }
   }, [filename]);
 
   // 3. 处理文件操作
   const handleDelete = useCallback(() => {
-    if (confirm('确定要放弃本次录制吗？所有未导出的改动都将丢失。')) {
+    if (confirm("确定要放弃本次录制吗？所有未导出的改动都将丢失。")) {
       onBack();
     }
   }, [onBack]);
@@ -83,28 +90,34 @@ export function EditorPage({
   const handlePickAddress = useCallback(async () => {
     try {
       const cachedDir = localStorage.getItem(LAST_DIR_KEY);
-      const result = await (window as any).ipcRenderer.invoke('show-save-dialog', {
-        defaultPath: cachedDir || undefined,
-        defaultName: filename
-      });
+      const result = await (window as any).ipcRenderer.invoke(
+        "show-save-dialog",
+        {
+          defaultPath: cachedDir || undefined,
+          defaultName: filename,
+        },
+      );
 
       if (!result.canceled && result.filePath) {
         const fullPath = result.filePath;
         setExportPath(fullPath);
-        
+
         // 提取目录并存入缓存
-        const lastSlashIndex = Math.max(fullPath.lastIndexOf('/'), fullPath.lastIndexOf('\\'));
+        const lastSlashIndex = Math.max(
+          fullPath.lastIndexOf("/"),
+          fullPath.lastIndexOf("\\"),
+        );
         if (lastSlashIndex > -1) {
           const dir = fullPath.substring(0, lastSlashIndex);
           localStorage.setItem(LAST_DIR_KEY, dir);
-          console.log('[EditorPage] Directory cached:', dir);
+          console.log("[EditorPage] Directory cached:", dir);
         }
 
         const name = fullPath.split(/[\\/]/).pop();
         if (name) setFilename(name);
       }
     } catch (err) {
-      console.error('Failed to pick address:', err);
+      console.error("Failed to pick address:", err);
     }
   }, [filename]);
 
@@ -119,35 +132,36 @@ export function EditorPage({
     setIsFullscreenPreview(next);
   };
 
-
   // 首次加载时自动生成缩放关键帧
   const hasAutoZoomedRef = useRef(false);
   useEffect(() => {
     if (!graph || !autoZoomEnabled || hasAutoZoomedRef.current) return;
-    
+
     const mouseEvents = graph.mouse || [];
     if (mouseEvents.length === 0) {
-      console.log('[EditorPage] No mouse events, skipping auto zoom');
+      console.log("[EditorPage] No mouse events, skipping auto zoom");
       return;
     }
 
     hasAutoZoomedRef.current = true;
-    
+
     try {
       const autoIntents = generateAutoZoomIntents(mouseEvents, graph.duration);
-      
+
       if (autoIntents.length > 1) {
         setGraph({
           ...graph,
           camera: {
             ...graph.camera,
-            intents: autoIntents
-          }
+            intents: autoIntents,
+          },
         });
-        console.log(`[EditorPage] Auto-generated ${autoIntents.length} zoom intents`);
+        console.log(
+          `[EditorPage] Auto-generated ${autoIntents.length} zoom intents`,
+        );
       }
     } catch (err) {
-      console.error('[EditorPage] Auto zoom generation failed:', err);
+      console.error("[EditorPage] Auto zoom generation failed:", err);
     }
   }, [graph, autoZoomEnabled]);
 
@@ -158,28 +172,28 @@ export function EditorPage({
     currentTime,
     maxDuration,
     togglePlay,
-    handleSeek
+    handleSeek,
   } = useVideoPlayback(videoRef, audioRef, graph);
 
   // 监听键盘快捷键 (ESC 退出全屏, Space 播放/暂停, Z 添加缩放)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isFullscreenPreview) {
+      if (e.key === "Escape" && isFullscreenPreview) {
         setIsFullscreenPreview(false);
       }
-      
+
       // 空格键控制播放/暂停
-      if (e.code === 'Space') {
+      if (e.code === "Space") {
         e.preventDefault(); // 防止页面滚动
         togglePlay();
       }
-      
+
       // Z 键添加缩放关键帧
-      if (e.key === 'z' || e.key === 'Z') {
+      if (e.key === "z" || e.key === "Z") {
         e.preventDefault();
         const currentTimeMs = (videoRef.current?.currentTime || 0) * 1000;
         const currentIntents = graph?.camera.intents || [];
-        
+
         // 查找当前生效的 scale
         let activeScale = 1.0;
         for (const intent of currentIntents) {
@@ -187,17 +201,17 @@ export function EditorPage({
             activeScale = intent.targetScale;
           }
         }
-        
+
         if (graph) {
           let newIntents = [...currentIntents];
-          
+
           if (activeScale >= 1.5) {
             // 如果已经在缩放，按 Z 表示“在这里结束缩放”
             newIntents.push({
               t: currentTimeMs,
               targetCx: 0.5,
               targetCy: 0.5,
-              targetScale: 1.0
+              targetScale: 1.0,
             });
             console.log(`[Hotkey Z] End zoom at ${currentTimeMs}ms`);
           } else {
@@ -205,13 +219,19 @@ export function EditorPage({
             const mouseEvents = graph.mouse || [];
             let targetCx = 0.5;
             let targetCy = 0.5;
-            
+
             // 找到离 currentTimeMs 最近的一个鼠标事件
-            const activeMouseEvent = mouseEvents.slice().reverse().find(m => m.t <= currentTimeMs) || mouseEvents[0];
+            const activeMouseEvent =
+              mouseEvents
+                .slice()
+                .reverse()
+                .find((m) => m.t <= currentTimeMs) || mouseEvents[0];
             if (activeMouseEvent) {
               targetCx = activeMouseEvent.x;
               targetCy = activeMouseEvent.y;
-              console.log(`[Hotkey Z] Found mouse at (${targetCx}, ${targetCy})`);
+              console.log(
+                `[Hotkey Z] Found mouse at (${targetCx}, ${targetCy})`,
+              );
             }
 
             // 如果是原始大小，按 Z 表示“在这里开始缩放 1 秒”
@@ -219,39 +239,45 @@ export function EditorPage({
               t: currentTimeMs,
               targetCx,
               targetCy,
-              targetScale: 2.0
+              targetScale: 2.0,
             });
-            
+
             // 自动在 1 秒后（或视频结束前）添加恢复
-            const endT = Math.min(currentTimeMs + 1000, maxDuration * 1000 - 100);
+            const endT = Math.min(
+              currentTimeMs + 1000,
+              maxDuration * 1000 - 100,
+            );
             newIntents.push({
               t: endT,
               targetCx: 0.5,
               targetCy: 0.5,
-              targetScale: 1.0
+              targetScale: 1.0,
             });
-            console.log(`[Hotkey Z] Add 1s zoom block at ${currentTimeMs}ms targeting mouse`);
+            console.log(
+              `[Hotkey Z] Add 1s zoom block at ${currentTimeMs}ms targeting mouse`,
+            );
           }
-          
+
           // 过滤掉同一时间点的重复项，并排序
           const finalIntents = newIntents
             .sort((a, b) => a.t - b.t)
-            .filter((intent, idx, self) => 
-              idx === 0 || Math.abs(intent.t - self[idx-1].t) > 10
+            .filter(
+              (intent, idx, self) =>
+                idx === 0 || Math.abs(intent.t - self[idx - 1].t) > 10,
             );
 
           setGraph({
             ...graph,
             camera: {
               ...graph.camera,
-              intents: finalIntents
-            }
+              intents: finalIntents,
+            },
           });
         }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreenPreview, togglePlay, graph, maxDuration]);
 
   const { isReady, renderFrame } = useVideoRenderer({
@@ -270,29 +296,33 @@ export function EditorPage({
       ...graph,
       camera: {
         ...graph.camera,
-        intents: [{ t: 0, targetCx: 0.5, targetCy: 0.5, targetScale: 1.0 }]
-      }
+        intents: [{ t: 0, targetCx: 0.5, targetCy: 0.5, targetScale: 1.0 }],
+      },
     });
   }, [graph]);
-
 
   // 更新 intents 的回调（用于时间轴拖拽编辑）
-  const handleUpdateIntents = useCallback((newIntents: CameraIntent[]) => {
-    if (!graph) return;
-    console.log('[EditorPage] Updating intents:', newIntents.length);
-    setGraph({
-      ...graph,
-      camera: {
-        ...graph.camera,
-        intents: newIntents
+  const handleUpdateIntents = useCallback(
+    (newIntents: CameraIntent[]) => {
+      if (!graph) return;
+      if (!isExporting && newIntents.length !== graph.camera.intents.length) {
+        console.log("[EditorPage] Updating intents:", newIntents.length);
       }
-    });
-  }, [graph]);
+      setGraph({
+        ...graph,
+        camera: {
+          ...graph.camera,
+          intents: newIntents,
+        },
+      });
+    },
+    [graph],
+  );
 
   const {
     exportProgress,
     handleExport: handleExportRaw,
-    cancelExport
+    cancelExport,
   } = useVideoExport({
     videoRef,
     canvasRef,
@@ -302,136 +332,204 @@ export function EditorPage({
     setIsPlaying,
     renderFrame,
     isExporting,
-    setIsExporting
+    setIsExporting,
   });
 
-  const handleExport = useCallback(async (quality?: QualityConfig) => {
-    setExportSuccess(false);
-    const result = await handleExportRaw(quality, exportPath);
-    
-    // 如果导出成功，自动刷新下一次可能导出的默认文件名（带上最新时间戳）
-    if (result.success) {
-      setLastExportPath(result.filePath || null);
-      setExportSuccess(true);
+  const handleExport = useCallback(
+    async (quality?: QualityConfig) => {
+      setExportSuccess(false);
+      const result = await handleExportRaw(quality, exportPath);
 
-      const ext = graph?.config?.targetFormat === 'gif' ? '.gif' : '.mp4';
-      const now = new Date();
-      const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, '0')}.${now.getSeconds().toString().padStart(2, '0')}`;
-      const nextName = `nubideo ${now.toLocaleDateString().replace(/\//g, '-')} at ${timeStr}${ext}`;
-      
-      setFilename(nextName);
-      // 同时也重置 exportPath，让下一次导出重新基于新名字生成
-      setExportPath(null); 
-    }
-  }, [handleExportRaw, exportPath, graph?.config?.targetFormat]);
+      // 如果导出成功，自动刷新下一次可能导出的默认文件名（带上最新时间戳）
+      if (result.success) {
+        setLastExportPath(result.filePath || null);
+        setExportSuccess(true);
 
-  const handleSetBgFile = useCallback((file: string) => {
-    setActiveWallpaper({ category: browsingCategory, file });
-  }, [browsingCategory]);
+        const ext = graph?.config?.targetFormat === "gif" ? ".gif" : ".mp4";
+        const now = new Date();
+        const timeStr = `${now.getHours()}.${now.getMinutes().toString().padStart(2, "0")}.${now.getSeconds().toString().padStart(2, "0")}`;
+        const nextName = `nubideo ${now.toLocaleDateString().replace(/\//g, "-")} at ${timeStr}${ext}`;
 
-  const handleToggleSystemAudio = useCallback((enabled: boolean) => {
-    if (!graph) return;
-    const tracks = graph.audio?.tracks || [];
-    const has = tracks.some(t => t.source === 'system');
-    let nextTracks = tracks.slice();
-    if (enabled && !has) {
-      nextTracks.push({ source: 'system', startTime: 0, volume: 1.0, fadeIn: 300, fadeOut: 300 });
-    } else if (!enabled && has) {
-      nextTracks = nextTracks.filter(t => t.source !== 'system');
-    }
-    setGraph({ ...graph, audio: { tracks: nextTracks } });
-  }, [graph]);
+        setFilename(nextName);
+        // 同时也重置 exportPath，让下一次导出重新基于新名字生成
+        setExportPath(null);
+      }
+    },
+    [handleExportRaw, exportPath, graph?.config?.targetFormat],
+  );
 
-  const handleToggleMicrophoneAudio = useCallback((enabled: boolean) => {
-    if (!graph) return;
-    const tracks = graph.audio?.tracks || [];
-    const has = tracks.some(t => t.source === 'microphone');
-    let nextTracks = tracks.slice();
-    if (enabled && !has) {
-      nextTracks.push({ source: 'microphone', startTime: 0, volume: 1.0, fadeIn: 300, fadeOut: 300 });
-    } else if (!enabled && has) {
-      nextTracks = nextTracks.filter(t => t.source !== 'microphone');
-    }
-    setGraph({ ...graph, audio: { tracks: nextTracks } });
-  }, [graph]);
+  const handleSetBgFile = useCallback(
+    (file: string) => {
+      setActiveWallpaper({ category: browsingCategory, file });
+    },
+    [browsingCategory],
+  );
 
-  const handleSetSystemVolume = useCallback((v: number) => {
-    if (!graph) return;
-    const tracks = graph.audio?.tracks || [];
-    const nextTracks = tracks.map(t => t.source === 'system' ? { ...t, volume: Math.max(0, Math.min(1, v)) } : t);
-    setGraph({ ...graph, audio: { tracks: nextTracks } });
-  }, [graph]);
+  const handleToggleSystemAudio = useCallback(
+    (enabled: boolean) => {
+      if (!graph) return;
+      const tracks = graph.audio?.tracks || [];
+      const has = tracks.some((t) => t.source === "system");
+      let nextTracks = tracks.slice();
+      if (enabled && !has) {
+        nextTracks.push({
+          source: "system",
+          startTime: 0,
+          volume: 1.0,
+          fadeIn: 300,
+          fadeOut: 300,
+        });
+      } else if (!enabled && has) {
+        nextTracks = nextTracks.filter((t) => t.source !== "system");
+      }
+      setGraph({ ...graph, audio: { tracks: nextTracks } });
+    },
+    [graph],
+  );
 
-  const handleSetMicrophoneVolume = useCallback((v: number) => {
-    if (!graph) return;
-    const tracks = graph.audio?.tracks || [];
-    const nextTracks = tracks.map(t => t.source === 'microphone' ? { ...t, volume: Math.max(0, Math.min(1, v)) } : t);
-    setGraph({ ...graph, audio: { tracks: nextTracks } });
-  }, [graph]);
+  const handleToggleMicrophoneAudio = useCallback(
+    (enabled: boolean) => {
+      if (!graph) return;
+      const tracks = graph.audio?.tracks || [];
+      const has = tracks.some((t) => t.source === "microphone");
+      let nextTracks = tracks.slice();
+      if (enabled && !has) {
+        nextTracks.push({
+          source: "microphone",
+          startTime: 0,
+          volume: 1.0,
+          fadeIn: 300,
+          fadeOut: 300,
+        });
+      } else if (!enabled && has) {
+        nextTracks = nextTracks.filter((t) => t.source !== "microphone");
+      }
+      setGraph({ ...graph, audio: { tracks: nextTracks } });
+    },
+    [graph],
+  );
+
+  const handleSetSystemVolume = useCallback(
+    (v: number) => {
+      if (!graph) return;
+      const tracks = graph.audio?.tracks || [];
+      const nextTracks = tracks.map((t) =>
+        t.source === "system"
+          ? { ...t, volume: Math.max(0, Math.min(1, v)) }
+          : t,
+      );
+      setGraph({ ...graph, audio: { tracks: nextTracks } });
+    },
+    [graph],
+  );
+
+  const handleSetMicrophoneVolume = useCallback(
+    (v: number) => {
+      if (!graph) return;
+      const tracks = graph.audio?.tracks || [];
+      const nextTracks = tracks.map((t) =>
+        t.source === "microphone"
+          ? { ...t, volume: Math.max(0, Math.min(1, v)) }
+          : t,
+      );
+      setGraph({ ...graph, audio: { tracks: nextTracks } });
+    },
+    [graph],
+  );
 
   // 点击画布手动定焦
-  const handleFocusSpot = useCallback((cx: number, cy: number) => {
-    if (!graph) return;
-    const currentTimeMs = (videoRef.current?.currentTime || 0) * 1000;
-    const currentIntents = graph.camera.intents || [];
-    
-    // 查找当前时间点附近的关键帧
-    const existingIndex = currentIntents.findIndex(i => Math.abs(i.t - currentTimeMs) < 200);
-    
-    let newIntents = [...currentIntents];
-    if (existingIndex > -1) {
-      // 这里的力度加大：如果原本是 1.0x 的，点击后强制变成 2.5x 缩放
-      const targetScale = Math.max(2.5, newIntents[existingIndex].targetScale);
-      newIntents[existingIndex] = { ...newIntents[existingIndex], targetCx: cx, targetCy: cy, targetScale };
-    } else {
-      newIntents.push({
-        t: currentTimeMs,
-        targetCx: cx,
-        targetCy: cy,
-        targetScale: 2.5 
-      });
-    }
+  const handleFocusSpot = useCallback(
+    (cx: number, cy: number) => {
+      if (!graph) return;
+      const currentTimeMs = (videoRef.current?.currentTime || 0) * 1000;
+      const currentIntents = graph.camera.intents || [];
 
-    console.log(`[Editor] Focus moved to: (${cx.toFixed(3)}, ${cy.toFixed(3)})`);
+      // 查找当前时间点附近的关键帧
+      const existingIndex = currentIntents.findIndex(
+        (i) => Math.abs(i.t - currentTimeMs) < 200,
+      );
 
-    setGraph({
-      ...graph,
-      camera: {
-        ...graph.camera,
-        intents: newIntents.sort((a,b) => a.t - b.t)
+      let newIntents = [...currentIntents];
+      if (existingIndex > -1) {
+        // 这里的力度加大：如果原本是 1.0x 的，点击后强制变成 2.5x 缩放
+        const targetScale = Math.max(
+          2.5,
+          newIntents[existingIndex].targetScale,
+        );
+        newIntents[existingIndex] = {
+          ...newIntents[existingIndex],
+          targetCx: cx,
+          targetCy: cy,
+          targetScale,
+        };
+      } else {
+        newIntents.push({
+          t: currentTimeMs,
+          targetCx: cx,
+          targetCy: cy,
+          targetScale: 2.5,
+        });
       }
-    });
-  }, [graph]);
+
+      console.log(
+        `[Editor] Focus moved to: (${cx.toFixed(3)}, ${cy.toFixed(3)})`,
+      );
+
+      setGraph({
+        ...graph,
+        camera: {
+          ...graph.camera,
+          intents: newIntents.sort((a, b) => a.t - b.t),
+        },
+      });
+    },
+    [graph],
+  );
 
   // 更新鼠标主题配置
-  const handleUpdateMouseTheme = useCallback((updates: Partial<RenderGraph['mouseTheme']>) => {
-    if (!graph) return;
-    setGraph({
-      ...graph,
-      mouseTheme: { ...graph.mouseTheme, ...updates }
-    });
-  }, [graph]);
+  const handleUpdateMouseTheme = useCallback(
+    (updates: Partial<RenderGraph["mouseTheme"]>) => {
+      if (!graph) return;
+      setGraph({
+        ...graph,
+        mouseTheme: { ...graph.mouseTheme, ...updates },
+      });
+    },
+    [graph],
+  );
 
   // 更新鼠标物理配置
-  const handleUpdateMousePhysics = useCallback((updates: Partial<RenderGraph['mousePhysics']>) => {
-    if (!graph) return;
-    setGraph({
-      ...graph,
-      mousePhysics: { ...graph.mousePhysics, ...updates }
-    });
-  }, [graph]);
+  const handleUpdateMousePhysics = useCallback(
+    (updates: Partial<RenderGraph["mousePhysics"]>) => {
+      if (!graph) return;
+      setGraph({
+        ...graph,
+        mousePhysics: { ...graph.mousePhysics, ...updates },
+      });
+    },
+    [graph],
+  );
 
-  const handleUpdateWebcam = useCallback((updates: Partial<{ isEnabled: boolean; shape: 'circle' | 'rect'; size: number }>) => {
-    if (!graph) return;
-    setGraph({
-      ...graph,
-      webcam: { ...graph.webcam, ...updates } as any
-    });
-  }, [graph]);
+  const handleUpdateWebcam = useCallback(
+    (
+      updates: Partial<{
+        isEnabled: boolean;
+        shape: "circle" | "rect";
+        size: number;
+      }>,
+    ) => {
+      if (!graph) return;
+      setGraph({
+        ...graph,
+        webcam: { ...graph.webcam, ...updates } as any,
+      });
+    },
+    [graph],
+  );
 
   const handleOpenFile = useCallback(() => {
     if (lastExportPath) {
-      (window as any).ipcRenderer.invoke('show-item-in-folder', lastExportPath);
+      (window as any).ipcRenderer.invoke("show-item-in-folder", lastExportPath);
     }
   }, [lastExportPath]);
 
@@ -442,7 +540,7 @@ export function EditorPage({
   if (!graph) return null;
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: isReady ? 1 : 0.6 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
@@ -468,9 +566,9 @@ export function EditorPage({
           </div>
         </motion.div>
       )}
-      <ExportOverlay 
-        isExporting={isExporting} 
-        progress={exportProgress} 
+      <ExportOverlay
+        isExporting={isExporting}
+        progress={exportProgress}
         language={language}
         onCancel={cancelExport}
         success={exportSuccess}
@@ -479,18 +577,22 @@ export function EditorPage({
       />
 
       {!isFullscreenPreview && (
-        <motion.div 
+        <motion.div
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.4, delay: 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
+          transition={{
+            duration: 0.4,
+            delay: 0.1,
+            ease: [0.25, 0.46, 0.45, 0.94],
+          }}
           className="relative z-50"
         >
-          <EditorHeader 
-            onBack={onBack} 
+          <EditorHeader
+            onBack={onBack}
             onDelete={handleDelete}
-            onExport={handleExport} 
-            isExporting={isExporting} 
-            filename={exportPath ? filename : '未设置导出位置'}
+            onExport={handleExport}
+            isExporting={isExporting}
+            filename={exportPath ? filename : "未设置导出位置"}
             onPickAddress={handlePickAddress}
             language={language}
             setLanguage={setLanguage}
@@ -500,26 +602,30 @@ export function EditorPage({
         </motion.div>
       )}
 
-      <div className={cn(
-        "flex flex-1 min-h-0 overflow-hidden relative",
-        isFullscreenPreview && "fixed inset-0 z-[100] bg-black"
-      )}>
+      <div
+        className={cn(
+          "flex flex-1 min-h-0 overflow-hidden relative",
+          isFullscreenPreview && "fixed inset-0 z-[100] bg-black",
+        )}
+      >
         <div className="flex flex-1 min-h-0 min-w-0 flex-col relative bg-[#101010] overflow-hidden">
-          <CanvasPreview 
-            videoRef={videoRef} 
+          <CanvasPreview
+            videoRef={videoRef}
             audioRef={audioRef}
-            canvasRef={canvasRef} 
-            onEnded={() => setIsPlaying(false)} 
+            canvasRef={canvasRef}
+            onEnded={() => setIsPlaying(false)}
             onFocusSpot={handleFocusSpot}
           />
-          
-          <div className={cn(
-            "transition-all duration-300",
-            isFullscreenPreview 
-              ? "absolute bottom-10 left-1/2 -translate-x-1/2 z-[110] w-[600px] rounded-3xl border border-white/5 bg-[#0a0a0a] shadow-2xl overflow-hidden" 
-              : "w-full"
-          )}>
-            <ControlBar 
+
+          <div
+            className={cn(
+              "transition-all duration-300",
+              isFullscreenPreview
+                ? "absolute bottom-10 left-1/2 -translate-x-1/2 z-[110] w-[600px] rounded-3xl border border-white/5 bg-[#0a0a0a] shadow-2xl overflow-hidden"
+                : "w-full",
+            )}
+          >
+            <ControlBar
               currentTime={currentTime}
               maxDuration={maxDuration}
               isPlaying={isPlaying}
@@ -535,34 +641,40 @@ export function EditorPage({
           <motion.div
             initial={{ x: 20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.15, ease: [0.25, 0.46, 0.45, 0.94] }}
+            transition={{
+              duration: 0.4,
+              delay: 0.15,
+              ease: [0.25, 0.46, 0.45, 0.94],
+            }}
           >
-            <DesignPanel 
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            bgCategory={browsingCategory}
-            setBgCategory={setBrowsingCategory}
-            bgFile={activeWallpaper.file}
-            setBgFile={handleSetBgFile}
-            hideIdle={hideIdle}
-            setHideIdle={setHideIdle}
-            onResetZoom={handleResetZoom}
-            mouseTheme={graph.mouseTheme}
-            onUpdateMouseTheme={handleUpdateMouseTheme}
-            mousePhysics={graph.mousePhysics}
-            onUpdateMousePhysics={handleUpdateMousePhysics}
-            language={language}
-            audioTracks={graph.audio}
-            onToggleSystemAudio={handleToggleSystemAudio}
-            onToggleMicrophoneAudio={handleToggleMicrophoneAudio}
-            onSetSystemVolume={handleSetSystemVolume}
-            onSetMicrophoneVolume={handleSetMicrophoneVolume}
-            webcamEnabled={graph.webcam?.isEnabled}
-            webcamShape={graph.webcam?.shape}
-            webcamSize={graph.webcam?.size}
-            onToggleWebcam={(enabled) => handleUpdateWebcam({ isEnabled: enabled })}
-            onUpdateWebcam={handleUpdateWebcam}
-          />
+            <DesignPanel
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              bgCategory={browsingCategory}
+              setBgCategory={setBrowsingCategory}
+              bgFile={activeWallpaper.file}
+              setBgFile={handleSetBgFile}
+              hideIdle={hideIdle}
+              setHideIdle={setHideIdle}
+              onResetZoom={handleResetZoom}
+              mouseTheme={graph.mouseTheme}
+              onUpdateMouseTheme={handleUpdateMouseTheme}
+              mousePhysics={graph.mousePhysics}
+              onUpdateMousePhysics={handleUpdateMousePhysics}
+              language={language}
+              audioTracks={graph.audio}
+              onToggleSystemAudio={handleToggleSystemAudio}
+              onToggleMicrophoneAudio={handleToggleMicrophoneAudio}
+              onSetSystemVolume={handleSetSystemVolume}
+              onSetMicrophoneVolume={handleSetMicrophoneVolume}
+              webcamEnabled={graph.webcam?.isEnabled}
+              webcamShape={graph.webcam?.shape}
+              webcamSize={graph.webcam?.size}
+              onToggleWebcam={(enabled) =>
+                handleUpdateWebcam({ isEnabled: enabled })
+              }
+              onUpdateWebcam={handleUpdateWebcam}
+            />
           </motion.div>
         )}
       </div>
@@ -571,17 +683,21 @@ export function EditorPage({
         <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.4, delay: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+          transition={{
+            duration: 0.4,
+            delay: 0.2,
+            ease: [0.25, 0.46, 0.45, 0.94],
+          }}
         >
-          <TimelineSectionMemo 
-          duration={maxDuration}
-          currentTime={currentTime}
-          videoRef={videoRef}
-          onSeek={handleSeek}
-          renderGraph={graph}
-          onUpdateIntents={handleUpdateIntents}
-          language={language}
-        />
+          <TimelineSectionMemo
+            duration={maxDuration}
+            currentTime={currentTime}
+            videoRef={videoRef}
+            onSeek={handleSeek}
+            renderGraph={graph}
+            onUpdateIntents={handleUpdateIntents}
+            language={language}
+          />
         </motion.div>
       )}
     </motion.div>

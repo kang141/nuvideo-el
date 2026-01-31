@@ -3,7 +3,7 @@ import type { Timestamp } from './mouse';
 /**
  * 音频源类型
  */
-export type AudioSource = 'microphone' | 'system' | 'file';
+export type AudioSource = 'microphone' | 'system' | 'file' | 'legacy';
 
 /**
  * 音频轨道
@@ -11,7 +11,8 @@ export type AudioSource = 'microphone' | 'system' | 'file';
 export interface AudioTrack {
   /** 音频源 */
   source: AudioSource;
-  /** 文件路径（当 source = 'file' 时） */
+  /** 文件路径 (filePath 和 path 是别名，path 优先) */
+  path?: string;
   filePath?: string;
   /** 开始时间（相对于录制开始，毫秒） */
   startTime: Timestamp;

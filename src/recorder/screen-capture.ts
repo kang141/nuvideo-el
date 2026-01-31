@@ -38,7 +38,8 @@ export class ScreenRecorder {
       this._isRecording = true;
       console.log('[ScreenRecorder] Sidecar recording started with bounds:', result.bounds);
 
-      return { bounds: result.bounds, t0: result.t0 ?? 0 };
+      // 使用渲染进程的 performance.now() 作为统一的时间基准，避免跨进程时钟偏差
+      return { bounds: result.bounds, t0: performance.now() };
     } catch (err) {
       console.error('[ScreenRecorder] Start failed:', err);
       this._isRecording = false;

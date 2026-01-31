@@ -67,7 +67,6 @@ export function TimelineSection({
           onUpdateIntents={onUpdateIntents}
           className="w-full h-full"
           language={language}
-          key={`timeline-${renderGraph.camera.intents?.length || 0}`}
         />
       </div>
     </section>

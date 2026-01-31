@@ -86,12 +86,22 @@ export class VideoDemuxer {
     if (!reader) return;
 
     let offset = 0;
+    let checkedHeader = false;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // 关键修复: 必须提取 Uint8Array 实际引用的数据块。
+        if (!checkedHeader && value.length >= 4) {
+          const isWebm = value[0] === 0x1A && value[1] === 0x45 && value[2] === 0xDF && value[3] === 0xA3;
+          if (isWebm) {
+            console.warn('[VideoDemuxer] Detected WebM/EBML container, skipping MP4Box parsing as it is not supported for this session file.');
+            checkedHeader = true;
+            break; 
+          }
+          checkedHeader = true;
+        }
+
         // 直接使用 value.buffer 可能会因为 Buffer Pool 重用而导致数据偏移错误。
         const chunk = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
         (chunk as any).fileStart = offset;

@@ -157,7 +157,8 @@ function App() {
       if (startResult?.t0) {
         mouseTracker.align(startResult.t0);
         // 计算音频相对于视频的延迟戳
-        audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0;
+        // +150ms: 补偿屏幕采集管线(DXGI/GDI)的物理延迟。如果不加，声音会比画面快（抢跑）。
+        audioDelayRef.current = ((audioT0 || performance.now()) - startResult.t0) + 150;
       }
 
       setRecordingState({
@@ -238,7 +239,6 @@ function App() {
 
     try {
       setRecordingState((prev) => ({ ...prev, isPaused: false }));
-      await new Promise((r) => setTimeout(r, 450));
 
       mouseTracker.stop();
       console.log(
@@ -247,8 +247,8 @@ function App() {
       );
 
        const sessionResult = await screenRecorder.stop();
-      // 停止原生音频录制并获取数据
-      const audioBuffer = await nativeAudioRecorder.stop();
+      // 停止原生音频录制并获取数据 { micBuffer, sysBuffer }
+      const audioBuffers = await nativeAudioRecorder.stop();
       // 停止摄像头录制并获取数据
       const webcamBuffer = await webcamRecorder.stop();
 
@@ -262,15 +262,37 @@ function App() {
 
       const { sessionId } = sessionResult;
 
-      // 如果有录制到音频，保存到会话目录
-      let finalAudioPath = undefined;
-      if (audioBuffer && audioBuffer.byteLength > 0) {
-        const saveResult = await (window as any).ipcRenderer.invoke('save-session-audio', {
+      // 如果有录制到音频，保存到会话目录 (分轨模式)
+      const audioTracks: any[] = [];
+      if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
+        const saveResult = await (window as any).ipcRenderer.invoke('save-session-audio-segments', {
           sessionId,
-          arrayBuffer: audioBuffer
+          micBuffer: audioBuffers.micBuffer,
+          sysBuffer: audioBuffers.sysBuffer
         });
+        
         if (saveResult.success) {
-          finalAudioPath = `nuvideo://session/${sessionId}/audio_native.webm`;
+          // 构建多轨音频配置
+          if (saveResult.micPath) {
+            audioTracks.push({
+              source: 'microphone',
+              startTime: 0,
+              path: `nuvideo://session/${sessionId}/audio_mic.webm`,
+              volume: 1.0, 
+              fadeIn: 300, 
+              fadeOut: 300
+            });
+          }
+          if (saveResult.sysPath) {
+            audioTracks.push({
+              source: 'system',
+              startTime: 0,
+              path: `nuvideo://session/${sessionId}/audio_sys.webm`,
+              volume: 1.0, 
+              fadeIn: 300, 
+              fadeOut: 300
+            });
+          }
         }
       }
 
@@ -298,7 +320,10 @@ function App() {
       const finalGraph: RenderGraph = {
         videoSource: `nuvideo://session/${sessionId}/video_raw.mp4`,
         duration: finalDurationMs,
-        audioSource: finalAudioPath,
+        // 支持多轨音频
+        audio: {
+          tracks: audioTracks
+        },
         webcamSource: finalWebcamPath,
         mouse: mouseEvents,
         mouseTheme: {

@@ -151,6 +151,15 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
     // 绘制 Zoom 条
     const zoomTrackY = TRACKS_START_Y;
+    
+    // --- Clipping: 限制绘制区域，防止溢出 ---
+    ctx.save();
+    ctx.beginPath();
+    // 允许绘制的区域：左边距到右边距之间
+    // 加一点点 padding 防止半边被切太硬
+    ctx.rect(PADDING_LEFT, 0, width - PADDING_LEFT * 2, height);
+    ctx.clip();
+
     const intents = renderGraph.camera.intents || [];
     intents.forEach((current, i) => {
       const next = intents[i + 1];
@@ -185,6 +194,9 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       }
     });
 
+    // 退出 Clipping
+    ctx.restore();
+
     // 绘制轨道 2 (视频 + 音频声纹)
     const videoTrackY = TRACKS_START_Y + 1 * (TRACK_HEIGHT + TRACK_GAP);
     const vty = videoTrackY + 4;
@@ -197,54 +209,6 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     ctx.fill();
     ctx.clip(); // 裁剪以确保波形不超出轨道
 
-    // 绘制声纹 (Waveform) - 升级为单向向上波形 (只往上，不往下)
-    if (waveformPeaks.length > 0) {
-      const baselineY = vty + vth - 2; // 基准线移到轨道底部（预留 2px 边距）
-      const maxBarHeight = vth * 0.85;
-      
-      const stepPx = 2;
-      
-      // 准备从底向上的渐变色
-      const gradient = ctx.createLinearGradient(0, baselineY, 0, vty + 4);
-      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.8)'); // 底部较深
-      gradient.addColorStop(1, 'rgba(147, 210, 255, 0.4)'); // 顶部较浅，通透感
-
-      ctx.save();
-      ctx.beginPath();
-      
-      // 线回到起始基准点
-      ctx.moveTo(PADDING_LEFT, baselineY);
-
-      // 绘制顶部起伏轮廓
-      for (let x = PADDING_LEFT; x < width - PADDING_LEFT; x += stepPx) {
-        const t = (x - PADDING_LEFT + scrollLeft) / pps;
-        if (t < 0 || t > duration) continue;
-
-        const peakIdx = Math.floor((t / duration) * waveformPeaks.length);
-        const peak = waveformPeaks[peakIdx] || 0;
-        
-        // 增强视觉起伏
-        const h = Math.max(1, Math.sqrt(peak) * maxBarHeight);
-        const y = baselineY - h;
-
-        ctx.lineTo(x, y);
-      }
-
-      // 闭合到右下角并回到左下角
-      ctx.lineTo(width - PADDING_LEFT, baselineY);
-      ctx.closePath();
-
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // 加上一层精细的描边
-      ctx.strokeStyle = 'rgba(147, 197, 253, 0.4)';
-      ctx.lineWidth = 1;
-      ctx.lineJoin = 'round';
-      ctx.stroke();
-      
-      ctx.restore();
-    }
     ctx.restore();
   }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex, language]);
 
@@ -602,8 +566,10 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         }
       }
       
-      // 拖动中直接更新，不进行标准化和推挤（在 mouseup 时统一处理）
-      onUpdateIntents(newIntents);
+      // 关键修复：即便在拖动中，也要保持 intents 的排序和基本合法性
+      // 否则物理引擎在乱序的关键帧下会产生剧烈的画面跳变（闪烁）
+      const sortedIntents = newIntents.sort((a, b) => a.t - b.t);
+      onUpdateIntents(sortedIntents);
     }
   }, [dragMode, dragZoomIndex, dragStartX, dragStartIntents, pps, scrollLeft, duration, onSeek, onUpdateIntents, hitTestZoomBar]);
 

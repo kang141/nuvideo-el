@@ -1,6 +1,7 @@
 import { useState, RefObject, useRef } from 'react';
 import { Muxer, StreamTarget } from 'mp4-muxer';
 import { QualityConfig } from '../../constants/quality';
+import { RenderGraph } from '../../types/render-graph';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
 
 interface UseVideoExportOptions {
@@ -13,11 +14,10 @@ interface UseVideoExportOptions {
   renderFrame: (timestampMs: number) => void | Promise<void>;
   isExporting: boolean;
   setIsExporting: (v: boolean) => void;
+  renderGraph?: RenderGraph;
 }
 
-// 编码器背压阈值：队列超过此值时暂停编码
 const ENCODER_QUEUE_THRESHOLD = 12;
-// 进度更新节流间隔 (ms)
 const PROGRESS_THROTTLE_MS = 100;
 
 export function useVideoExport({
@@ -25,396 +25,364 @@ export function useVideoExport({
   canvasRef,
   maxDuration,
   exportDuration,
-  onSeek,
+  onSeek: _onSeek,
   setIsPlaying,
   renderFrame,
-  isExporting,
+  isExporting: _isExporting,
   setIsExporting,
+  renderGraph,
 }: UseVideoExportOptions) {
   const [exportProgress, setExportProgress] = useState(0);
   const isExportingRef = useRef(false);
   const LAST_DIR_KEY = 'nuvideo_last_export_dir';
+  
   type RendererIPC = { invoke: (channel: string, payload?: unknown) => Promise<unknown> };
   const ipc = ((window as unknown) as { ipcRenderer?: RendererIPC }).ipcRenderer!;
+
   const cancelExport = () => {
     isExportingRef.current = false;
     setIsExporting(false);
     resetCameraCache();
   };
 
-
-
   const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
     if (isExportingRef.current) return { success: false };
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return { success: false };
+    
     let streamId: string | null = null;
-
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
-    // 如果是 GIF 导出，中间件 MP4 必须使用极高码率 (150Mbps) 以保证转码前的清晰度
     const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
     const fps = 60;
     const durationSeconds = exportDuration ?? maxDuration;
+    // 稳定性加固：强制分辨率为偶数以适配硬件编码器
+    const width = canvas.width % 2 === 0 ? canvas.width : canvas.width - 1;
+    const height = canvas.height % 2 === 0 ? canvas.height : canvas.height - 1;
 
     try {
       isExportingRef.current = true;
       setIsExporting(true);
       setExportProgress(0);
 
-      // 1. 准备路径与 Muxer
+      // 1. 确定保存路径
       let finalPath = targetPath;
       if (!finalPath) {
-        // 如果外部没有传入路径（比如直接点击导出），则请求主进程显示对话框，并建议当前文件名
         const ext = isGif ? '.gif' : '.mp4';
         const suggestName = `nuvideo_export_${Date.now()}${ext}`;
         const saveResult = await ipc.invoke('show-save-dialog', { defaultName: suggestName }) as { canceled: boolean; filePath?: string };
-        if (saveResult.canceled || !saveResult.filePath) {
-          isExportingRef.current = false;
-          setIsExporting(false);
-          return { success: false };
-        }
+        if (saveResult.canceled || !saveResult.filePath) throw new Error('CanceledByUser');
         finalPath = saveResult.filePath;
         const lastSlashIndex = Math.max(finalPath.lastIndexOf('/'), finalPath.lastIndexOf('\\'));
         if (lastSlashIndex > -1) {
           const dir = finalPath.substring(0, lastSlashIndex);
-          try { localStorage.setItem(LAST_DIR_KEY, dir); } catch {}
+          localStorage.setItem(LAST_DIR_KEY, dir);
         }
       }
 
-      // Re-evaluate isGif based on finalPath if targetPath was initially null
-      isGif = quality?.id === 'gif' || finalPath!.toLowerCase().endsWith('.gif');
-      // 重要：如果是 GIF，初始 MP4 必须写到临时文件，不能直接写到最终路径（防止 FFmpeg 读写冲突）
+      isGif = finalPath!.toLowerCase().endsWith('.gif');
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
-      // 2. 预先打开写入流 (Zero-Copy 核心优化)
+      // 2. 预解码音轨
+      let decodedAudio: AudioBuffer | null = null;
+      if (renderGraph?.videoSource?.startsWith('nuvideo://session/')) {
+        const sessionId = renderGraph.videoSource.split('/').pop();
+        if (sessionId) {
+          try {
+            const audioPath = `asset://sessions/${sessionId}/audio_native.webm`;
+            const resp = await fetch(audioPath);
+            const arrayBuffer = await resp.arrayBuffer();
+            const audioCtx = new AudioContext({ sampleRate: 48000 });
+            decodedAudio = await audioCtx.decodeAudioData(arrayBuffer);
+            console.log('[useVideoExport] Audio decoded successfully');
+          } catch (e) {
+            console.warn('[useVideoExport] Native audio skip (decoding error or missing):', e);
+          }
+        }
+      }
+
+      // 3. 准备编码器探测
+      const codecCandidates = isGif 
+        ? ['vp09.00.10.08'] 
+        : [
+            'avc1.640033', // High Profile, Level 5.1 (支持 4K)
+            'avc1.4d0033', // Main Profile, Level 5.1 (支持 4K)
+            'avc1.42E034', // Baseline Profile, Level 5.2 (极高兼容性，且支持超大分辨率)
+          ];
+      
+      let videoConfig: VideoEncoderConfig | null = null;
+      for (const codec of codecCandidates) {
+        const testConfig: VideoEncoderConfig = { 
+          codec, width, height, bitrate, framerate: fps, 
+          hardwareAcceleration: 'prefer-hardware' 
+        };
+        try {
+          const support = await VideoEncoder.isConfigSupported(testConfig);
+          if (support.supported) {
+            videoConfig = testConfig;
+            console.log('[useVideoExport] Selected codec:', codec);
+            break;
+          }
+        } catch {}
+      }
+      
+      if (!videoConfig) {
+        videoConfig = { 
+          codec: isGif ? 'vp09.00.10.08' : 'avc1.42E034', 
+          width, height, bitrate, framerate: fps, 
+          hardwareAcceleration: 'prefer-software' 
+        };
+      }
+
+      // 4. 打开流与 Muxer
       const openResult = await ipc.invoke('open-export-stream', { targetPath: workPath }) as { success: boolean; streamId?: string; error?: string };
-      if (!openResult.success) throw new Error(`Failed to open stream: ${openResult.error}`);
+      if (!openResult.success) throw new Error(`StreamOpenFailed: ${openResult.error}`);
       streamId = openResult.streamId || null;
 
-      const width = canvas.width;
-      const height = canvas.height;
+      let writeChain = Promise.resolve();
+      let chunksReceived = 0;
+      let lastWriteLog = 0;
 
-      // 使用 mp4-muxer 自带的 StreamTarget 以通过 instanceof 检查
       const muxerTarget = new StreamTarget({
         onData: (chunk, position) => {
-          // 这里的 position 是 mp4-muxer 提供的绝对偏移量
-          // 异步发送 IPC，不等待返回（fire-and-forget 模式，依靠最后的 buffer wait）
-          ipc.invoke('write-export-chunk', {
-            streamId,
-            chunk,
-            position
-          });
+          const chunkLen = chunk.length;
+          writeChain = writeChain.then(() => 
+            ipc.invoke('write-export-chunk', { streamId, chunk, position })
+          ).then(() => { 
+            chunksReceived++;
+            if (typeof position !== 'number') {
+              if (performance.now() - lastWriteLog > 1000) {
+                console.log(`[useVideoExport] Writing... Total chunks: ${chunksReceived}, last size: ${chunkLen}`);
+                lastWriteLog = performance.now();
+              }
+            } else {
+              console.log(`[useVideoExport] Header backfill at: ${position}, size: ${chunkLen}`);
+            }
+          }).catch(err => console.error('[useVideoExport] Write Error:', err));
         }
       });
 
-      // 2. 选择编码器 (如果是 GIF 模式则优先尝试 VP9 以获得更好色彩)
-      const configCandidates: VideoEncoderConfig[] = [];
-
-      if (isGif) {
-        configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' });
-        configCandidates.push({ codec: 'vp09.00.10.08', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' });
-      }
-
-      configCandidates.push(
-        { codec: 'avc1.640033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        { codec: 'avc1.4d0033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        { codec: 'hev1.1.6.L120.90', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        { codec: 'avc1.42e01e', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-hardware' },
-        { codec: 'avc1.640033', width, height, bitrate, framerate: fps, hardwareAcceleration: 'prefer-software' }
-      );
-
-      let selectedConfig: VideoEncoderConfig | null = null;
-      for (const config of configCandidates) {
-        try {
-          const support = await VideoEncoder.isConfigSupported(config);
-          if (support.supported) {
-            selectedConfig = config;
-            break;
-          }
-        } catch { continue; }
-      }
-      if (!selectedConfig) throw new Error('No supported encoder found');
-
-      // 根据选中的编码器确定 Muxer 容器标识
-      let muxerCodec: 'avc' | 'vp9' | 'hevc' = 'avc';
-      if (selectedConfig.codec.startsWith('hev') || selectedConfig.codec.startsWith('hvc')) {
-        muxerCodec = 'hevc' as any;
-      } else if (selectedConfig.codec.startsWith('vp09') || selectedConfig.codec.startsWith('vp9')) {
-        muxerCodec = 'vp9' as any;
-      } else {
-        muxerCodec = 'avc';
-      }
-
       const muxer = new Muxer({
         target: muxerTarget as any,
-        video: { codec: muxerCodec as any, width, height, frameRate: fps },
-        fastStart: 'in-memory',
+        video: { codec: (videoConfig.codec.startsWith('vp') ? 'vp9' : 'avc') as any, width, height, frameRate: fps },
+        audio: decodedAudio ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
+        fastStart: false, // 禁用内存缓冲，支持 2K 流式写入
         firstTimestampBehavior: 'offset',
       });
 
       let encoderError: Error | null = null;
-      const encoder = new VideoEncoder({
-        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-        error: (e) => encoderError = e as Error,
+      let encoderOutputCount = 0;
+      const videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => {
+          encoderOutputCount++;
+          muxer.addVideoChunk(chunk, meta);
+        },
+        error: (e) => {
+          encoderError = e as Error;
+          console.error('[useVideoExport] VideoEncoder Error:', e);
+        },
       });
-      encoder.configure(selectedConfig);
+      videoEncoder.configure(videoConfig);
 
-      // 3. 准备播放环境
-      // 同步音频流逻辑：如果有音频轨道，在此配置 AudioEncoder
-      // 目前版本暂时静音，未来可在此扩展
+      let audioEncoder: AudioEncoder | null = null;
+      if (decodedAudio) {
+        audioEncoder = new AudioEncoder({
+          output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+          error: (e) => console.error('[useVideoExport] AudioEncoder error:', e),
+        });
+        audioEncoder.configure({ codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2, bitrate: 192_000 });
+      }
+
+      // 5. 重置视频播放
       video.pause();
-      // video.muted = true; // 保持静音以避免干扰，或者如果我们需要捕获音频，这里需要调整
       setIsPlaying(false);
-      onSeek(0);
-
       await new Promise(r => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          r(null);
-        };
-        video.addEventListener('seeked', onSeeked);
+        const onSd = () => { video.removeEventListener('seeked', onSd); r(null); };
+        video.addEventListener('seeked', onSd);
         video.currentTime = 0;
       });
 
-      // ============ 核心优化：启用增量相机缓存 ============
       enableIncrementalMode();
-
-      console.log(`[useVideoExport] Starting continuous playback export with ${selectedConfig.codec}...`);
       const startTime = performance.now();
-      let encodedFrames = 0;
-      let lastProgressUpdate = 0;
+      let lastProgressAt = 0;
+      let encodedCount = 0;
 
-      // ============ 核心优化：连续取帧替代逐帧 seek ============
-      // 使用 requestVideoFrameCallback 连续取帧，避免每帧 seek 的巨大开销
-      const vVideo = video as HTMLVideoElement & {
-        requestVideoFrameCallback?: (cb: (now: number, metadata: VideoFrameCallbackMetadata) => void) => number;
-        cancelVideoFrameCallback?: (id: number) => void;
-      };
-      const hasVfc = typeof vVideo.requestVideoFrameCallback === 'function';
-
-      if (hasVfc) {
-        // 使用 requestVideoFrameCallback 连续取帧
+      // 6. 视频导出循环 (使用 VFC 同步)
+      const vVideo = video as any;
+      if (typeof vVideo.requestVideoFrameCallback === 'function') {
         await new Promise<void>((resolve, reject) => {
           let vfcId: number;
-
-          const processFrame = async (_now: number, metadata: VideoFrameCallbackMetadata) => {
-            if (!isExportingRef.current || encoderError) {
-              video.pause();
-              cleanup(); // 清理监听器
-              if (encoderError) reject(encoderError);
-              else reject(new Error('ExportCanceled'));
-              return;
-            }
-
-            const mediaTimeMs = metadata.mediaTime * 1000;
-            const mediaTimeSec = metadata.mediaTime;
-
-            // 检查是否超过导出时长
-            if (mediaTimeSec >= durationSeconds) {
+          let timeoutId: NodeJS.Timeout;
+          
+          const cleanup = () => {
+            if (vfcId != null) vVideo.cancelVideoFrameCallback(vfcId);
+            if (timeoutId) clearTimeout(timeoutId);
+            video.removeEventListener('ended', onEnded);
+          };
+          
+          const onFrame = async (_: number, meta: VideoFrameCallbackMetadata) => {
+            if (!isExportingRef.current || encoderError) { 
               video.pause();
               cleanup();
-              resolve();
-              return;
+              reject(encoderError || new Error('Aborted')); 
+              return; 
+            }
+            
+            // 修正：稍微提前一点判定结束，防止最后一帧因为微小时间差不触发导致 98% 挂起
+            if (meta.mediaTime >= durationSeconds - 0.05) { 
+              console.log('[useVideoExport] VFC Reached end time:', meta.mediaTime, '/', durationSeconds);
+              video.pause();
+              cleanup();
+              resolve(); 
+              return; 
             }
 
-            // ============ 编码器背压控制 (Pause & Drain) ============
-            // 当队列过满时，必须暂停视频播放，等待编码器消化，防止丢帧
-            if (encoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
+            if (videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
               video.pause();
-              // 轮询等待直到队列降低到安全水位 (例如 2)
-              while (encoder.encodeQueueSize > 2) {
-                await new Promise(r => setTimeout(r, 10));
-              }
-              // 恢复播放
+              while (videoEncoder.encodeQueueSize > 2) await new Promise(r => setTimeout(r, 10));
               video.play().catch(console.error);
             }
 
-            // 渲染当前帧
-            await renderFrame(mediaTimeMs);
-
-            // 编码当前帧
-            const timestampUs = Math.round(mediaTimeSec * 1_000_000);
-            const vFrame = new VideoFrame(canvas, { timestamp: timestampUs });
-            encoder.encode(vFrame, { keyFrame: encodedFrames % 60 === 0 });
+            await renderFrame(meta.mediaTime * 1000);
+            const vFrame = new VideoFrame(canvas, { timestamp: Math.round(meta.mediaTime * 1_000_000) });
+            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
             vFrame.close();
-            encodedFrames++;
+            encodedCount++;
 
-            // ============ 进度节流：每 100ms 更新一次 ============
-            const now = performance.now();
-            if (now - lastProgressUpdate > PROGRESS_THROTTLE_MS) {
-              const progressRatio = Math.min(mediaTimeSec / durationSeconds, 1);
-              // 如果是 GIF 模式，渲染过程只占前 90%，剩下的 10% 留给后期转换
-              const weightedProgress = isGif ? progressRatio * 0.9 : progressRatio;
-              setExportProgress(weightedProgress);
-              lastProgressUpdate = now;
+            if (encodedCount % 60 === 0) {
+              console.log(`[useVideoExport] Stats - Time: ${meta.mediaTime.toFixed(2)}s, Encoded: ${encodedCount}, Encoder Output: ${encoderOutputCount}, Queue: ${videoEncoder.encodeQueueSize}`);
             }
 
-            // 继续请求下一帧
-            vfcId = vVideo.requestVideoFrameCallback!(processFrame);
+            if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
+              const progressRatio = meta.mediaTime / durationSeconds;
+              const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
+              setExportProgress(Math.min(0.99, displayProgress));
+              lastProgressAt = performance.now();
+            }
+            vfcId = vVideo.requestVideoFrameCallback(onFrame);
           };
 
-          // 监听视频自然结束 (防止源视频短于预期导致 rVFC 停止触发而挂起)
-          const onVideoEnded = () => {
-            console.warn('[useVideoExport] Video ended prematurely, finishing export');
+          // 安全收尾逻辑：防止 VFC 在最后一秒不触发
+          const onEnded = () => { 
+            console.log('[useVideoExport] Video native ended event fired. Resolving...');
+            cleanup();
+            resolve(); 
+          };
+          video.addEventListener('ended', onEnded);
+          
+          // 超时保护：如果视频时长 + 5秒后还没结束，强制结束
+          timeoutId = setTimeout(() => {
+            console.warn('[useVideoExport] Export timeout! Forcing completion...');
+            video.pause();
             cleanup();
             resolve();
-          };
+          }, (durationSeconds + 5) * 1000);
 
-          const cleanup = () => {
-            video.removeEventListener('ended', onVideoEnded);
-            if (vfcId && typeof vVideo.cancelVideoFrameCallback === 'function') vVideo.cancelVideoFrameCallback(vfcId);
-          };
-
-          video.addEventListener('ended', onVideoEnded);
-
-          // 开始播放并捕获帧
-          vfcId = vVideo.requestVideoFrameCallback!(processFrame);
-          video.playbackRate = 1.0; // 实时速度
-          video.play().catch((e) => {
+          vfcId = vVideo.requestVideoFrameCallback(onFrame);
+          video.play().catch((err) => {
             cleanup();
-            reject(e);
+            reject(err);
           });
         });
       } else {
-        // Fallback：逐帧 seek 模式（保留兼容性）
-        console.warn('[useVideoExport] requestVideoFrameCallback not available, falling back to seek mode');
-        const totalFrames = Math.floor(durationSeconds * fps);
-        const timeStep = 1 / fps;
-        let canceled = false;
+        // Fallback for non-VFC browsers
+        for (let t = 0; t < durationSeconds; t += 1/fps) {
+          if (!isExportingRef.current) break;
+          video.currentTime = t;
+          await new Promise(r => video.onseeked = r);
+          await renderFrame(t * 1000);
+          const vFrame = new VideoFrame(canvas, { timestamp: Math.round(t * 1_000_000) });
+          videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+          vFrame.close();
+          encodedCount++;
+          const progressRatio = t / durationSeconds;
+          const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
+          setExportProgress(Math.min(0.99, displayProgress));
+        }
+      }
 
-        for (let i = 0; i <= totalFrames; i++) {
-          if (!isExportingRef.current) { canceled = true; break; }
-
-          const mediaTime = i * timeStep;
-
-          // 手动驱动视频到目标时间点
-          video.currentTime = mediaTime;
-
-          // 等待 Seek 完成
-          await new Promise(r => {
-            const onSeeked = () => {
-              video.removeEventListener('seeked', onSeeked);
-              r(null);
-            };
-            video.addEventListener('seeked', onSeeked);
-          });
-
-          // 背压控制
-          if (encoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
-            while (encoder.encodeQueueSize > 2) {
-              await new Promise(r => setTimeout(r, 10));
+      // 7. 音频编码处理
+      if (audioEncoder && decodedAudio) {
+        console.log('[useVideoExport] Processing audio track...');
+        const chans = decodedAudio.numberOfChannels;
+        const sr = decodedAudio.sampleRate;
+        const maxS = Math.floor(durationSeconds * sr);
+        const STEP = 1024;
+        for (let i = 0; i < maxS; i += STEP) {
+          if (!isExportingRef.current) break;
+          const len = Math.min(STEP, maxS - i);
+          const data = new Float32Array(len * chans);
+          for (let c = 0; c < chans; c++) {
+            const src = decodedAudio.getChannelData(c);
+            for (let s = 0; s < len; s++) {
+               // 边界检查：如果超出源音频长度，填充静音，防止噪音 (crackling)
+               const sampleIdx = i + s;
+               if (sampleIdx < src.length) {
+                 data[s * chans + c] = src[sampleIdx];
+               } else {
+                 data[s * chans + c] = 0; 
+               }
             }
           }
-
-          // 同步渲染 Canvas
-          await renderFrame(mediaTime * 1000);
-
-          // 发送到编码器
-          const timestampUs = Math.round(mediaTime * 1_000_000);
-          const vFrame = new VideoFrame(canvas, { timestamp: timestampUs });
-          encoder.encode(vFrame, { keyFrame: encodedFrames % 60 === 0 });
-          vFrame.close();
-          encodedFrames++;
-
-          // 进度节流
-          const now = performance.now();
-          if (now - lastProgressUpdate > PROGRESS_THROTTLE_MS) {
-            const progressRatio = Math.min(mediaTime / durationSeconds, 1);
-            const weightedProgress = isGif ? progressRatio * 0.9 : progressRatio;
-            setExportProgress(weightedProgress);
-            lastProgressUpdate = now;
-          }
+          const ad = new AudioData({ 
+            format: 'f32', 
+            sampleRate: sr, 
+            numberOfFrames: len, 
+            numberOfChannels: chans, 
+            timestamp: Math.round((i / sr) * 1_000_000), 
+            data 
+          });
+          audioEncoder.encode(ad);
+          ad.close();
         }
-        if (canceled) {
-          throw new Error('ExportCanceled');
-        }
+        await audioEncoder.flush();
+        audioEncoder.close();
       }
 
-      await encoder.flush();
-      encoder.close();
-
-      // Muxer finalize 可能会触发 moov Header 的回填写入
+      await videoEncoder.flush();
+      videoEncoder.close();
+      console.log('[useVideoExport] VideoEncoder flushed and closed.');
+      
+      // 关键修复：muxer.finalize() 会触发大量异步的 onData 回调
+      // 我们需要在 finalize 之后再次等待 writeChain 以确保这些回调都完成
+      console.log('[useVideoExport] Finalizing muxer (this will trigger header writes)...');
       muxer.finalize();
-
-      // 这里的 finalize 是同步的吗？mp4-muxer 文档说是同步的，但我们的 Target.write 是 async。
-      // mp4-muxer 在调用 write 时不等待 Promise？
-      // 注意：由于 JS 单线程，mp4-muxer 内部逻辑是同步执行的，它会连续发出多个 write 调用。
-      // 我们的 ElectronStreamTarget.write 会返回 Promise，但 mp4-muxer 可能忽略了它。
-      // 为确保所有写入（特别是 moov）都已发给主进程，我们需要一个短暂的 buffer 刷新机制。
-      // 不过由于 IPC 是顺序的，只要 finalize 执行完，所有请求应该都已入队。
-
-      // 给一点时间让最后的 IPC 飞一会儿
-      await new Promise(r => setTimeout(r, 200));
-
-      // ============ 重置增量缓存 ============
-      resetCameraCache();
-
-      if (encoderError) throw encoderError;
-
-      // ============ Stream Close (流式写入收尾) ============
-      // 之前代码里有大段的 flush buffer 逻辑，现在不需要了，因为每一帧都已经实时写盘了。
-
-      // 关闭写入流
-      const closeResult = await (window as any).ipcRenderer.invoke('close-export-stream', {
-        streamId
-      });
-
-      if (!closeResult.success) {
-        throw new Error(`Failed to close export stream: ${closeResult.error}`);
+      
+      // 等待 finalize 触发的所有写入完成
+      console.log('[useVideoExport] Waiting for all write operations to complete...');
+      await writeChain;
+      
+      // 额外等待一个 tick 以确保所有 Promise 都已解决
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await writeChain; // 再次确认
+      
+      console.log(`[useVideoExport] All writes complete. Total chunks: ${chunksReceived}`);
+      
+      if (chunksReceived === 0 && !isGif) {
+        throw new Error('EncoderProducedNoData: The file is empty. Your hardware may not support this resolution or codec.');
       }
 
-      console.log(`[useVideoExport] Closed stream, total bytes written: ${closeResult.totalBytes}`);
+      if (streamId) await ipc.invoke('close-export-stream', { streamId });
 
-      const elapsed = (performance.now() - startTime) / 1000;
-      console.log(`[useVideoExport] Export finished: ${encodedFrames} frames in ${elapsed.toFixed(2)}s (${(encodedFrames / elapsed).toFixed(1)} fps)`);
-
-      // ============ Phase 6: GIF 模式分流处理 ============
       if (isGif) {
-        console.log('[useVideoExport] Rendering finished, starting high-quality GIF conversion...');
-        setExportProgress(0.91); // 进入转换阶段
-
-        const convertResult = await (window as any).ipcRenderer.invoke('convert-mp4-to-gif', {
-          inputPath: workPath,    // 临时 MP4
-          outputPath: finalPath,  // 最终 GIF 路径
-          // 提升 GIF 默认宽度到 1080，如果原始宽度更小则保持原样
-          width: Math.min(canvas.width, 1080),
-          fps: 30 // 提升帧率到 30fps，保证流畅度
-        });
-
-        if (convertResult.success) {
-          console.log('[useVideoExport] GIF conversion success');
-          setExportProgress(1.0); // 最终完成
-        } else {
-          throw new Error(`GIF conversion failed: ${convertResult.error}`);
-        }
+        setExportProgress(0.99);
+        await ipc.invoke('convert-mp4-to-gif', { inputPath: workPath, outputPath: finalPath, fps: 20 });
       }
 
-      isExportingRef.current = false;
-      setIsExporting(false);
-      setExportProgress(0);
-      onSeek(0);
-      setExportProgress(0);
-      onSeek(0);
-      return { success: true, filePath: finalPath || undefined };
-    } catch (err) {
-      console.error('[useVideoExport] Export failed:', err);
-      resetCameraCache(); // 确保错误时也重置缓存
-      isExportingRef.current = false;
-      setIsExporting(false);
-      try {
-        if (typeof streamId === 'string' && streamId) {
-          await ipc.invoke('close-export-stream', { streamId });
-        }
-      } catch { }
+      setExportProgress(1);
+      console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
+      return { success: true, filePath: finalPath };
+
+    } catch (e: any) {
+      console.error('[useVideoExport] Export failed:', e);
+      if (streamId) await ipc.invoke('close-export-stream', { streamId, deleteOnClose: true }).catch(() => {});
       return { success: false };
+    } finally {
+      isExportingRef.current = false;
+      setIsExporting(false);
+      resetCameraCache();
     }
   };
 
-  return {
-    isExporting,
-    exportProgress,
-    handleExport,
-    cancelExport
-  };
+  return { handleExport, exportProgress, cancelExport };
 }

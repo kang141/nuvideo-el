@@ -9,18 +9,27 @@ import { performance } from "node:perf_hooks";
 import crypto from "node:crypto";
 import path from "path";
 import fs from "fs";
-ipcMain.handle("save-session-audio", async (_event, { sessionId, arrayBuffer }) => {
+ipcMain.handle("save-session-audio-segments", async (_event, { sessionId, micBuffer, sysBuffer }) => {
   try {
     const sessionDir = path.join(app.getPath("temp"), "nuvideo_sessions", sessionId);
     if (!fs.existsSync(sessionDir)) {
       throw new Error("Session directory does not exist");
     }
-    const audioPath = path.join(sessionDir, "audio_native.webm");
-    fs.writeFileSync(audioPath, Buffer.from(arrayBuffer));
-    console.log(`[Main] Native audio saved for session ${sessionId}: ${audioPath}`);
-    return { success: true, path: audioPath };
+    const result = { success: true };
+    if (micBuffer) {
+      const p = path.join(sessionDir, "audio_mic.webm");
+      fs.writeFileSync(p, Buffer.from(micBuffer));
+      result.micPath = p;
+    }
+    if (sysBuffer) {
+      const p = path.join(sessionDir, "audio_sys.webm");
+      fs.writeFileSync(p, Buffer.from(sysBuffer));
+      result.sysPath = p;
+    }
+    console.log(`[Main] Saved audio segments for ${sessionId}:`, result);
+    return result;
   } catch (err) {
-    console.error("[Main] Failed to save session audio:", err);
+    console.error("[Main] Failed to save session audio segments:", err);
     return { success: false, error: err.message };
   }
 });

@@ -84,6 +84,55 @@ export function useVideoPlayback(
     };
   }, [renderGraph?.videoSource, renderGraph?.audioSource, videoRef, audioRef]);
 
+  // 多轨音频管理
+  const audioTracksRef = useRef<HTMLAudioElement[]>([]);
+
+  // 1. 初始化/更新音频轨道
+  // 1. 初始化/更新音频轨道
+  useEffect(() => {
+    const tracks = renderGraph?.audio?.tracks || [];
+    // 兼容旧版
+    const allTracks = [...tracks];
+    if (renderGraph?.audioSource) {
+       allTracks.push({ source: 'legacy', path: renderGraph.audioSource, startTime: 0, volume: 1.0 });
+    }
+
+    // 清理旧元素
+    audioTracksRef.current.forEach(el => {
+      el.pause();
+      el.src = ''; 
+      el.remove();
+    });
+    audioTracksRef.current = [];
+
+    // 创建新元素
+    allTracks.forEach(track => {
+      if (track.path) {
+        const el = document.createElement('audio');
+        el.src = track.path;
+        el.volume = track.volume ?? 1.0;
+        el.style.display = 'none';
+        el.preload = 'auto';
+        document.body.appendChild(el); 
+        audioTracksRef.current.push(el);
+      }
+    });
+
+    console.log(`[Playback] Re-initialized ${audioTracksRef.current.length} audio elements`);
+
+    return () => {
+      audioTracksRef.current.forEach(el => {
+        el.pause();
+        el.remove();
+      });
+      audioTracksRef.current = [];
+    };
+  }, [
+    renderGraph?.audio?.tracks?.length, 
+    renderGraph?.audio?.tracks?.map(t => t.path).join(','),
+    renderGraph?.audioSource
+  ]);
+
   // 播放进度同步
   useEffect(() => {
     let syncRaf: number;
@@ -91,43 +140,83 @@ export function useVideoPlayback(
 
     const sync = () => {
       const video = videoRef.current;
-      const audio = audioRef.current;
       if (video) {
         const now = video.currentTime;
         internalTimeRef.current = now;
 
-        // 同步音频时间 (考虑延迟偏移: AudioTime = VideoProgress - Delay)
-        // Delay = AudioStartTime - VideoStartTime
-        const delaySec = (renderGraph?.audioDelay || 0) / 1000;
-        const targetAudioTime = now - delaySec;
+        // 同步所有音频轨道
+        const tracks = renderGraph?.audio?.tracks || [];
+        const delayGlobal = (renderGraph?.audioDelay || 0) / 1000;
 
-        if (audio && audio.src) {
+        audioTracksRef.current.forEach((audio, idx) => {
+          if (!audio.src) return;
+
+          // --- 1. 实时音量计算 (含淡入淡出) ---
+          const baseVol = tracks[idx]?.volume ?? 1.0;
+          
+          // 真正的剩余时间：取 [视频剩余] 和 [音频剩余] 的较小值
+          // 这样即使音频比视频短，也能在音频结束前优雅淡出
+          const timeToVideoEnd = maxDuration - now;
+          const audioDur = audio.duration;
+          const timeToAudioEnd = (Number.isFinite(audioDur) && audioDur > 0) ? (audioDur - audio.currentTime) : 999;
+          const timeToEnd = Math.min(timeToVideoEnd, timeToAudioEnd);
+
+          let fadeMultiplier = 1.0;
+          
+          // 每个轨道可以有自己的 startTime，这里简化假设都从 0 开始，叠加全局 delay
+          const targetAudioTime = now - delayGlobal;
+
+          // A. 开头淡入 (0.1s): 消除启动爆音
+          if (targetAudioTime < 0.1 && targetAudioTime >= 0) {
+             fadeMultiplier = targetAudioTime / 0.1;
+          }
+          
+          // B. 末尾淡出 (0.5s): 缩短淡出时间，保留更多尾音
+          if (timeToEnd < 0.5 && timeToEnd >= 0) {
+            // 如果只有最后 0.05s，直接强制静音
+            if (timeToEnd < 0.05) {
+               fadeMultiplier = 0;
+            } else {
+               fadeMultiplier = Math.min(fadeMultiplier, timeToEnd / 0.5);
+            }
+          }
+          
+          // 平滑应用音量 (性能优化：仅在有显著变化时才触碰 DOM 属性)
+          const newVol = Math.max(0, Math.min(1, baseVol * fadeMultiplier));
+          if (Math.abs(audio.volume - newVol) > 0.001) {
+            audio.volume = newVol;
+          }
+          
+          // --- 2. 时间与同步逻辑 ---
+
           if (targetAudioTime < 0) {
-            // 还没轮到音频出场，强制静默并暂留在 0
             if (!audio.paused) audio.pause();
             if (audio.currentTime !== 0) audio.currentTime = 0;
           } else {
-            // 到音频时间了
-            if (isPlaying && audio.paused) audio.play().catch(() => {});
-            
-            // 如果偏移过大（精度 > 150ms），执行强制对齐
-            if (!audio.seeking && Math.abs(audio.currentTime - targetAudioTime) > 0.15) {
-              audio.currentTime = targetAudioTime;
-            }
-          }
-        }
+             // 状态同步：如果视频在播且时间已到，音频也得播
+             if (isPlaying && audio.paused) {
+                audio.play().catch(e => console.warn('Audio play failed:', e));
+             }
 
+             // 时间同步策略优化
+             // 仅当各端时间偏差显著 (>0.25s) 时才进行硬校准
+             const diff = targetAudioTime - audio.currentTime;
+             if (!audio.seeking && Math.abs(diff) > 0.25) {
+               audio.currentTime = targetAudioTime;
+             }
+          }
+        });
+
+        // 性能优化：播放期间降低 React UI 状态的更新频率（10fps）
+        // 但 Canvas 的实时绘制（依赖 internalTimeRef）仍保持 60fps
         const performanceNow = performance.now();
-        // 性能优化：播放期间完全停止更新 React State，改为由组件自行订阅 requestAnimationFrame
-        // 仅在每秒同步一次以防状态过度偏离 (可选，目前先彻底屏蔽以获极致性能)
-        if (performanceNow - lastStateUpdateTime > 1000 || now >= maxDuration) {
-           // setCurrentTime(now); // 彻底屏蔽
+        if (performanceNow - lastStateUpdateTime > 100 || now >= maxDuration) {
            lastStateUpdateTime = performanceNow;
+           setCurrentTime(now);
         }
 
         if (now >= maxDuration) {
           video.pause();
-          if (audio) audio.pause();
           setIsPlaying(false);
           setCurrentTime(maxDuration);
         }
@@ -138,46 +227,44 @@ export function useVideoPlayback(
     if (isPlaying) syncRaf = requestAnimationFrame(sync);
     else sync();
     return () => cancelAnimationFrame(syncRaf);
-  }, [isPlaying, maxDuration, videoRef, audioRef, renderGraph?.audioDelay]);
+  }, [isPlaying, maxDuration, videoRef, renderGraph?.audioDelay, renderGraph?.audio?.tracks]);
 
-  // 音量同步逻辑
+  // 播放/暂停状态同步 (事件驱动，避免 RAF 高频调用)
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !renderGraph?.audio?.tracks) return;
+    const audios = audioTracksRef.current;
+    if (isPlaying) {
+      audios.forEach(a => {
+        if (a.paused) a.play().catch(e => console.warn('Audio play failed:', e));
+      });
+    } else {
+      audios.forEach(a => {
+        if (!a.paused) a.pause();
+      });
+    }
+  }, [isPlaying]);
 
-    // 目前预览阶段我们只有一个混合音频源
-    // 我们取系统声音和麦克风音量的平均值或者主要的一个
-    // 更好的做法是寻找 tracks 中对应的 volume
-    const systemTrack = renderGraph.audio.tracks.find(t => t.source === 'system');
-    const micTrack = renderGraph.audio.tracks.find(t => t.source === 'microphone');
-    
-    // 如果两个由于某些原因都在播放，我们取最大值来代表当前音量预览
-    // 或者目前只实现一个主音量控制
-    const vol = systemTrack ? systemTrack.volume : (micTrack ? micTrack.volume : 1.0);
-    audio.volume = Math.max(0, Math.min(1, vol));
-  }, [renderGraph?.audio?.tracks, audioRef]);
 
   const togglePlay = async () => {
     const video = videoRef.current;
-    const audio = audioRef.current;
     if (!video) return;
     
     try {
       if (video.paused) {
         if (video.currentTime >= maxDuration - 0.1) {
           video.currentTime = 0;
-          if (audio) {
-            const delaySec = (renderGraph?.audioDelay || 0) / 1000;
-            audio.currentTime = Math.max(0, 0 - delaySec);
-          }
+          // 重置所有音频轨道
+          audioTracksRef.current.forEach(audio => {
+             const delaySec = (renderGraph?.audioDelay || 0) / 1000;
+             audio.currentTime = Math.max(0, 0 - delaySec);
+          });
           setCurrentTime(0);
         }
         await video.play();
-        if (audio && audio.src) await audio.play();
+        // 音频播放由 useEffect[isPlaying] 驱动，这里只需改变状态
         setIsPlaying(true);
       } else {
         video.pause();
-        if (audio) audio.pause();
+        // 音频暂停同理
         setIsPlaying(false);
       }
     } catch (err) {
@@ -192,7 +279,6 @@ export function useVideoPlayback(
 
   const handleSeek = (s: number) => {
     const video = videoRef.current;
-    const audio = audioRef.current;
     if (!video) return;
 
     const time = Math.min(Math.max(0, s), maxDuration);
@@ -206,10 +292,13 @@ export function useVideoPlayback(
       
       seekRafRef.current = requestAnimationFrame(() => {
         video.currentTime = time;
-        if (audio && audio.src) {
-          const delaySec = (renderGraph?.audioDelay || 0) / 1000;
-          audio.currentTime = Math.max(0, time - delaySec);
-        }
+        // 同步所有音频轨道 Seek
+        const delaySec = (renderGraph?.audioDelay || 0) / 1000;
+        const audioTime = Math.max(0, time - delaySec);
+        audioTracksRef.current.forEach(audio => {
+           audio.currentTime = audioTime;
+        });
+        
         isSeekingRef.current = false;
       });
     }

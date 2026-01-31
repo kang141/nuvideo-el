@@ -201,25 +201,15 @@ export function computeCameraState(graph: RenderGraph, t: number) {
         state.mvx = 0;
         state.mvy = 0;
       } else {
-        const dxm = rawMouse.x - state.mx;
-        const dym = rawMouse.y - state.my;
-        const dist = Math.sqrt(dxm * dxm + dym * dym);
-
-        // 过远补偿：阈值从 0.4 缩小到 0.12，防止在大幅移动时产生明显的拖后感
-        if (dist > 0.12) {
-          state.mx = rawMouse.x;
-          state.my = rawMouse.y;
-          state.mvx = 0;
-          state.mvy = 0;
-        } else {
-          const fMx =
-            -mouseConfig.stiffness * (state.mx - rawMouse.x) -
-            mouseConfig.damping * state.mvx;
-          const fMy =
-            -mouseConfig.stiffness * (state.my - rawMouse.y) -
-            mouseConfig.damping * state.mvy;
-          state.mvx += fMx * factor;
-          state.mvy += fMy * factor;
+        // 彻底移除瞬移判定，始终使用弹簧物理系统进行插值追踪，确保轨迹绝对连续
+        const fMx =
+          -mouseConfig.stiffness * (state.mx - rawMouse.x) -
+          mouseConfig.damping * state.mvx;
+        const fMy =
+          -mouseConfig.stiffness * (state.my - rawMouse.y) -
+          mouseConfig.damping * state.mvy;
+        state.mvx += fMx * factor;
+        state.mvy += fMy * factor;
 
           const speed = Math.sqrt(
             state.mvx * state.mvx + state.mvy * state.mvy,
@@ -228,22 +218,23 @@ export function computeCameraState(graph: RenderGraph, t: number) {
             state.mvx = (state.mvx / speed) * mouseConfig.maxSpeed;
             state.mvy = (state.mvy / speed) * mouseConfig.maxSpeed;
           }
-          state.mx += state.mvx * factor;
-          state.my += state.mvy * factor;
-        }
+        state.mx += state.mvx * factor;
+        state.my += state.mvy * factor;
       }
     }
 
     // 2. 镜头跟随
-    // 如果开启了 autoZoom 且当前没有强制覆盖的 intent（或者只有全局 intent），则应用自动逻辑
-    const hasManualIntent = intents.some(i => i.t > 10); // 简单判定：T>10ms 的通常是手动添加的
+    // 智能分段逻辑：仅当当前时刻处于“空闲”状态（即没有正在生效的手动缩放意图）时，才应用自动缩放
+    // 判定标准：当前 active intent 是默认值（t=0, scale=1）或者显式的手动恢复（scale=1）
+    // 如果 active 是手动缩放（scale > 1 且 t > 0），则完全尊重手动意图
+    const isManualZooming = active.targetScale > 1.0 && active.t > 0;
 
     let targetScale = active.targetScale;
     let targetCx = state.cx;
     let targetCy = state.cy;
 
-    // 自动缩放逻辑：当开启了全局 autoZoom 且当前没有活跃的手动覆盖意图时生效
-    if (graph.autoZoom && !hasManualIntent && rawMouse) {
+    // 自动缩放激活条件：全局开关开启 + 当前非手动缩放时段 + 鼠标存在
+    if (graph.autoZoom && !isManualZooming && rawMouse) {
       targetScale = AUTO_ZOOM_SCALE;
     }
 
