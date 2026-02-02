@@ -84,4 +84,14 @@ export interface RenderGraph {
   config: RenderConfig;
   /** 自动缩放开关 */
   autoZoom: boolean;
+  /** 视频剪辑片段 (如果为空则默认视为一段完整视频) */
+  clips?: {
+    id: string;
+    /** 在素材源文件中的开始时间 (ms) */
+    sourceStartTime: number;
+    /** 片段时长 (ms) */
+    duration: number;
+    /** 在时间轴上的开始时间 (ms, 实际上是 computed 属性，但存下来方便渲染) */
+    startAt: number;
+  }[];
 }

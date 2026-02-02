@@ -406,12 +406,14 @@ function App() {
     const timeout = setTimeout(() => {
       if (appState === "home") {
         ipc.send("resize-window", { width: 720, height: 480, resizable: true });
+        ipc.send('set-ignore-mouse-events', false); // 关键：恢复首页的交互性
       } else if (appState === "editor") {
         ipc.send("resize-window", {
           width: 1200,
           height: 800,
           resizable: true,
         });
+        ipc.send('set-ignore-mouse-events', false); // 关键：恢复编辑器的交互性
       } else if (appState === "recording") {
         ipc.send("resize-window", {
           width: 520,
@@ -460,15 +462,21 @@ function App() {
   return (
     <div
       className={cn(
-        "relative flex h-screen w-screen flex-col overflow-hidden font-sans transition-all duration-700",
+        "relative flex h-screen w-screen flex-col overflow-hidden font-sans",
         appState === "home" ? "mesh-gradient" : "",
         appState === "recording"
           ? "bg-transparent border-0 shadow-none"
-          : "bg-neutral-950 rounded-[24px] border border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]",
-        isCountingDown ? "scale-[0.98] blur-[15px] saturate-[0.8]" : "scale-100 blur-0"
+          : "bg-neutral-950 rounded-[24px] border border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]"
       )}
     >
-      <div className="flex h-full w-full flex-col relative z-10" key={language}>
+      <div 
+        style={{ willChange: 'transform, filter' }}
+        className={cn(
+          "flex h-full w-full flex-col relative z-10 transition-[filter,transform,opacity] duration-500 ease-out-expo",
+          isCountingDown ? "scale-[0.98] blur-[10px] saturate-[0.8]" : "scale-100 blur-0"
+        )} 
+        key={language}
+      >
         <AnimatePresence mode="wait">
         {/* 1. 录制模式 */}
           {appState === "recording" && (

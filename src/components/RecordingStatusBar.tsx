@@ -52,10 +52,12 @@ export function RecordingStatusBar({
     }, 150);
   };
 
-  // 清理定时器
+  // 清理定时器并恢复鼠标事件 (防止进入编辑器后鼠标依然穿透)
   useEffect(() => {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      // 组件卸载时（录制结束）强制恢复窗口的交互性
+      (window as any).ipcRenderer?.send('set-ignore-mouse-events', false);
     };
   }, []);
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+﻿import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import type { RenderGraph, CameraIntent } from '../../types';
 import { Language } from '@/i18n/translations';
 
@@ -49,16 +49,13 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const [scrollLeft, setScrollLeft] = useState(0);
   const [hoverX, setHoverX] = useState<number | null>(null);
 
+  
   // 拖拽编辑状态
   const [dragMode, setDragMode] = useState<DragMode>('none');
   const [dragZoomIndex, setDragZoomIndex] = useState<number>(-1);
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number>(-1); // 新增：选中状态
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartIntents, setDragStartIntents] = useState<CameraIntent[]>([]);
-  
-  // 音频声纹数据
-  const [waveformPeaks, setWaveformPeaks] = useState<number[]>([]);
-  const isProcessingAudio = useRef(false);
   
   const minPPS = useMemo(() => {
     if (width <= 0 || duration <= 0) return TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS;
@@ -197,17 +194,55 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     // 退出 Clipping
     ctx.restore();
 
-    // 绘制轨道 2 (视频 + 音频声纹)
+    // 绘制轨道 2 (视频片段轨道)
     const videoTrackY = TRACKS_START_Y + 1 * (TRACK_HEIGHT + TRACK_GAP);
     const vty = videoTrackY + 4;
     const vth = TRACK_HEIGHT - 8;
     
     ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(PADDING_LEFT, vty, contentWidth, vth, 8);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.fill();
-    ctx.clip(); // 裁剪以确保波形不超出轨道
+    
+    // 获取切片列表，如果没有则默认为一个完整切片
+    const clips = renderGraph.clips || [{ 
+      id: 'default', 
+      sourceStartTime: 0, 
+      duration: duration * 1000, 
+      startAt: 0 
+    }];
+
+    clips.forEach(clip => {
+      const startX = timeToX(clip.startAt / 1000);
+      const w = (clip.duration / 1000) * pps;
+      // 减去 1px 缝隙，视觉上区分
+      const rw = Math.max(2, w - 1); 
+
+      // 仅绘制可见区域
+      if (startX + rw < PADDING_LEFT || startX > width) return;
+
+      ctx.beginPath();
+      ctx.roundRect(startX, vty, rw, vth, 6);
+      
+      // 使用高级的深空渐变色
+      const grad = ctx.createLinearGradient(startX, vty, startX, vty + vth);
+      grad.addColorStop(0, '#2563eb'); // blue-600
+      grad.addColorStop(1, '#1d4ed8'); // blue-700
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // 内阴影高光，增加立体感
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 如果比较宽，显示时长
+      if (rw > 40) {
+         ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+         ctx.font = '500 10px "Inter", sans-serif';
+         ctx.textAlign = 'center';
+         ctx.fillText(`${(clip.duration / 1000).toFixed(1)}s`, startX + rw/2, vty + vth/2 + 3);
+      }
+    });
+
+    ctx.restore();
 
     ctx.restore();
   }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex, language]);
@@ -304,52 +339,12 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     return () => cancelAnimationFrame(raf);
   }, [width, height, pps, scrollLeft, hoverX, videoRef]);
 
-  // 加载并解析音频波形
-  useEffect(() => {
-    const source = renderGraph.audioSource;
-    if (!source || isProcessingAudio.current) return;
-
-    const processAudio = async () => {
-      isProcessingAudio.current = true;
-      try {
-        const response = await fetch(source);
-        const arrayBuffer = await response.arrayBuffer();
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const decodedData = await audioCtx.decodeAudioData(arrayBuffer);
-        
-        const channelData = decodedData.getChannelData(0);
-        const step = Math.ceil(channelData.length / 1500); // 采样 1500 个点
-        const peaks = [];
-        
-        for (let i = 0; i < 1500; i++) {
-          let max = 0;
-          const start = i * step;
-          const end = Math.min(start + step, channelData.length);
-          for (let j = start; j < end; j += 10) { // 步进采样提升性能
-            const val = Math.abs(channelData[j]);
-            if (val > max) max = val;
-          }
-          // 对 peak 进行一点平滑处理，视觉更美观
-          peaks.push(Math.pow(max, 0.8)); 
-        }
-        
-        setWaveformPeaks(peaks);
-        await audioCtx.close();
-      } catch (err) {
-        console.warn('[CanvasTimeline] Waveform generation failed:', err);
-      } finally {
-        isProcessingAudio.current = false;
-      }
-    };
-
-    processAudio();
-  }, [renderGraph.audioSource]);
-
   // 这里的关键：所有可能影响静态层的状态变化都要触发重绘
   useEffect(() => {
     drawStatic();
-  }, [drawStatic, duration, renderGraph, waveformPeaks]);
+  }, [drawStatic, duration, renderGraph, renderGraph.clips, selectedZoomIndex, language]);
 
+  // ... (保留之前的辅助函数) ...
   const isDragging = useRef(false);
   const snapMs = useCallback((ms: number) => {
     const fps = renderGraph.config?.fps || 30;
