@@ -4,7 +4,7 @@ import { Switch } from '@/components/ui/switch';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Language, translations } from '@/i18n/translations';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 
 interface AppSettingsMenuProps {
   autoZoomEnabled: boolean;
@@ -82,23 +82,30 @@ export function AppSettingsMenu({
             <div className="h-px bg-white/5" />
 
             {/* 语言选择 */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-left">
-                <Globe size={12} className="text-white/40" />
-                <span className="text-[11px] font-semibold text-white/90">{t.common.language}</span>
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 px-0.5">
+                <Globe size={11} className="text-white/30" />
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{t.common.language}</span>
               </div>
-              <Select value={language} onValueChange={(v) => {
-                setLanguage(v as Language);
-                // setIsOpen(false); // 语言切换后不关闭菜单，方便用户确认
-              }}>
-                <SelectTrigger className="h-6 w-[80px] text-[10px] bg-white/5 border-white/10 focus:ring-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#1a1a1a] border-white/10 text-[10px] min-w-[80px]">
-                  <SelectItem value="zh" className="focus:bg-white/10 focus:text-white cursor-pointer">中文</SelectItem>
-                  <SelectItem value="en" className="focus:bg-white/10 focus:text-white cursor-pointer">English</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex p-1 bg-white/[0.03] rounded-lg border border-white/[0.04]">
+                {[
+                  { id: 'zh', label: '中文' },
+                  { id: 'en', label: 'English' }
+                ].map((lang) => (
+                  <button
+                    key={lang.id}
+                    onClick={() => setLanguage(lang.id as Language)}
+                    className={cn(
+                      "flex-1 h-7 rounded-md text-[11px] transition-all duration-300",
+                      language === lang.id
+                        ? "bg-white/[0.08] text-white shadow-sm font-semibold"
+                        : "text-white/30 hover:text-white/60 hover:bg-white/[0.02]"
+                    )}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>

@@ -67,11 +67,15 @@ function App() {
       if (appState === "home") {
         ipc.send("resize-window", { width: 720, height: 480, resizable: true });
       } else if (appState === "editor") {
-        ipc.send("resize-window", { width: 1200, height: 800, resizable: true });
+        ipc.send("resize-window", {
+          width: 1200,
+          height: 800,
+          resizable: true,
+        });
       } else if (appState === "recording") {
         // 关键：先让背景透明，再缩放
         ipc.send("resize-window", {
-          width: 520, 
+          width: 520,
           height: 84, // 从 72 增加到 84，为阴影留出空间
           resizable: false,
           position: "bottom",
@@ -119,15 +123,15 @@ function App() {
     quality: QualityConfig,
     format: "video" | "gif" = "video",
     autoZoom: boolean = true,
-    audioConfig: { 
-      microphoneId: string | null; 
+    audioConfig: {
+      microphoneId: string | null;
       microphoneLabel: string | null;
-      systemAudio: boolean 
+      systemAudio: boolean;
     },
     webcamConfig: {
       enabled: boolean;
       deviceId: string | null;
-    }
+    },
   ) => {
     try {
       console.log(
@@ -142,31 +146,27 @@ function App() {
       );
       await mouseTracker.syncClock();
       mouseTracker.start();
-      const startResult = await screenRecorder.start(
-        sourceId,
-        quality,
-        audioConfig,
-      );
-      
-      // 启动原生音频录制 (麦克风 + 系统音 + 锚定屏幕 ID)
-      const audioT0 = await nativeAudioRecorder.start(sourceId, audioConfig);
-      
-      // 启动摄像头录制
-      if (webcamConfig.enabled && webcamConfig.deviceId) {
-        const webcamT0 = await webcamRecorder.start(webcamConfig.deviceId);
-        if (startResult?.t0) {
-          // 记录摄像头相对于主录制的启动延迟
-          webcamDelayRef.current = Math.max(0, webcamT0 - startResult.t0);
-        }
-      }
-      
+      // 并行启动全量录制管线 (视频、音频、摄像头)
+      // 这确保了在视频引擎初始化（约 0.5-1s）期间，音频和鼠标已经开始采集，不再丢失开头内容。
+      const [startResult, audioT0, webcamT0] = await Promise.all([
+        screenRecorder.start(sourceId, quality, audioConfig),
+        nativeAudioRecorder.start(sourceId, audioConfig),
+        webcamConfig.enabled && webcamConfig.deviceId
+          ? webcamRecorder.start(webcamConfig.deviceId)
+          : Promise.resolve(0),
+      ]);
+
       if (startResult?.t0) {
         readyOffsetRef.current = startResult.readyOffset;
         mouseTracker.align(startResult.t0);
-        // 计算音频相对于视频的延迟戳
-        // 注意：这里的 startResult.t0 是 Ready 时刻，音频也是在这个时刻左右启动的。
-        // 如果音频比视频 READY 晚，audioDelay 为正；反之为负。
-        audioDelayRef.current = ((audioT0 || performance.now()) - startResult.t0) + 150;
+
+        // 计算音画同步延迟（考虑到并行启动）
+        // 如果 audioT0 小于 startResult.t0，说明音频比视频 Ready 更早开始
+        audioDelayRef.current =
+          (audioT0 || performance.now()) - startResult.t0 + 150;
+
+        // 计算摄像头同步延迟
+        webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
       }
 
       setRecordingState({
@@ -253,7 +253,11 @@ function App() {
 
     try {
       // 关键修复：立即标记停止录制，防止计时器继续累加（IPC 通信期间可能产生几百毫秒误差）
-      setRecordingState((prev) => ({ ...prev, isRecording: false, isPaused: false }));
+      setRecordingState((prev) => ({
+        ...prev,
+        isRecording: false,
+        isPaused: false,
+      }));
 
       mouseTracker.stop();
       console.log(
@@ -261,7 +265,7 @@ function App() {
         recordingState.isRecording,
       );
 
-       const sessionResult = await screenRecorder.stop();
+      const sessionResult = await screenRecorder.stop();
       // 停止原生音频录制并获取数据 { micBuffer, sysBuffer }
       const audioBuffers = await nativeAudioRecorder.stop();
       // 停止摄像头录制并获取数据
@@ -280,32 +284,35 @@ function App() {
       // 如果有录制到音频，保存到会话目录 (分轨模式)
       const audioTracks: any[] = [];
       if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
-        const saveResult = await (window as any).ipcRenderer.invoke('save-session-audio-segments', {
-          sessionId,
-          micBuffer: audioBuffers.micBuffer,
-          sysBuffer: audioBuffers.sysBuffer
-        });
-        
+        const saveResult = await (window as any).ipcRenderer.invoke(
+          "save-session-audio-segments",
+          {
+            sessionId,
+            micBuffer: audioBuffers.micBuffer,
+            sysBuffer: audioBuffers.sysBuffer,
+          },
+        );
+
         if (saveResult.success) {
           // 构建多轨音频配置
           if (saveResult.micPath) {
             audioTracks.push({
-              source: 'microphone',
+              source: "microphone",
               startTime: 0,
               path: `nuvideo://session/${sessionId}/audio_mic.webm`,
-              volume: 1.0, 
-              fadeIn: 300, 
-              fadeOut: 300
+              volume: 1.0,
+              fadeIn: 300,
+              fadeOut: 300,
             });
           }
           if (saveResult.sysPath) {
             audioTracks.push({
-              source: 'system',
+              source: "system",
               startTime: 0,
               path: `nuvideo://session/${sessionId}/audio_sys.webm`,
-              volume: 1.0, 
-              fadeIn: 300, 
-              fadeOut: 300
+              volume: 1.0,
+              fadeIn: 300,
+              fadeOut: 300,
             });
           }
         }
@@ -314,10 +321,13 @@ function App() {
       // 处理摄像头视频保存
       let finalWebcamPath = undefined;
       if (webcamBuffer && webcamBuffer.byteLength > 0) {
-        const saveResult = await (window as any).ipcRenderer.invoke('save-session-webcam', {
-          sessionId,
-          arrayBuffer: webcamBuffer
-        });
+        const saveResult = await (window as any).ipcRenderer.invoke(
+          "save-session-webcam",
+          {
+            sessionId,
+            arrayBuffer: webcamBuffer,
+          },
+        );
         if (saveResult.success) {
           finalWebcamPath = `nuvideo://session/${sessionId}/webcam.webm`;
         }
@@ -337,7 +347,7 @@ function App() {
         duration: finalDurationMs,
         // 支持多轨音频
         audio: {
-          tracks: audioTracks
+          tracks: audioTracks,
         },
         webcamSource: finalWebcamPath,
         webcamDelay: webcamDelayRef.current,
@@ -402,17 +412,21 @@ function App() {
       if (appState === "home") {
         ipc.send("resize-window", { width: 720, height: 480, resizable: true });
       } else if (appState === "editor") {
-        ipc.send("resize-window", { width: 1200, height: 800, resizable: true });
+        ipc.send("resize-window", {
+          width: 1200,
+          height: 800,
+          resizable: true,
+        });
       } else if (appState === "recording") {
         ipc.send("resize-window", {
-          width: 520, 
-          height: 84, 
+          width: 520,
+          height: 84,
           resizable: false,
           position: "bottom",
           mode: "recording",
         });
       }
-    }, 0); 
+    }, 0);
 
     return () => clearTimeout(timeout);
   }, [appState]);
@@ -459,7 +473,7 @@ function App() {
           : "bg-neutral-950 rounded-[24px] border border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]",
       )}
     >
-      <div className="flex h-full w-full flex-col relative z-10">
+      <div className="flex h-full w-full flex-col relative z-10" key={language}>
         {/* 1. 录制模式 */}
         {appState === "recording" && (
           <div className="flex h-full w-full items-center justify-center">

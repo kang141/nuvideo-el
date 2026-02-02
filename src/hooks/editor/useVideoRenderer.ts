@@ -203,35 +203,41 @@ export function useVideoRenderer({
     };
 
     // 强校准：仅在进度拖动或开始播放时对齐时间轴
-    const hardSync = () => {
+    const hardSync = (tolerance = 0.1) => {
       if (!mainVideo || !video) return;
       const delay = (renderGraph.webcamDelay || 0) / 1000;
       const targetTime = Math.max(0, mainVideo.currentTime - delay);
       
-      // 容差判定：如果偏差过大（>0.1s），执行一次 Seek
-      if (Math.abs(video.currentTime - targetTime) > 0.1) {
+      // 容差判定：如果偏差过大，执行一次 Seek。
+      // 注意：Seek 操作非常昂贵且是同步的，减少它能极大提升播放响应速度。
+      if (Math.abs(video.currentTime - targetTime) > tolerance) {
         video.currentTime = targetTime;
       }
       syncState();
     };
 
+    const onPlay = () => hardSync(0.3);
+    const onSeeked = () => hardSync(0.1);
+    const onRateChange = () => syncState();
+    const onPause = () => syncState();
+
     if (mainVideo) {
-      mainVideo.addEventListener('play', hardSync);
-      mainVideo.addEventListener('pause', syncState);
-      mainVideo.addEventListener('ratechange', syncState);
-      mainVideo.addEventListener('seeked', hardSync);
+      mainVideo.addEventListener('play', onPlay);
+      mainVideo.addEventListener('pause', onPause);
+      mainVideo.addEventListener('ratechange', onRateChange);
+      mainVideo.addEventListener('seeked', onSeeked);
       // 初始化状态
-      hardSync();
+      hardSync(0.1);
     }
 
     console.log('[useVideoRenderer] Webcam sync optimized (Low-overhead mode)');
 
     return () => {
       if (mainVideo) {
-        mainVideo.removeEventListener('play', hardSync);
-        mainVideo.removeEventListener('pause', syncState);
-        mainVideo.removeEventListener('ratechange', syncState);
-        mainVideo.removeEventListener('seeked', hardSync);
+        mainVideo.removeEventListener('play', onPlay);
+        mainVideo.removeEventListener('pause', onPause);
+        mainVideo.removeEventListener('ratechange', onRateChange);
+        mainVideo.removeEventListener('seeked', onSeeked);
       }
       video.pause();
       video.src = '';
@@ -468,6 +474,10 @@ export function useVideoRenderer({
       const tick = () => { if (!stopped) { renderFromCurrentTime(); rafRef.current = requestAnimationFrame(tick); } };
       rafRef.current = requestAnimationFrame(tick);
     }
+    
+    // 关键修正：无论是否有 VFC，在进入预览模式的一瞬间强制重绘当前时刻。
+    // 这解决了导出结束后，由于视频处于暂停状态且没有新帧产生，导致的预览区变黑/挂起的问题。
+    renderFromCurrentTime();
 
     return () => {
       stopped = true;
