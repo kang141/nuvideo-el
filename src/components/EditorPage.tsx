@@ -616,6 +616,8 @@ export function EditorPage({
             canvasRef={canvasRef}
             onEnded={() => setIsPlaying(false)}
             onFocusSpot={handleFocusSpot}
+            bgCategory={activeWallpaper.category}
+            bgFile={activeWallpaper.file}
           />
 
           <div

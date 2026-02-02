@@ -76,7 +76,10 @@ function findActiveIntent(intents: CameraIntent[], t: number): CameraIntent {
   return { ...active };
 }
 
-// 缓存查找结果，优化性能
+/**
+ * 核心优化：高阶鼠标位置插值 (Catmull-Rom 变体)
+ * 相比线性插值，它能显著消除在离散采集点之间移动时的“折线感”
+ */
 let lastMouseIdx = 0;
 function findMousePos(
   events: NuMouseEvent[],
@@ -84,34 +87,57 @@ function findMousePos(
 ): { x: number; y: number } | null {
   if (!events || events.length === 0) return null;
 
-  // 简单的指针搜索，因为 currentT 是单调递增的
-  let best: NuMouseEvent | null = null;
+  // 1. 找到当前时间点的事件索引
+  let idx = -1;
+  // 由于 t 是单调增加的，利用缓存优化
   for (let i = lastMouseIdx; i < events.length; i++) {
     if (events[i].t <= t) {
-      best = events[i];
+      idx = i;
       lastMouseIdx = i;
     } else {
       break;
     }
   }
 
-  if (!best) {
-    const first = events[0];
-    return { x: first.x, y: first.y };
+  if (idx === -1) {
+    return { x: events[0].x, y: events[0].y };
   }
 
-  const next = events[lastMouseIdx + 1];
-  if (!next || next.t <= best.t) {
-    return { x: best.x, y: best.y };
+  // 2. 如果是最后一个点，直接返回
+  if (idx >= events.length - 1) {
+     return { x: events[idx].x, y: events[idx].y };
   }
 
-  const span = next.t - best.t;
-  if (span <= 1e-6) return { x: best.x, y: best.y };
+  // 3. 获取插值所需的上下文点 (p0, p1, p2, p3)
+  const p1 = events[idx];
+  const p2 = events[idx + 1];
+  
+  const span = p2.t - p1.t;
+  if (span <= 0.1) return { x: p1.x, y: p1.y };
 
-  const ratio = Math.min(1, Math.max(0, (t - best.t) / span));
+  const ratio = (t - p1.t) / span;
+
+  // 使用三次 Hermite 插值 (Cubic Hermite Spline) 的简化版
+  // 它比线性插值更平滑，且不需要未来的点（除了 p2）
+  // 实际上为了最优平滑度，我们可以看 p0 和 p3
+  const p0 = events[Math.max(0, idx - 1)];
+  const p3 = events[Math.min(events.length - 1, idx + 2)];
+
+  // 计算切线 (Tangents)
+  const m1 = (p2.x - p0.x) / 2;
+  const m2 = (p3.x - p1.x) / 2;
+
+  // Hermite Basis Functions
+  const r2 = ratio * ratio;
+  const r3 = r2 * ratio;
+  const h1 = 2 * r3 - 3 * r2 + 1;
+  const h2 = -2 * r3 + 3 * r2;
+  const h3 = r3 - 2 * r2 + ratio;
+  const h4 = r3 - r2;
+
   return {
-    x: best.x + (next.x - best.x) * ratio,
-    y: best.y + (next.y - best.y) * ratio,
+    x: h1 * p1.x + h2 * p2.x + h3 * m1 + h4 * m2,
+    y: h1 * p1.y + h2 * p2.y + h3 * ( (p2.y - p0.y) / 2 ) + h4 * ( (p3.y - p1.y) / 2 )
   };
 }
 
@@ -249,6 +275,7 @@ export function computeCameraState(graph: RenderGraph, t: number) {
       const marginX = 0.5 / targetScale;
       const marginY = 0.5 / targetScale;
 
+
       const left = state.cx - DEADZONE_W;
       const right = state.cx + DEADZONE_W;
       const top = state.cy - DEADZONE_H;
@@ -267,44 +294,36 @@ export function computeCameraState(graph: RenderGraph, t: number) {
       targetCy = 0.5;
     }
 
-    // 3. 镜头物理（Scale 使用独立的更快参数）
-    // Scale 专用：快速但绝对稳定（临界阻尼）
-    const scaleStiffness = camConfig.stiffness * 1.8; // 进一步提速
-    // 临界阻尼公式：D = 2 * sqrt(k)，确保零震荡
-    const scaleDamping = 2 * Math.sqrt(scaleStiffness);
+    // 3. 镜头物理 (Scale 与 Position 异步，创造高级电影感)
+    
+    // --- Scale 物理优化 ---
+    // 退出缩放 (targetScale=1) 时稍微增加刚度，让全局视图回归更利索
+    const isZoomingOut = targetScale < state.scale;
+    const currentScaleStiffness = isZoomingOut ? camConfig.stiffness * 1.5 : camConfig.stiffness * 1.2;
+    // 临界阻尼：D = 2 * sqrt(k)，确保绝对无回弹
+    const currentScaleDamping = 2 * Math.sqrt(currentScaleStiffness) * 1.1; 
     
     const fS =
-      -scaleStiffness * (state.scale - targetScale) -
-      scaleDamping * state.vs;
+      -currentScaleStiffness * (state.scale - targetScale) -
+      currentScaleDamping * state.vs;
     state.vs += fS * factor;
-    {
-      const maxVs = 3.0; // 提高速度上限以配合更高刚度
-      if (state.vs > maxVs) state.vs = maxVs;
-      else if (state.vs < -maxVs) state.vs = -maxVs;
-    }
     state.scale += state.vs * factor;
 
-    // Position 保持原有的平滑参数
+    // --- Position 物理优化 ---
+    // 降低位置刚度，使其落后于缩放进度，形成“先放大，后对焦”的视觉深度感
+    const posStiffness = camConfig.stiffness * 0.4; 
+    const posDamping = 2 * Math.sqrt(posStiffness) * 1.2; // 略微过阻尼，极其平滑
+    
     const fX =
-      -camConfig.stiffness * (state.cx - targetCx) -
-      camConfig.damping * state.vx;
+      -posStiffness * (state.cx - targetCx) -
+      posDamping * state.vx;
     state.vx += fX * factor;
-    {
-      const maxV = 2.8;
-      if (state.vx > maxV) state.vx = maxV;
-      else if (state.vx < -maxV) state.vx = -maxV;
-    }
     state.cx += state.vx * factor;
 
     const fY =
-      -camConfig.stiffness * (state.cy - targetCy) -
-      camConfig.damping * state.vy;
+      -posStiffness * (state.cy - targetCy) -
+      posDamping * state.vy;
     state.vy += fY * factor;
-    {
-      const maxV = 2.8;
-      if (state.vy > maxV) state.vy = maxV;
-      else if (state.vy < -maxV) state.vy = -maxV;
-    }
     state.cy += state.vy * factor;
 
     currentT = nextT;

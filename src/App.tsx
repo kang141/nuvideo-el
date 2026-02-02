@@ -10,6 +10,8 @@ import { webcamRecorder } from "./recorder/webcam-capture";
 import { cn } from "@/lib/utils";
 import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
+import { motion, AnimatePresence } from "framer-motion";
+import { CountdownOverlay } from "./components/Common/CountdownOverlay";
 
 function App() {
   const [appState, setAppState] = useState<AppState>("home");
@@ -30,6 +32,8 @@ function App() {
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
   );
+  const [isCountingDown, setIsCountingDown] = useState(false);
+  const countdownDataRef = useRef<any>(null);
 
   const handleUpdateAutoZoom = (val: boolean) => {
     setAutoZoomEnabled(val);
@@ -118,7 +122,7 @@ function App() {
     return () => clearInterval(interval);
   }, [recordingState.isRecording, recordingState.isPaused]);
 
-  const handleStartRecording = async (
+  const handleStartRecording = useCallback(async (
     sourceId: string,
     quality: QualityConfig,
     format: "video" | "gif" = "video",
@@ -133,21 +137,21 @@ function App() {
       deviceId: string | null;
     },
   ) => {
+    // 存储参数准备在倒计时结束后启动
+    countdownDataRef.current = { sourceId, quality, format, autoZoom, audioConfig, webcamConfig };
+    setIsCountingDown(true);
+  }, []);
+
+  const startActualRecording = async () => {
+    const data = countdownDataRef.current;
+    if (!data) return;
+    const { sourceId, quality, format, autoZoom, audioConfig, webcamConfig } = data;
+
     try {
-      console.log(
-        "[App] Initializing capture for source:",
-        sourceId,
-        "Quality:",
-        quality.label,
-        "Format:",
-        format,
-        "Audio:",
-        audioConfig,
-      );
+      console.log("[App] Starting actual recording after countdown...");
       await mouseTracker.syncClock();
       mouseTracker.start();
-      // 并行启动全量录制管线 (视频、音频、摄像头)
-      // 这确保了在视频引擎初始化（约 0.5-1s）期间，音频和鼠标已经开始采集，不再丢失开头内容。
+      
       const [startResult, audioT0, webcamT0] = await Promise.all([
         screenRecorder.start(sourceId, quality, audioConfig),
         nativeAudioRecorder.start(sourceId, audioConfig),
@@ -159,13 +163,7 @@ function App() {
       if (startResult?.t0) {
         readyOffsetRef.current = startResult.readyOffset;
         mouseTracker.align(startResult.t0);
-
-        // 计算音画同步延迟（考虑到并行启动）
-        // 如果 audioT0 小于 startResult.t0，说明音频比视频 Ready 更早开始
-        audioDelayRef.current =
-          (audioT0 || performance.now()) - startResult.t0 + 150;
-
-        // 计算摄像头同步延迟
+        audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0 + 150;
         webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
       }
 
@@ -178,15 +176,12 @@ function App() {
         autoZoom,
       });
 
+      setIsCountingDown(false);
       transitionTo("recording");
     } catch (err) {
       console.error("Failed to start recording:", err);
-      setRecordingState((prev) => ({
-        ...prev,
-        isRecording: false,
-        duration: 0,
-        isPaused: false,
-      }));
+      setIsCountingDown(false);
+      setRecordingState((prev) => ({ ...prev, isRecording: false }));
       alert("录制启动失败");
     }
   };
@@ -465,52 +460,83 @@ function App() {
   return (
     <div
       className={cn(
-        "relative flex h-screen w-screen flex-col overflow-hidden font-sans",
-        // 移除所有 transition 过渡，实现瞬间切换
+        "relative flex h-screen w-screen flex-col overflow-hidden font-sans transition-all duration-700",
         appState === "home" ? "mesh-gradient" : "",
         appState === "recording"
           ? "bg-transparent border-0 shadow-none"
           : "bg-neutral-950 rounded-[24px] border border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]",
+        isCountingDown ? "scale-[0.98] blur-[15px] saturate-[0.8]" : "scale-100 blur-0"
       )}
     >
       <div className="flex h-full w-full flex-col relative z-10" key={language}>
+        <AnimatePresence mode="wait">
         {/* 1. 录制模式 */}
-        {appState === "recording" && (
-          <div className="flex h-full w-full items-center justify-center">
-            <RecordingStatusBar
-              duration={recordingState.duration}
-              isPaused={recordingState.isPaused}
-              onStop={handleStopRecording}
-              onPause={handlePauseRecording}
-              onResume={handleResumeRecording}
-              language={language}
-            />
-          </div>
-        )}
+          {appState === "recording" && (
+            <motion.div 
+              key="recording"
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="flex h-full w-full items-center justify-center"
+            >
+              <RecordingStatusBar
+                duration={recordingState.duration}
+                isPaused={recordingState.isPaused}
+                onStop={handleStopRecording}
+                onPause={handlePauseRecording}
+                onResume={handleResumeRecording}
+                language={language}
+              />
+            </motion.div>
+          )}
 
-        {/* 2. 首页 */}
-        {appState === "home" && (
-          <HomePage
-            onStartRecording={handleStartRecording}
-            autoZoomEnabled={autoZoomEnabled}
-            onToggleAutoZoom={handleUpdateAutoZoom}
-            language={language}
-            setLanguage={handleUpdateLanguage}
-          />
-        )}
+          {/* 2. 首页 */}
+          {appState === "home" && (
+            <motion.div 
+              key="home"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, filter: 'blur(10px)' }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="h-full w-full"
+            >
+              <HomePage
+                onStartRecording={handleStartRecording}
+                autoZoomEnabled={autoZoomEnabled}
+                onToggleAutoZoom={handleUpdateAutoZoom}
+                language={language}
+                setLanguage={handleUpdateLanguage}
+              />
+            </motion.div>
+          )}
 
-        {/* 3. 编辑器 */}
-        {appState === "editor" && (
-          <EditorPage
-            renderGraph={renderGraph}
-            onBack={handleBackToHome}
-            language={language}
-            setLanguage={handleUpdateLanguage}
-            autoZoomEnabled={autoZoomEnabled}
-            onToggleAutoZoom={handleUpdateAutoZoom}
-          />
-        )}
+          {/* 3. 编辑器 */}
+          {appState === "editor" && (
+            <motion.div 
+              key="editor"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="h-full w-full"
+            >
+              <EditorPage
+                renderGraph={renderGraph}
+                onBack={handleBackToHome}
+                language={language}
+                setLanguage={handleUpdateLanguage}
+                autoZoomEnabled={autoZoomEnabled}
+                onToggleAutoZoom={handleUpdateAutoZoom}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {isCountingDown && (
+          <CountdownOverlay onComplete={startActualRecording} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

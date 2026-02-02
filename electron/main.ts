@@ -347,7 +347,7 @@ class SessionRecorder {
           });
         }
 
-        // 3. 实时坐标轮询
+        // 3. 实时坐标轮询 (同步 50FPS 频率，约 20ms)
         this.mousePollTimer = setInterval(() => {
           if (!win) return;
           const point = screen.getCursorScreenPoint();
@@ -358,7 +358,7 @@ class SessionRecorder {
 
           this.logMouseEvent({ type: 'move', x, y });
           win.webContents.send('mouse-update', { x, y, t });
-        }, 30);
+        }, 20);
 
         // 如果 3 秒后还没看到帧，视为启动失败
         setTimeout(() => {
@@ -457,9 +457,9 @@ function buildFFmpegArgs(videoInputFiles: string[][], outputPath: string) {
   // 2. 视频编码
   args.push(
     '-c:v', 'libx264',
-    '-preset', 'ultrafast',
+    '-preset', 'veryfast', // 从 ultrafast 升级到 veryfast，在保证实时性的前提下显著提升画质
     '-tune', 'zerolatency',
-    '-crf', '25',
+    '-crf', '22', // 降低 CRF (从 25 到 22) 以提升基础录制质量
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
     '-threads', '0',
     '-pix_fmt', 'yuv420p',
@@ -497,7 +497,7 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   // --- 尝试方案 A: ddagrab (现代引擎) ---
   const videoInputDda = [
-    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '500M', '-i', 'desktop']
+    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '1000M', '-i', 'desktop']
   ];
   
   const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
@@ -722,7 +722,61 @@ app.on('activate', () => {
   }
 })
 
+// --- 智能缓存管理 (CleanUp Manager) ---
+class CleanUpManager {
+  static async runSilentCleanup() {
+    try {
+      const sessionsRootDir = path.join(app.getPath('temp'), 'nuvideo_sessions');
+      if (!fs.existsSync(sessionsRootDir)) return;
+
+      const sessionFolders = fs.readdirSync(sessionsRootDir);
+      if (sessionFolders.length === 0) return;
+
+      // 获取所有 Session 的元数据
+      const sessionStats = sessionFolders.map(folder => {
+        const folderPath = path.join(sessionsRootDir, folder);
+        const stats = fs.statSync(folderPath);
+        return { folder, folderPath, mtime: stats.mtimeMs };
+      });
+
+      // 按时间倒序排列 (最新的在前)
+      sessionStats.sort((a, b) => b.mtime - a.mtime);
+
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const MAX_SESSIONS = 10;
+      const now = Date.now();
+
+      const toDelete = sessionStats.filter((session, index) => {
+        const isTooOld = (now - session.mtime) > THREE_DAYS_MS;
+        const isTooMany = index >= MAX_SESSIONS;
+        // 如果正在录制的 session (当前 session) 的文件夹名被包含在内，跳过它
+        if (currentSession && session.folder === currentSession.sessionId) return false;
+        
+        return isTooOld || isTooMany;
+      });
+
+      if (toDelete.length > 0) {
+        console.log(`[CleanUp] Found ${toDelete.length} stale sessions to purge...`);
+        for (const session of toDelete) {
+          try {
+            // 递归删除 Session 文件夹
+            fs.rmSync(session.folderPath, { recursive: true, force: true });
+          } catch (e) {
+            console.warn(`[CleanUp] Failed to delete session ${session.folder}:`, e);
+          }
+        }
+        console.log('[CleanUp] Purge complete.');
+      }
+    } catch (err) {
+      console.error('[CleanUp] Critical error during startup cleanup:', err);
+    }
+  }
+}
+
 app.whenReady().then(() => {
+  // 启动时执行静默清理
+  CleanUpManager.runSilentCleanup();
+  
   // --- 现代协议处理器 (Electron 25+) ---
   // 处理 nuvideo://load/filename 格式，将其映射到临时目录
   // 注册协议处理器

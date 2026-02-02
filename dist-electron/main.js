@@ -317,7 +317,7 @@ class SessionRecorder {
           const y = (point.y - this.bounds.y) / this.bounds.height;
           this.logMouseEvent({ type: "move", x, y });
           win.webContents.send("mouse-update", { x, y, t });
-        }, 30);
+        }, 20);
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
@@ -400,11 +400,13 @@ function buildFFmpegArgs(videoInputFiles, outputPath) {
     "-c:v",
     "libx264",
     "-preset",
-    "ultrafast",
+    "veryfast",
+    // 从 ultrafast 升级到 veryfast，在保证实时性的前提下显著提升画质
     "-tune",
     "zerolatency",
     "-crf",
-    "25",
+    "22",
+    // 降低 CRF (从 25 到 22) 以提升基础录制质量
     "-movflags",
     "frag_keyframe+empty_moov+default_base_moof",
     "-threads",
@@ -435,7 +437,7 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
   currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
   const recordingPath = currentSession.videoPath;
   const videoInputDda = [
-    ["-f", "ddagrab", "-framerate", "60", "-draw_mouse", "0", "-output_idx", outputIdx.toString(), "-rtbufsize", "500M", "-i", "desktop"]
+    ["-f", "ddagrab", "-framerate", "60", "-draw_mouse", "0", "-output_idx", outputIdx.toString(), "-rtbufsize", "1000M", "-i", "desktop"]
   ];
   const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
   const scriptPath = path$1.join(process.env.APP_ROOT || "", "resources", "scripts", "mouse-monitor.ps1");
@@ -600,7 +602,46 @@ app.on("activate", () => {
     createWindow();
   }
 });
+class CleanUpManager {
+  static async runSilentCleanup() {
+    try {
+      const sessionsRootDir = path$1.join(app.getPath("temp"), "nuvideo_sessions");
+      if (!fs$1.existsSync(sessionsRootDir)) return;
+      const sessionFolders = fs$1.readdirSync(sessionsRootDir);
+      if (sessionFolders.length === 0) return;
+      const sessionStats = sessionFolders.map((folder) => {
+        const folderPath = path$1.join(sessionsRootDir, folder);
+        const stats = fs$1.statSync(folderPath);
+        return { folder, folderPath, mtime: stats.mtimeMs };
+      });
+      sessionStats.sort((a, b) => b.mtime - a.mtime);
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1e3;
+      const MAX_SESSIONS = 10;
+      const now = Date.now();
+      const toDelete = sessionStats.filter((session, index) => {
+        const isTooOld = now - session.mtime > THREE_DAYS_MS;
+        const isTooMany = index >= MAX_SESSIONS;
+        if (currentSession && session.folder === currentSession.sessionId) return false;
+        return isTooOld || isTooMany;
+      });
+      if (toDelete.length > 0) {
+        console.log(`[CleanUp] Found ${toDelete.length} stale sessions to purge...`);
+        for (const session of toDelete) {
+          try {
+            fs$1.rmSync(session.folderPath, { recursive: true, force: true });
+          } catch (e) {
+            console.warn(`[CleanUp] Failed to delete session ${session.folder}:`, e);
+          }
+        }
+        console.log("[CleanUp] Purge complete.");
+      }
+    } catch (err) {
+      console.error("[CleanUp] Critical error during startup cleanup:", err);
+    }
+  }
+}
 app.whenReady().then(() => {
+  CleanUpManager.runSilentCleanup();
   protocol.registerFileProtocol("nuvideo", (request, callback) => {
     const url = request.url;
     if (url.startsWith("nuvideo://load/")) {

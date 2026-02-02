@@ -32,7 +32,6 @@ export function useVideoRenderer({
   const frameManagerRef = useRef<VideoFrameManager | null>(null);
   const webcamFrameManagerRef = useRef<VideoFrameManager | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
-  const lastDrawnTsRef = useRef<number>(-1);
   // 核心修复：视频帧缓存备份，彻底消除 seek 时的黑屏闪烁
   const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null); 
   const webcamCacheRef = useRef<HTMLCanvasElement | null>(null);
@@ -50,7 +49,6 @@ export function useVideoRenderer({
       offscreenRef.current.height = EDITOR_CANVAS_SIZE.height;
     }
 
-    const img = bgImageRef.current;
     const canvas = offscreenRef.current;
     const oCtx = canvas.getContext('2d');
     if (!oCtx) return;
@@ -58,8 +56,10 @@ export function useVideoRenderer({
     const { width: W, height: H } = EDITOR_CANVAS_SIZE;
     oCtx.clearRect(0, 0, W, H);
 
-    // 1. 绘制底图
-    oCtx.drawImage(img, 0, 0, W, H);
+    // 1. 导出模式下必须在 Canvas 中绘制背景图，否则最终视频将是黑底
+    if (isExporting && bgImageRef.current) {
+       oCtx.drawImage(bgImageRef.current, 0, 0, W, H);
+    }
 
     // 2. 根据视频比例计算布局并绘制窗口阴影 + 窗口主体
     const layout = calculateLayout(W, H, vw, vh);
@@ -135,7 +135,7 @@ export function useVideoRenderer({
       const video = videoRef.current;
       if (video) requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
     };
-  }, [bgCategory, bgFile]);
+  }, [bgCategory, bgFile, isExporting]); // 增加 isExporting 依赖，确保导出开始时重绘离屏层
 
   // 启动 WebCodecs FrameManager
   useEffect(() => {
@@ -297,8 +297,12 @@ export function useVideoRenderer({
     const canvas = canvasRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) return;
 
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
+    
+    // 关键修正：必须每一帧手动清空画布，否则由于开启了 alpha 模式且背景由 CSS 提供，
+    // 每一帧的绘制都会在上一帧的基础上叠加，导致画面“糊掉”或出现重影。
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const renderGraph = renderGraphRef.current;
     if (!renderGraph) return;
@@ -306,8 +310,9 @@ export function useVideoRenderer({
     const camera = computeCameraState(renderGraph, timestampMs);
     const s = camera.scale;
 
-    // --- A. 绘制预渲染的背景层 ---
+    // --- A. 绘制预渲染的背景/窗口层 ---
     ctx.save();
+    // 如果正在导出，offscreen 已经包含了壁纸；如果是预览，offscreen 只有窗口装饰
     ctx.drawImage(offscreenRef.current, 0, 0);
     ctx.restore();
 
@@ -332,42 +337,39 @@ export function useVideoRenderer({
     const manager = frameManagerRef.current;
     let frameRendered = false;
 
-    // 渲染策略：优先使用 WebCodecs 解码出的高质量 Frame，并同步更新缓存
-    if (manager) {
+    // --- 核心性能决策策略 ---
+    // 1. 如果正在导出，则必须使用 WebCodecs 解码以保证帧精准度和最高画质
+    if (isExporting && manager) {
       try {
         const frame = await manager.getFrame(timestampMs);
         if (frame) {
           ctx.drawImage(frame, 0, 0, dw, dh);
-          lastDrawnTsRef.current = timestampMs;
           frameRendered = true;
-          
-          // 更新缓存
+          // 更新缓存供预览瞬间回退
           if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
           if (mainVideoCacheRef.current.width !== dw) mainVideoCacheRef.current.width = dw;
           if (mainVideoCacheRef.current.height !== dh) mainVideoCacheRef.current.height = dh;
           mainVideoCacheRef.current.getContext('2d')?.drawImage(frame, 0, 0, dw, dh);
-        } else if (video.readyState >= 2) {
-          ctx.drawImage(video, 0, 0, dw, dh);
-          frameRendered = true;
-
-          // 更新缓存
-          if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
-          if (mainVideoCacheRef.current.width !== dw) mainVideoCacheRef.current.width = dw;
-          if (mainVideoCacheRef.current.height !== dh) mainVideoCacheRef.current.height = dh;
-          mainVideoCacheRef.current.getContext('2d')?.drawImage(video, 0, 0, dw, dh);
         }
-      } catch { 
-        if (video.readyState >= 2) {
-          ctx.drawImage(video, 0, 0, dw, dh);
-          frameRendered = true;
-        }
+      } catch (e) {
+        console.warn('[Renderer] WebCodecs export frame failed:', e);
       }
-    } else if (video.readyState >= 2) {
+    } 
+    // 2. 如果是实时预览，则优先使用原生 Video 标签进行绘制
+    // 原生 Video 走硬件解码管线，且由浏览器高度优化，不会阻塞 JS 主线程
+    else if (video.readyState >= 2) {
       ctx.drawImage(video, 0, 0, dw, dh);
       frameRendered = true;
+      
+      // 在预览间隔中尝试预加载帧缓存
+      if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
+      if (mainVideoCacheRef.current.width !== dw) {
+         mainVideoCacheRef.current.width = dw; 
+         mainVideoCacheRef.current.height = dh;
+      }
     }
 
-    // 核心跳转兜底：如果在 Seek 过程中，视频数据断开，则渲染最后一帧缓存，避免黑闪
+    // 3. 核心跳转兜底：如果在 Seek 过程中或解码掉帧，回退到最后一帧有效缓存，彻底消除黑屏
     if (!frameRendered && mainVideoCacheRef.current) {
       ctx.drawImage(mainVideoCacheRef.current, 0, 0, dw, dh);
     }
@@ -418,25 +420,12 @@ export function useVideoRenderer({
       };
 
       if (adjWebcamTs >= 0) {
-        const webcamManager = webcamFrameManagerRef.current;
-        const cacheCanvas = webcamCacheRef.current || document.createElement('canvas');
-        if (!webcamCacheRef.current) webcamCacheRef.current = cacheCanvas;
-
-        let webcamProcessed = false;
-        if (webcamManager) {
-          try {
-            const frame = await webcamManager.getFrame(adjWebcamTs);
-            if (frame) { drawPip(frame); webcamProcessed = true; }
-          } catch {}
-        }
-
-        if (!webcamProcessed) {
-          const isReady = webcamVideo.readyState >= 2;
-          if (isReady && webcamVideo.videoWidth > 0) {
-            if (cacheCanvas.width !== webcamVideo.videoWidth) { cacheCanvas.width = webcamVideo.videoWidth; cacheCanvas.height = webcamVideo.videoHeight; }
-            cacheCanvas.getContext('2d')?.drawImage(webcamVideo, 0, 0);
-          }
-          if (isReady || (cacheCanvas.width > 0)) drawPip(isReady ? webcamVideo : cacheCanvas);
+        const isReady = webcamVideo.readyState >= 2;
+        if (isReady && webcamVideo.videoWidth > 0) {
+          drawPip(webcamVideo);
+        } else if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
+          // 兜底使用缓存
+          drawPip(webcamCacheRef.current);
         }
       }
     }
@@ -447,12 +436,20 @@ export function useVideoRenderer({
     if (!isReady || isExporting) return;
     const canvas = canvasRef.current;
     if (canvas) { 
-      // 性能优化：在预览模式下锁定 DPR 为 1.5，避免 4K 屏幕导致的过度像素填充负载
-      const dpr = 1.5;
+      // 性能优化：在预览模式下使用 1.0 DPR。
+      // 因为 CSS 已经应用了 max-width[1024px]，2.5K 的画布会导致严重的像素填充率瓶颈和下采样开销。
+      const dpr = 1.0;
       canvas.width = EDITOR_CANVAS_SIZE.width * dpr; 
       canvas.height = EDITOR_CANVAS_SIZE.height * dpr;
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.scale(dpr, dpr);
+      const ctx = canvas.getContext('2d', { 
+        alpha: true,
+        willReadFrequently: false 
+      }); 
+      if (ctx) {
+        ctx.scale(dpr, dpr);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+      }
     }
     const video = videoRef.current;
     if (!video) return;
