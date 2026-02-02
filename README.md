@@ -10,9 +10,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Status-MVP-orange.svg" alt="Project Status">
+  <img src="https://img.shields.io/badge/Status-Feature%20Complete-green.svg" alt="Project Status">
   <img src="https://img.shields.io/badge/Platform-Windows-blue.svg" alt="Platform">
   <img src="https://img.shields.io/badge/License-AGPLv3%20%2B%20Commercial-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/Version-1.0.3-brightgreen.svg" alt="Version">
 </p>
 
 ---
@@ -30,24 +31,45 @@
 
 ## 简介
 
-**nuvideo-el** 是一个面向 Windows 的录屏与演示视频制作工具。它的目标是：让教程/产品演示视频更清晰、更好看（例如自动跟随鼠标区域、提供鼠标强调效果），同时保持尽量简单的工作流。
+**nuvideo-el** 是一个面向 Windows 的现代化屏幕录制与视频编辑工具。它的目标是：让教程/产品演示视频制作更专业、更高效，同时保持简洁直观的用户体验。
 
-项目目前处于 **MVP 阶段**：核心录制、预览与导出链路已经跑通，功能还在持续完善中。作为独立开发者的业余项目，欢迎试用与反馈。
+项目目前处于 **功能完善阶段**：核心录制、编辑、导出链路已稳定运行，持续优化性能和用户体验。作为独立开发者的项目，欢迎试用与反馈。
 
-## 功能（当前）
+## 功能特性
 
-- **录制（FFmpeg Sidecar）**：屏幕录制由 FFmpeg 负责，鼠标单独采集，便于后期渲染效果。
-- **鼠标强调效果**：支持基础的鼠标高亮/点击反馈（效果会继续迭代）。
-- **预览与编辑**：基于 Canvas 的预览渲染与时间轴（MVP 版）。
-- **导出 MP4**：使用 WebCodecs + `mp4-muxer` 导出（性能取决于设备与驱动环境）。
+### 🎯 核心功能
 
-## 技术栈
+- **多轨同步录制**：支持屏幕、摄像头、音频同步录制
 
-- Electron
-- React / TypeScript / Vite
-- Canvas 渲染（预览与效果）
-- WebCodecs API / mp4-muxer（导出）
-- Radix UI / Tailwind CSS
+- **鼠标轨迹追踪**：精确记录鼠标移动和点击轨迹，支持强调效果
+
+### 🚀 最新改进
+
+- **倒计时覆盖层**：录制前倒计时功能
+- **UI 视觉工程引擎**：现代化界面设计，Apple/Linear 风格
+- **性能优化**：优化鼠标采集频率与录屏帧率同步
+
+### 🛠️ 技术特性
+
+- **实时预览**：基于 `requestVideoFrameCallback` 的高性能预览
+- **物理动画系统**：Spring Physics 驱动的流畅动画效果
+- **智能缩放**：自动跟随鼠标区域的智能缩放功能
+
+## 技术架构
+
+### 🏗️ 核心技术栈
+
+- **桌面框架**：Electron
+- **前端框架**：React 18 + TypeScript + Vite
+- **UI 组件库**：Radix UI + 自定义组件 + Tailwind CSS
+- **视频处理**：FFmpeg + WebCodecs API + mp4-muxer
+- **动画系统**：Framer Motion + 自定义 Spring Physics
+
+### 🔧 核心模块
+
+- **录制模块**：屏幕录制、音频采集、摄像头支持、鼠标追踪
+- **编辑器模块**：Canvas 预览、时间轴编辑、导出界面
+- **核心引擎**：视频解码、视频分离、智能缩放、物理动画
 
 ---
 
@@ -57,7 +79,7 @@
 
 - Windows 10/11
 - Node.js（建议 18+）
-- FFmpeg（需要在系统可访问路径中）
+- FFmpeg
 
 ### 本地开发
 
@@ -76,15 +98,27 @@ npm run build
 
 ---
 
-## Roadmap（计划）
+## Roadmap（开发计划）
 
-下面是一些我想逐步补齐的能力（顺序可能会调整）：
+### ✅ 已完成功能
 
-- [ ] 导出性能与稳定性优化
-- [ ] 基础剪切（Trim/Split）
-- [ ] GIF/WEBM 导出
-- [ ] 音频：系统音频 / 麦克风录制与导出
-- [ ] 更多鼠标/镜头预设与模板
+- [x] **流式视频导出** - 解决长视频内存溢出问题
+- [x] **倒计时覆盖层** - 录制前倒计时功能
+- [x] **UI 视觉工程引擎** - 现代化界面设计
+- [x] **性能优化** - 鼠标采集与帧率同步优化
+- [x] **音频和摄像** - 音频区分和电脑摄像
+
+### 🔄 进行中功能
+
+- [ ] **导出性能与稳定性优化** - 持续优化导出流程
+- [ ] **基础剪切（Trim/Split）** - 完善视频剪辑功能
+- [ ] **音频系统增强** - 系统音频/麦克风录制优化
+
+### 📋 计划功能
+
+- [ ] **更多鼠标/镜头预设** - 丰富的效果模板
+- [ ] **云端同步** - 项目文件云端存储
+- [ ] **AI 辅助功能** - 智能剪辑和效果推荐
 
 ---
 
