@@ -9,7 +9,6 @@ export class MouseTracker {
   private events: NuMouseEvent[] = [];
   private isTracking: boolean = false;
   private timeOffsetMs: number = 0;
-  private baseTimeMain: number = 0;
   private lastEventT: number = 0;
 
   constructor() {
@@ -49,21 +48,20 @@ export class MouseTracker {
     });
   }
 
-  // 开始追踪，但先不设置 baseTimeMain，等待录制就绪信号
+  // 开始追踪
   start() {
     this.events = [];
     this.isTracking = true;
-    this.baseTimeMain = 0;
     this.lastEventT = 0;
     console.log('[MouseTracker] Waiting for video alignment...');
   }
 
   /**
    * 物理对齐：由 ScreenRecorder 调用，标记视频流真正开始的第一秒
+   * 注意：此功能当前已移除，保留方法签名以保持接口兼容性
    */
   align(t0Main: number) {
-    this.baseTimeMain = t0Main;
-    console.log('[MouseTracker] Timeline aligned with Video start:', t0Main);
+    console.log('[MouseTracker] Timeline alignment called with:', t0Main, '(feature removed)');
   }
 
   stop(): NuMouseEvent[] {
@@ -99,10 +97,7 @@ export class MouseTracker {
     console.log('[MouseTracker] Clock sync offset(ms):', this.timeOffsetMs.toFixed(3));
   }
 
-  private getRelativeTime(): number | null {
-    if (!this.isTracking || !this.baseTimeMain) return null;
-    return (performance.now() + this.timeOffsetMs) - this.baseTimeMain;
-  }
+
 }
 
 export const mouseTracker = new MouseTracker();

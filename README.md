@@ -20,9 +20,10 @@
 ## 界面预览
 
 <p align="center">
-  <img src="./pho2.png" width="800" alt="NuVideo Editor Panel">
+  <img src="./public/home.png" width="800" alt="NuVideo Home Interface">
   <br><br>
-  <img src="https://github.com/user-attachments/assets/ffcc9de2-98ba-4d34-8041-6a60682bd8b1" width="800" alt="NuVideo Demo Animation">
+  <img src="./public/edit.png" width="800" alt="NuVideo Editor Panel">
+  <br><br>
 </p>
 
 ---
