@@ -74,6 +74,10 @@ export function useVideoExport({
     const width = canvas.width % 2 === 0 ? canvas.width : canvas.width - 1;
     const height = canvas.height % 2 === 0 ? canvas.height : canvas.height - 1;
 
+    // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
+    let videoEncoder: VideoEncoder | undefined = undefined;
+    let audioEncoder: AudioEncoder | null = null;
+
     try {
       isExportingRef.current = true;
       setIsExporting(true);
@@ -97,11 +101,11 @@ export function useVideoExport({
       isGif = finalPath!.toLowerCase().endsWith('.gif');
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
-      // 2. 预解码并混合音轨
+      // 2. 预解码并混合音轨（GIF模式跳过音频处理）
       let decodedAudio: AudioBuffer | null = null;
       console.log('[useVideoExport] Entering audio processing block...');
       
-      if (renderGraph?.audio?.tracks) {
+      if (renderGraph?.audio?.tracks && !isGif) {
         try {
           const audioCtx = new AudioContext({ sampleRate: 48000 });
           const totalSamples = Math.ceil(durationSeconds * 48000);
@@ -147,8 +151,12 @@ export function useVideoExport({
                 const sourceData = trackBuffer.getChannelData(channel);
                 const copyLen = Math.min(sourceData.length, targetData.length - startOffset);
                 
+                // 添加边界检查，防止数组越界
                 for (let i = 0; i < copyLen; i++) {
-                  targetData[startOffset + i] += sourceData[i] * vol;
+                  const targetIdx = startOffset + i;
+                  if (targetIdx >= 0 && targetIdx < targetData.length) {
+                    targetData[targetIdx] += sourceData[i] * vol;
+                  }
                 }
               }
               hasAnyAudio = true;
@@ -197,15 +205,36 @@ export function useVideoExport({
             console.log('[useVideoExport] Selected codec:', codec);
             break;
           }
-        } catch {}
+        } catch (err) {
+          console.warn(`[useVideoExport] Codec ${codec} not supported:`, err);
+        }
       }
       
       if (!videoConfig) {
-        videoConfig = { 
-          codec: isGif ? 'vp09.00.10.08' : 'avc1.42E034', 
-          width, height, bitrate, framerate: fps, 
-          hardwareAcceleration: 'prefer-software' 
-        };
+        // 额外尝试基本配置，确保至少有一个可用的编码器
+        try {
+          // 尝试使用基本的VP8编码器（通常在大多数系统上可用）
+          const basicConfig: VideoEncoderConfig = { 
+            codec: 'vp8', width, height, bitrate, framerate: fps, 
+            hardwareAcceleration: 'prefer-software' 
+          };
+          const basicSupport = await VideoEncoder.isConfigSupported(basicConfig);
+          if (basicSupport.supported) {
+            videoConfig = basicConfig;
+            console.log('[useVideoExport] Selected fallback codec: vp8');
+          }
+        } catch (err) {
+          console.warn('[useVideoExport] Basic VP8 codec not supported:', err);
+        }
+        
+        // 如果仍然没有找到合适的配置，使用默认配置
+        if (!videoConfig) {
+          videoConfig = { 
+            codec: isGif ? 'vp09.00.10.08' : 'avc1.42E034', 
+            width, height, bitrate, framerate: fps, 
+            hardwareAcceleration: 'prefer-software' 
+          };
+        }
       }
 
       // 4. 打开流与 Muxer
@@ -239,7 +268,7 @@ export function useVideoExport({
       const muxer = new Muxer({
         target: muxerTarget as any,
         video: { codec: (videoConfig.codec.startsWith('vp') ? 'vp9' : 'avc') as any, width, height, frameRate: fps },
-        audio: decodedAudio ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
+        audio: decodedAudio && !isGif ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
         fastStart: 'in-memory', // 改为内存缓冲模式，对于短视频（数分钟内）来说更稳定，避免回填失败
         firstTimestampBehavior: 'offset',
       });
@@ -247,7 +276,7 @@ export function useVideoExport({
 
       let encoderError: Error | null = null;
       let encoderOutputCount = 0;
-      const videoEncoder = new VideoEncoder({
+      videoEncoder = new VideoEncoder({
         output: (chunk, meta) => {
           encoderOutputCount++;
           muxer.addVideoChunk(chunk, meta);
@@ -259,8 +288,7 @@ export function useVideoExport({
       });
       videoEncoder.configure(videoConfig);
 
-      let audioEncoder: AudioEncoder | null = null;
-      if (decodedAudio) {
+      if (decodedAudio && !isGif) {
         audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (e) => console.error('[useVideoExport] AudioEncoder error:', e),
@@ -313,7 +341,7 @@ export function useVideoExport({
               return; 
             }
 
-            if (videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
+            if (videoEncoder && videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
               video.pause();
               while (videoEncoder.encodeQueueSize > 2) await new Promise(r => setTimeout(r, 10));
               video.play().catch(console.error);
@@ -321,7 +349,9 @@ export function useVideoExport({
 
             await renderFrame(meta.mediaTime * 1000);
             const vFrame = new VideoFrame(canvas, { timestamp: Math.round(meta.mediaTime * 1_000_000) });
-            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+            if (videoEncoder) {
+              videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+            }
             vFrame.close();
             encodedCount++;
 
@@ -373,7 +403,9 @@ export function useVideoExport({
           });
           await renderFrame(t * 1000);
           const vFrame = new VideoFrame(canvas, { timestamp: Math.round(t * 1_000_000) });
-          videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+          if (videoEncoder) {
+            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+          }
           vFrame.close();
           encodedCount++;
           
@@ -387,7 +419,7 @@ export function useVideoExport({
       }
 
       // 7. 音频编码处理
-      if (audioEncoder && decodedAudio) {
+      if (audioEncoder && decodedAudio && !isGif) {
         console.log('[useVideoExport] Processing audio track...');
         const chans = decodedAudio.numberOfChannels;
         const sr = decodedAudio.sampleRate;
@@ -417,15 +449,21 @@ export function useVideoExport({
             timestamp: Math.round((i / sr) * 1_000_000), 
             data 
           });
-          audioEncoder.encode(ad);
+          if (audioEncoder) {
+            audioEncoder.encode(ad);
+          }
           ad.close();
         }
-        await audioEncoder.flush();
-        audioEncoder.close();
+        if (audioEncoder) {
+          audioEncoder.flush(); // 不等待 flush，直接继续
+          audioEncoder.close();
+        }
       }
 
-      await videoEncoder.flush();
-      videoEncoder.close();
+      if (videoEncoder) {
+        videoEncoder.flush(); // 不等待 flush，直接继续
+        videoEncoder.close();
+      }
       console.log('[useVideoExport] VideoEncoder flushed and closed.');
       
       // 关键修复：muxer.finalize() 会触发大量异步的 onData 回调
@@ -460,6 +498,19 @@ export function useVideoExport({
 
     } catch (e: any) {
       console.error('[useVideoExport] Export failed:', e);
+      // 确保清理资源
+      try {
+        if (typeof videoEncoder !== 'undefined' && videoEncoder && videoEncoder.state !== 'closed') {
+          videoEncoder.flush();
+          videoEncoder.close();
+        }
+        if (typeof audioEncoder !== 'undefined' && audioEncoder && audioEncoder.state !== 'closed') {
+          audioEncoder.flush();
+          audioEncoder.close();
+        }
+      } catch (cleanupErr) {
+        console.error('[useVideoExport] Error during encoder cleanup:', cleanupErr);
+      }
       if (streamId) await ipc.invoke('close-export-stream', { streamId, deleteOnClose: true }).catch(() => {});
       return { success: false };
     } finally {

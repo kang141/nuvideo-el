@@ -10,27 +10,40 @@ export class MouseTracker {
   private isTracking: boolean = false;
   private timeOffsetMs: number = 0;
   private lastEventT: number = 0;
+  private eventLock: boolean = false; // 添加锁标志以防止竞态条件
 
   constructor() {
     (window as any).ipcRenderer.on('mouse-update', (_: any, point: { x: number, y: number, t?: number }) => {
       if (!this.isTracking) return;
       if (typeof point.t !== 'number') return;
 
+      // 使用简单的锁机制防止竞态条件
+      if (this.eventLock) return; // 如果正在处理事件，则跳过
+      this.eventLock = true;
+      
       const t = Math.max(point.t, this.lastEventT);
-
       this.lastEventT = t;
 
       this.events.push({
-
         t,
         x: point.x,
         y: point.y,
         type: 'move'
       });
+      
+      // 短暂延时后释放锁
+      setTimeout(() => {
+        this.eventLock = false;
+      }, 0);
     });
 
     (window as any).ipcRenderer.on('mouse-click', (_: any, payload: { type: 'down' | 'up', t: number }) => {
       if (!this.isTracking) return;
+      
+      // 使用简单的锁机制防止竞态条件
+      if (this.eventLock) return; // 如果正在处理事件，则跳过
+      this.eventLock = true;
+      
       const t = Math.max(payload.t, this.lastEventT);
       this.lastEventT = t;
 
@@ -45,6 +58,11 @@ export class MouseTracker {
           type: payload.type
         });
       }
+      
+      // 短暂延时后释放锁
+      setTimeout(() => {
+        this.eventLock = false;
+      }, 0);
     });
   }
 

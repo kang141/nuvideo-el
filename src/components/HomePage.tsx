@@ -219,6 +219,31 @@ export function HomePage({
     () => (localStorage.getItem(FORMAT_KEY) as any) || "video",
   );
   const [isStarting, setIsStarting] = useState(false);
+
+  // 当切换到GIF模式时，自动禁用音频和摄像头；切换回视频模式时，恢复之前的设置
+  useEffect(() => {
+    if (recordFormat === "gif") {
+      // 保存当前设置并禁用音频和摄像头
+      if (micEnabled) {
+        toggleMicrophone(false);
+      }
+      if (systemAudioEnabled) {
+        toggleSystemAudio();
+      }
+      if (webcamEnabled) {
+        toggleWebcam();
+      }
+    }
+  }, [
+    recordFormat,
+    micEnabled,
+    systemAudioEnabled,
+    webcamEnabled,
+    toggleMicrophone,
+    toggleSystemAudio,
+    toggleWebcam,
+  ]);
+
   const t = translations[language];
 
   const selectedQuality =
@@ -382,10 +407,15 @@ export function HomePage({
           <div className="flex items-center justify-between shrink-0">
             <div className="space-y-0.5">
               <h1 className="text-[15px] font-medium tracking-tight text-white">
-                {t.home.foundSources.replace('{count}', sources.length.toString())}
+                {t.home.foundSources.replace(
+                  "{count}",
+                  sources.length.toString(),
+                )}
               </h1>
               <p className="text-[12px] text-white/40">
-                {t.home.foundSources.includes('{count}') ? t.home.subtitle : t.home.foundSources}
+                {t.home.foundSources.includes("{count}")
+                  ? t.home.subtitle
+                  : t.home.foundSources}
               </p>
             </div>
             <div className="flex p-0.5 bg-white/[0.03] rounded-lg border border-white/[0.04] h-8">
@@ -466,7 +496,9 @@ export function HomePage({
                   >
                     <div className="flex items-center justify-between shrink-0">
                       <h3 className="text-[12px] text-white/50 uppercase tracking-wider">
-                        {sourceType === "screen" ? t.home.allScreens : t.home.runningApps}
+                        {sourceType === "screen"
+                          ? t.home.allScreens
+                          : t.home.runningApps}
                       </h3>
                       <button
                         onClick={(e) => {
@@ -572,183 +604,187 @@ export function HomePage({
                 {t.home.globalOptions}
               </h3>
               <div className="space-y-2">
-                {/* Mic Card */}
-                <div
-                  className={cn(
-                    "premium-card flex flex-col overflow-hidden transition-all duration-300",
-                    micEnabled
-                      ? "border-emerald-500/30 active-glow-emerald bg-emerald-500/[0.02]"
-                      : "bg-white/[0.01]",
-                  )}
-                >
-                  <button
-                    onClick={() => toggleMicrophone(!micEnabled)}
-                    className="w-full flex items-center gap-3 p-3 transition-colors"
-                  >
-                    <div
-                      className={cn(
-                        "w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-300 shadow-sm",
-                        micEnabled
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : "bg-white/[0.04] text-white/20",
-                      )}
-                    >
-                      <Mic size={14} />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <p
-                        className={cn(
-                          "text-[13px] transition-colors",
-                          micEnabled ? "text-white" : "text-white/40",
-                        )}
-                      >
-                        {t.editor.micAudio}
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "w-7 h-4 rounded-full p-0.5 transition-all duration-300",
-                        micEnabled ? "bg-emerald-500/25" : "bg-white/10",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "w-3 h-3 rounded-full bg-white transition-transform duration-300 shadow-sm",
-                          micEnabled ? "translate-x-3" : "translate-x-0",
-                        )}
-                      />
-                    </div>
-                  </button>
-                  {micEnabled && microphones.length > 0 && (
-                    <div className="px-3 pb-3 pt-0">
-                      <select
-                        value={selectedMicrophone || ""}
-                        onChange={(e) => selectMicrophone(e.target.value)}
-                        className="w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-2.5 py-1.5 text-[12px] text-white/60 outline-none hover:bg-white/[0.05] transition-colors"
-                      >
-                        {microphones.map((mic) => (
-                          <option
-                            key={mic.deviceId}
-                            value={mic.deviceId}
-                            className="bg-[#0a0a0a]"
-                          >
-                            {mic.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
-                {/* System Audio & Webcam */}
-                <div className="flex flex-col gap-2">
+                {/* Mic Card - Only show in video mode */}
+                {recordFormat !== "gif" && (
                   <div
                     className={cn(
-                      "premium-card transition-all duration-300 px-4 py-3 flex items-center gap-3",
-                      systemAudioEnabled
-                        ? "border-blue-500/30 active-glow-blue bg-blue-500/[0.02]"
+                      "premium-card flex flex-col overflow-hidden transition-all duration-300",
+                      micEnabled
+                        ? "border-emerald-500/30 active-glow-emerald bg-emerald-500/[0.02]"
                         : "bg-white/[0.01]",
                     )}
                   >
-                    <div
-                      className={cn(
-                        "w-8 h-8 rounded-xl flex items-center justify-center transition-all shadow-sm",
-                        systemAudioEnabled
-                          ? "bg-blue-500/20 text-blue-400"
-                          : "bg-white/[0.04] text-white/20",
-                      )}
-                    >
-                      <Volume2 size={14} />
-                    </div>
-                    <p
-                      className={cn(
-                        "text-[13px] flex-1",
-                        systemAudioEnabled ? "text-white" : "text-white/40",
-                      )}
-                    >
-                      {t.editor.systemAudio}
-                    </p>
                     <button
-                      onClick={toggleSystemAudio}
-                      className={cn(
-                        "w-7 h-4 rounded-full p-0.5 transition-all duration-300",
-                        systemAudioEnabled ? "bg-blue-500/25" : "bg-white/10",
-                      )}
+                      onClick={() => toggleMicrophone(!micEnabled)}
+                      className="w-full flex items-center gap-3 p-3 transition-colors"
                     >
                       <div
                         className={cn(
-                          "w-3 h-3 rounded-full bg-white transition-transform duration-300 shadow-sm",
-                          systemAudioEnabled
-                            ? "translate-x-3"
-                            : "translate-x-0",
-                        )}
-                      />
-                    </button>
-                  </div>
-
-                  <div
-                    className={cn(
-                      "premium-card transition-all duration-300 flex flex-col overflow-hidden",
-                      webcamEnabled
-                        ? "border-purple-500/30 active-glow-purple bg-purple-500/[0.02]"
-                        : "bg-white/[0.01]",
-                    )}
-                  >
-                    <div className="px-4 py-3 flex items-center gap-3">
-                      <div
-                        className={cn(
-                          "w-8 h-8 rounded-xl flex items-center justify-center transition-all shadow-sm",
-                          webcamEnabled
-                            ? "bg-purple-500/20 text-purple-400"
+                          "w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-300 shadow-sm",
+                          micEnabled
+                            ? "bg-emerald-500/20 text-emerald-400"
                             : "bg-white/[0.04] text-white/20",
                         )}
                       >
-                        <Camera size={14} />
+                        <Mic size={14} />
                       </div>
-                      <p
-                        className={cn(
-                          "text-[13px] flex-1 font-medium",
-                          webcamEnabled ? "text-white/90" : "text-white/40",
-                        )}
-                      >
-                        {t.editor.webcam}
-                      </p>
-                      <button
-                        onClick={toggleWebcam}
+                      <div className="flex-1 text-left">
+                        <p
+                          className={cn(
+                            "text-[13px] transition-colors",
+                            micEnabled ? "text-white" : "text-white/40",
+                          )}
+                        >
+                          {t.editor.micAudio}
+                        </p>
+                      </div>
+                      <div
                         className={cn(
                           "w-7 h-4 rounded-full p-0.5 transition-all duration-300",
-                          webcamEnabled ? "bg-purple-500/25" : "bg-white/10",
+                          micEnabled ? "bg-emerald-500/25" : "bg-white/10",
                         )}
                       >
                         <div
                           className={cn(
                             "w-3 h-3 rounded-full bg-white transition-transform duration-300 shadow-sm",
-                            webcamEnabled ? "translate-x-3" : "translate-x-0",
+                            micEnabled ? "translate-x-3" : "translate-x-0",
                           )}
                         />
-                      </button>
-                    </div>
-                    {webcamEnabled && webcamDevices.length > 0 && (
+                      </div>
+                    </button>
+                    {micEnabled && microphones.length > 0 && (
                       <div className="px-3 pb-3 pt-0">
                         <select
-                          value={selectedWebcam || ""}
-                          onChange={(e) => selectWebcam(e.target.value)}
+                          value={selectedMicrophone || ""}
+                          onChange={(e) => selectMicrophone(e.target.value)}
                           className="w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-2.5 py-1.5 text-[12px] text-white/60 outline-none hover:bg-white/[0.05] transition-colors"
                         >
-                          {webcamDevices.map((cam) => (
+                          {microphones.map((mic) => (
                             <option
-                              key={cam.deviceId}
-                              value={cam.deviceId}
+                              key={mic.deviceId}
+                              value={mic.deviceId}
                               className="bg-[#0a0a0a]"
                             >
-                              {cam.label}
+                              {mic.label}
                             </option>
                           ))}
                         </select>
                       </div>
                     )}
                   </div>
-                </div>
+                )}
+
+                {/* System Audio & Webcam - Only show in video mode */}
+                {recordFormat !== "gif" && (
+                  <div className="flex flex-col gap-2">
+                    <div
+                      className={cn(
+                        "premium-card transition-all duration-300 px-4 py-3 flex items-center gap-3",
+                        systemAudioEnabled
+                          ? "border-blue-500/30 active-glow-blue bg-blue-500/[0.02]"
+                          : "bg-white/[0.01]",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "w-8 h-8 rounded-xl flex items-center justify-center transition-all shadow-sm",
+                          systemAudioEnabled
+                            ? "bg-blue-500/20 text-blue-400"
+                            : "bg-white/[0.04] text-white/20",
+                        )}
+                      >
+                        <Volume2 size={14} />
+                      </div>
+                      <p
+                        className={cn(
+                          "text-[13px] flex-1",
+                          systemAudioEnabled ? "text-white" : "text-white/40",
+                        )}
+                      >
+                        {t.editor.systemAudio}
+                      </p>
+                      <button
+                        onClick={toggleSystemAudio}
+                        className={cn(
+                          "w-7 h-4 rounded-full p-0.5 transition-all duration-300",
+                          systemAudioEnabled ? "bg-blue-500/25" : "bg-white/10",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "w-3 h-3 rounded-full bg-white transition-transform duration-300 shadow-sm",
+                            systemAudioEnabled
+                              ? "translate-x-3"
+                              : "translate-x-0",
+                          )}
+                        />
+                      </button>
+                    </div>
+
+                    <div
+                      className={cn(
+                        "premium-card transition-all duration-300 flex flex-col overflow-hidden",
+                        webcamEnabled
+                          ? "border-purple-500/30 active-glow-purple bg-purple-500/[0.02]"
+                          : "bg-white/[0.01]",
+                      )}
+                    >
+                      <div className="px-4 py-3 flex items-center gap-3">
+                        <div
+                          className={cn(
+                            "w-8 h-8 rounded-xl flex items-center justify-center transition-all shadow-sm",
+                            webcamEnabled
+                              ? "bg-purple-500/20 text-purple-400"
+                              : "bg-white/[0.04] text-white/20",
+                          )}
+                        >
+                          <Camera size={14} />
+                        </div>
+                        <p
+                          className={cn(
+                            "text-[13px] flex-1 font-medium",
+                            webcamEnabled ? "text-white/90" : "text-white/40",
+                          )}
+                        >
+                          {t.editor.webcam}
+                        </p>
+                        <button
+                          onClick={toggleWebcam}
+                          className={cn(
+                            "w-7 h-4 rounded-full p-0.5 transition-all duration-300",
+                            webcamEnabled ? "bg-purple-500/25" : "bg-white/10",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "w-3 h-3 rounded-full bg-white transition-transform duration-300 shadow-sm",
+                              webcamEnabled ? "translate-x-3" : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </div>
+                      {webcamEnabled && webcamDevices.length > 0 && (
+                        <div className="px-3 pb-3 pt-0">
+                          <select
+                            value={selectedWebcam || ""}
+                            onChange={(e) => selectWebcam(e.target.value)}
+                            className="w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-2.5 py-1.5 text-[12px] text-white/60 outline-none hover:bg-white/[0.05] transition-colors"
+                          >
+                            {webcamDevices.map((cam) => (
+                              <option
+                                key={cam.deviceId}
+                                value={cam.deviceId}
+                                className="bg-[#0a0a0a]"
+                              >
+                                {cam.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -788,7 +824,9 @@ export function HomePage({
                   <Zap size={15} className="fill-black" />
                 )}
               </div>
-              <span className="tracking-tight">{isStarting ? "正在初始化..." : "开启录制"}</span>
+              <span className="tracking-tight">
+                {isStarting ? "正在初始化..." : "开启录制"}
+              </span>
             </motion.button>
 
             <div className="mt-3 pb-1 flex items-center justify-center gap-5">

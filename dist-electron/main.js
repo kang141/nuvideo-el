@@ -348,8 +348,14 @@ class SessionRecorder {
   async stop() {
     if (this.isStopping) return "";
     this.isStopping = true;
-    if (this.mousePollTimer) clearInterval(this.mousePollTimer);
-    if (this.mouseMonitorProcess) this.mouseMonitorProcess.kill();
+    if (this.mousePollTimer) {
+      clearInterval(this.mousePollTimer);
+      this.mousePollTimer = null;
+    }
+    if (this.mouseMonitorProcess) {
+      this.mouseMonitorProcess.kill();
+      this.mouseMonitorProcess = null;
+    }
     return new Promise((resolve) => {
       const proc = this.ffmpegProcess;
       if (!proc) return resolve("");
@@ -361,7 +367,10 @@ class SessionRecorder {
       }, 3e3);
       proc.once("close", () => {
         clearTimeout(forceKillTimer);
-        if (this.mouseLogStream) this.mouseLogStream.end();
+        if (this.mouseLogStream) {
+          this.mouseLogStream.close();
+          this.mouseLogStream = null;
+        }
         this.manifest.status = "finished";
         this.writeManifest();
         console.log(`[Session] Recording finished: ${this.sessionId}`);
@@ -470,7 +479,10 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
       readyOffset: result.readyOffset || 0
     };
   } else {
-    currentSession = null;
+    if (currentSession) {
+      allSessions.delete(currentSession.sessionId);
+      currentSession = null;
+    }
     return result;
   }
 });
@@ -646,7 +658,8 @@ app.whenReady().then(() => {
     const url = request.url;
     if (url.startsWith("nuvideo://load/")) {
       const fileName = url.replace("nuvideo://load/", "");
-      const filePath = path$1.join(app.getPath("temp"), fileName);
+      const normalizedFileName = path$1.basename(fileName);
+      const filePath = path$1.join(app.getPath("temp"), normalizedFileName);
       return callback({ path: filePath });
     }
     if (url.startsWith("nuvideo://session/")) {
@@ -655,7 +668,13 @@ app.whenReady().then(() => {
       const relPath = parts.slice(1).join("/") || "manifest.json";
       const session = allSessions.get(sessionId);
       if (session) {
-        const filePath = path$1.join(session.sessionDir, relPath);
+        const normalizedRelPath = path$1.normalize(relPath);
+        if (normalizedRelPath.includes("..")) {
+          console.error("[Protocol Handler] Path traversal attempt blocked:", relPath);
+          callback({ error: -6 });
+          return;
+        }
+        const filePath = path$1.join(session.sessionDir, normalizedRelPath);
         return callback({ path: filePath });
       }
     }

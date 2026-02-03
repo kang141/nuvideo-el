@@ -395,8 +395,17 @@ class SessionRecorder {
     if (this.isStopping) return '';
     this.isStopping = true;
 
-    if (this.mousePollTimer) clearInterval(this.mousePollTimer);
-    if (this.mouseMonitorProcess) this.mouseMonitorProcess.kill();
+    // 清理鼠标轮询定时器
+    if (this.mousePollTimer) {
+      clearInterval(this.mousePollTimer);
+      this.mousePollTimer = null;
+    }
+    
+    // 清理鼠标监控进程
+    if (this.mouseMonitorProcess) {
+      this.mouseMonitorProcess.kill();
+      this.mouseMonitorProcess = null;
+    }
 
     return new Promise((resolve) => {
       const proc = this.ffmpegProcess;
@@ -408,7 +417,12 @@ class SessionRecorder {
 
       proc.once('close', () => {
         clearTimeout(forceKillTimer);
-        if (this.mouseLogStream) this.mouseLogStream.end();
+        
+        // 关闭鼠标日志流
+        if (this.mouseLogStream) {
+          this.mouseLogStream.close();
+          this.mouseLogStream = null;
+        }
 
         this.manifest.status = 'finished';
         this.writeManifest();
@@ -541,7 +555,11 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
       readyOffset: result.readyOffset || 0 
     };
   } else {
-    currentSession = null;
+    // 清理失败的会话，确保状态一致性
+    if (currentSession) {
+      allSessions.delete(currentSession.sessionId);
+      currentSession = null;
+    }
     return result;
   }
 })
@@ -784,21 +802,30 @@ app.whenReady().then(() => {
     const url = request.url;
 
     if (url.startsWith('nuvideo://load/')) {
-      const fileName = url.replace('nuvideo://load/', '')
-      const filePath = path.join(app.getPath('temp'), fileName)
+      const fileName = url.replace('nuvideo://load/', '');
+      // 防止路径遍历攻击
+      const normalizedFileName = path.basename(fileName);
+      const filePath = path.join(app.getPath('temp'), normalizedFileName);
       return callback({ path: filePath })
     }
 
     if (url.startsWith('nuvideo://session/')) {
       // 格式: nuvideo://session/{uuid}/{relPath}
-      const parts = url.replace('nuvideo://session/', '').split('/')
-      const sessionId = parts[0]
-      const relPath = parts.slice(1).join('/') || 'manifest.json'
+      const parts = url.replace('nuvideo://session/', '').split('/');
+      const sessionId = parts[0];
+      const relPath = parts.slice(1).join('/') || 'manifest.json';
 
-      const session = allSessions.get(sessionId)
+      const session = allSessions.get(sessionId);
       if (session) {
-        const filePath = path.join(session.sessionDir, relPath)
-        return callback({ path: filePath })
+        // 防止路径遍历攻击，只允许访问session目录下的文件
+        const normalizedRelPath = path.normalize(relPath);
+        if (normalizedRelPath.includes('..')) {
+          console.error('[Protocol Handler] Path traversal attempt blocked:', relPath);
+          callback({ error: -6 }); // NET_ERROR(FILE_NOT_FOUND, -6)
+          return;
+        }
+        const filePath = path.join(session.sessionDir, normalizedRelPath);
+        return callback({ path: filePath });
       }
     }
 

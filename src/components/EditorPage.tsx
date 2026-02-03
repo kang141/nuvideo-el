@@ -677,6 +677,7 @@ export function EditorPage({
                 handleUpdateWebcam({ isEnabled: enabled })
               }
               onUpdateWebcam={handleUpdateWebcam}
+              exportFormat={graph.config?.targetFormat || 'mp4'}
             />
           </motion.div>
         )}
