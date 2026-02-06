@@ -8,48 +8,42 @@ import type { MouseEvent as NuMouseEvent } from '../types';
 export class MouseTracker {
   private events: NuMouseEvent[] = [];
   private isTracking: boolean = false;
-  private timeOffsetMs: number = 0;
   private lastEventT: number = 0;
-  private eventLock: boolean = false; // 添加锁标志以防止竞态条件
+  private timeOffsetMs: number = 0;
+  private bounds: any = null;
+  private t0: number = 0;
 
   constructor() {
     (window as any).ipcRenderer.on('mouse-update', (_: any, point: { x: number, y: number, t?: number }) => {
-      if (!this.isTracking) return;
+      if (!this.isTracking || !this.bounds) return;
       if (typeof point.t !== 'number') return;
 
-      // 使用简单的锁机制防止竞态条件
-      if (this.eventLock) return; // 如果正在处理事件，则跳过
-      this.eventLock = true;
+      // 🎯 核心转变：将屏幕物理坐标转换为相对于录制区域的 0-1 坐标
+      const relX = (point.x - this.bounds.x) / this.bounds.width;
+      const relY = (point.y - this.bounds.y) / this.bounds.height;
       
-      const t = Math.max(point.t, this.lastEventT);
+      // 时间对齐：相对于录制开始时刻的时间
+      const t = point.t - this.t0;
+      if (t < 0) return; // 忽略开始录制前的事件
+
       this.lastEventT = t;
 
       this.events.push({
         t,
-        x: point.x,
-        y: point.y,
+        x: relX,
+        y: relY,
         type: 'move'
       });
-      
-      // 短暂延时后释放锁
-      setTimeout(() => {
-        this.eventLock = false;
-      }, 0);
     });
 
     (window as any).ipcRenderer.on('mouse-click', (_: any, payload: { type: 'down' | 'up', t: number }) => {
-      if (!this.isTracking) return;
+      if (!this.isTracking || !this.bounds) return;
       
-      // 使用简单的锁机制防止竞态条件
-      if (this.eventLock) return; // 如果正在处理事件，则跳过
-      this.eventLock = true;
-      
-      const t = Math.max(payload.t, this.lastEventT);
+      const t = payload.t - this.t0;
+      if (t < 0) return;
       this.lastEventT = t;
 
       const last = this.events[this.events.length - 1];
-      // 如果没有 move 事件作为参照坐标 (虽然很少见)，只能丢弃或假设(0,0)
-      // 但由于 move 是高频轮询，通常肯定会有 last
       if (last) {
         this.events.push({
           t,
@@ -58,34 +52,31 @@ export class MouseTracker {
           type: payload.type
         });
       }
-      
-      // 短暂延时后释放锁
-      setTimeout(() => {
-        this.eventLock = false;
-      }, 0);
     });
   }
 
   // 开始追踪
-  start() {
+  start(bounds: any) {
     this.events = [];
     this.isTracking = true;
     this.lastEventT = 0;
-    console.log('[MouseTracker] Waiting for video alignment...');
+    this.bounds = bounds;
+    console.log('[MouseTracker] Tracking started for bounds:', bounds);
   }
 
   /**
-   * 物理对齐：由 ScreenRecorder 调用，标记视频流真正开始的第一秒
-   * 注意：此功能当前已移除，保留方法签名以保持接口兼容性
+   * 物理对齐：标记视频流真正开始的第一毫秒 (performance.now() 基准)
    */
-  align(t0Main: number) {
-    console.log('[MouseTracker] Timeline alignment called with:', t0Main, '(feature removed)');
+  align(t0: number) {
+    this.t0 = t0;
+    console.log('[MouseTracker] Timeline aligned to:', t0);
   }
 
   stop(): NuMouseEvent[] {
     this.isTracking = false;
     const result = [...this.events].sort((a, b) => a.t - b.t);
     console.log(`[MouseTracker] Stopped. Samples: ${result.length}`);
+    this.bounds = null;
     return result;
   }
 

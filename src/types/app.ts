@@ -19,4 +19,11 @@ export interface RecordingState {
   format: 'video' | 'gif';
   /** 是否开启自动缩放 */
   autoZoom: boolean;
+  /** 摄像头预览配置 */
+  webcam?: {
+    enabled: boolean;
+    deviceId: string | null;
+  };
+  /** 是否正在停止（保存数据中） */
+  isStopping?: boolean;
 }

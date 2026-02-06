@@ -14,7 +14,6 @@ import {
   Camera,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { QUALITY_OPTIONS, QualityConfig } from "@/constants/quality";
 import { Language, translations } from "@/i18n/translations";
 import { useAudioDevices } from "@/hooks/useAudioDevices";
 import { useWebcam } from "@/hooks/useWebcam";
@@ -29,7 +28,6 @@ interface Source {
 interface HomePageProps {
   onStartRecording: (
     sourceId: string,
-    quality: QualityConfig,
     format: "video" | "gif",
     autoZoom: boolean,
     audioConfig: {
@@ -48,7 +46,6 @@ interface HomePageProps {
   setLanguage: (lang: Language) => void;
 }
 
-const QUALITY_KEY = "nuvideo_last_quality";
 const FORMAT_KEY = "nuvideo_last_format";
 
 // 摄像头悬浮预览
@@ -212,9 +209,6 @@ export function HomePage({
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [sourceType, setSourceType] = useState<"screen" | "window">("screen");
   const [showSourceSelect, setShowSourceSelect] = useState(false);
-  const [selectedQualityId, setSelectedQualityId] = useState<string>(
-    () => localStorage.getItem(QUALITY_KEY) || "balanced",
-  );
   const [recordFormat, setRecordFormat] = useState<"video" | "gif">(
     () => (localStorage.getItem(FORMAT_KEY) as any) || "video",
   );
@@ -246,9 +240,6 @@ export function HomePage({
 
   const t = translations[language];
 
-  const selectedQuality =
-    QUALITY_OPTIONS.find((q) => q.id === selectedQualityId) ||
-    QUALITY_OPTIONS[1];
 
   const fetchSources = useCallback(async () => {
     if (isStarting) return;
@@ -312,7 +303,6 @@ export function HomePage({
       const mic = microphones.find((m) => m.deviceId === selectedMicrophone);
       await onStartRecording(
         selectedSourceId,
-        selectedQuality,
         recordFormat,
         autoZoomEnabled,
         {
@@ -325,6 +315,8 @@ export function HomePage({
           deviceId: selectedWebcam,
         },
       );
+      // 🎯 关键修复：录制成功启动后重置状态
+      setIsStarting(false);
     } catch (e) {
       setIsStarting(false);
     }
@@ -455,9 +447,6 @@ export function HomePage({
                     sourceId={selectedSource.id}
                     thumbnail={selectedSource.thumbnail}
                   />
-                  {webcamEnabled && selectedWebcam && (
-                    <WebcamCircle deviceId={selectedWebcam} />
-                  )}
                 </>
               ) : (
                 <div className="flex flex-col items-center gap-3 text-white/[0.06]">
@@ -542,33 +531,15 @@ export function HomePage({
                 )}
               </AnimatePresence>
             </div>
+            {/* 🎯 关键修复：将 WebcamCircle 移到 overflow-hidden 容器外面 */}
+            {selectedSource && webcamEnabled && selectedWebcam && (
+              <WebcamCircle deviceId={selectedWebcam} />
+            )}
           </div>
 
           {/* Output Options */}
-          <section className="flex items-center gap-2 p-1 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-            <div className="flex gap-1 pl-1">
-              {QUALITY_OPTIONS.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => {
-                    setSelectedQualityId(q.id);
-                    localStorage.setItem(QUALITY_KEY, q.id);
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[12px] transition-all whitespace-nowrap",
-                    selectedQualityId === q.id
-                      ? "bg-white/[0.08] text-white shadow-sm font-medium"
-                      : "text-white/30 hover:text-white/50 hover:bg-white/[0.03]",
-                  )}
-                >
-                  {q.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="h-3.5 w-[1px] bg-white/[0.06] mx-1 shrink-0" />
-
-            <div className="flex gap-1 pr-1">
+          <section className="flex items-center justify-center gap-2 p-1 bg-white/[0.02] rounded-xl border border-white/[0.04]">
+            <div className="flex gap-1">
               {[
                 { id: "video", label: "MP4", icon: Video },
                 { id: "gif", label: "GIF", icon: ImageIcon },
@@ -580,7 +551,7 @@ export function HomePage({
                     localStorage.setItem(FORMAT_KEY, fmt.id);
                   }}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] transition-all whitespace-nowrap",
+                    "flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-lg text-[12px] transition-all whitespace-nowrap",
                     recordFormat === fmt.id
                       ? "bg-white/[0.1] text-white shadow-sm font-medium"
                       : "text-white/30 hover:text-white/50 hover:bg-white/[0.03]",

@@ -40,12 +40,16 @@ interface DesignPanelProps {
   webcamEnabled?: boolean;
   webcamShape?: "circle" | "rect";
   webcamSize?: number;
+  webcamX?: number;
+  webcamY?: number;
   onToggleWebcam?: (enabled: boolean) => void;
   onUpdateWebcam?: (
     updates: Partial<{
       isEnabled: boolean;
       shape: "circle" | "rect";
       size: number;
+      x: number;
+      y: number;
     }>,
   ) => void;
   exportFormat?: string;
@@ -81,6 +85,8 @@ export const DesignPanel = memo(function DesignPanel({
   webcamEnabled,
   webcamShape = "circle",
   webcamSize = 360,
+  webcamX = 1.0,
+  webcamY = 1.0,
   onToggleWebcam,
   onUpdateWebcam,
   exportFormat = "mp4",
@@ -225,9 +231,49 @@ export const DesignPanel = memo(function DesignPanel({
                           </button>
                         ))}
                       </div>
+                      {/* 位置调节 */}
+                      <div className="space-y-4 pt-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-medium text-white/40 uppercase tracking-widest">
+                            {t.editor.webcamPosition}
+                          </span>
+                          <div className="h-px flex-1 bg-white/[0.06]" />
+                        </div>
+                        
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-white/50">{t.editor.webcamX}</span>
+                            <span className="text-[9px] font-mono text-white/30">{Math.round(webcamX * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={webcamX}
+                            onChange={(e) => onUpdateWebcam?.({ x: parseFloat(e.target.value) })}
+                            className="w-full accent-blue-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-white/50">{t.editor.webcamY}</span>
+                            <span className="text-[9px] font-mono text-white/30">{Math.round(webcamY * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={webcamY}
+                            onChange={(e) => onUpdateWebcam?.({ y: parseFloat(e.target.value) })}
+                            className="w-full accent-blue-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
-
                   {webcamEnabled && (
                     <div className="space-y-4 pt-4">
                       <div className="flex items-center justify-between">

@@ -11,13 +11,12 @@ interface UseVideoExportOptions {
   exportDuration?: number;
   onSeek: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
-  renderFrame: (timestampMs: number) => void | Promise<void>;
+  renderFrame: (timestampMs: number) => Promise<HTMLCanvasElement | null>;
   isExporting: boolean;
   setIsExporting: (v: boolean) => void;
   renderGraph?: RenderGraph;
 }
 
-const ENCODER_QUEUE_THRESHOLD = 12;
 const PROGRESS_THROTTLE_MS = 100;
 
 export function useVideoExport({
@@ -77,12 +76,45 @@ export function useVideoExport({
     // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
     let audioEncoder: AudioEncoder | null = null;
+    let originalWidth = canvas.width;
+    let originalHeight = canvas.height;
 
     try {
       isExportingRef.current = true;
       setIsExporting(true);
       setExportProgress(0);
 
+      // 🔒 强化锁定：等待预览循环完全停止
+      // 1. 等待 React 重新渲染并执行 cleanup (1000ms 足够 2-3 个渲染周期)
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // 2. 强制取消所有可能残留的 RAF 回调
+      // 这是双保险，防止极端情况下 useEffect cleanup 未执行
+      for (let i = 0; i < 100; i++) cancelAnimationFrame(i);
+      
+      // 🎨 根据用户选择的画质配置决定导出分辨率
+      // 如果用户选择了"最高"画质，使用 quality.maxWidth/maxHeight
+      // 否则使用 1920x1080 作为默认值
+      const exportWidth = quality?.maxWidth || 1920;
+      const exportHeight = quality?.maxHeight || 1080;
+      
+      console.log(`[useVideoExport] Quality: ${quality?.label || 'Default'}, Target Resolution: ${exportWidth}x${exportHeight}, Bitrate: ${(quality?.bitrate || 0) / 1_000_000}Mbps`);
+      
+      // 更新原始尺寸引用
+      originalWidth = canvas.width;
+      originalHeight = canvas.height;
+      
+      // 设置导出分辨率
+      canvas.width = exportWidth;
+      canvas.height = exportHeight;
+      console.log(`[useVideoExport] Canvas resized to export resolution: ${exportWidth}x${exportHeight}`);
+
+      // 🎨 关键修复：导出模式下必须根据导出分辨率重新生成离屏背景层
+      // 否则 2K 导出可能会使用预览时的缓存，导致背景模糊或布局偏移
+      if ((window as any).updateOffscreen) {
+        (window as any).updateOffscreen(exportWidth, exportHeight, video.videoWidth || 1920, video.videoHeight || 1080);
+      }
+      
       // 1. 确定保存路径
       let finalPath = targetPath;
       if (!finalPath) {
@@ -211,30 +243,18 @@ export function useVideoExport({
       }
       
       if (!videoConfig) {
-        // 额外尝试基本配置，确保至少有一个可用的编码器
-        try {
-          // 尝试使用基本的VP8编码器（通常在大多数系统上可用）
-          const basicConfig: VideoEncoderConfig = { 
-            codec: 'vp8', width, height, bitrate, framerate: fps, 
-            hardwareAcceleration: 'prefer-software' 
-          };
-          const basicSupport = await VideoEncoder.isConfigSupported(basicConfig);
-          if (basicSupport.supported) {
-            videoConfig = basicConfig;
-            console.log('[useVideoExport] Selected fallback codec: vp8');
-          }
-        } catch (err) {
-          console.warn('[useVideoExport] Basic VP8 codec not supported:', err);
-        }
-        
-        // 如果仍然没有找到合适的配置，使用默认配置
-        if (!videoConfig) {
-          videoConfig = { 
-            codec: isGif ? 'vp09.00.10.08' : 'avc1.42E034', 
-            width, height, bitrate, framerate: fps, 
-            hardwareAcceleration: 'prefer-software' 
-          };
-        }
+        // 如果所有高级配置都失败，使用 H.264 Baseline Profile, Level 5.1
+        // Level 5.1 完美支持 1080p/4K @ 60fps，带宽充足，播放流畅
+        // 回归 Baseline Profile 以保证 100% 兼容性，防止 Encoder creation error
+        console.warn('[useVideoExport] All advanced codecs failed, using H.264 Baseline Level 5.1');
+        videoConfig = { 
+          codec: 'avc1.42E033', // Baseline Profile, Level 5.1
+          width, 
+          height, 
+          bitrate, 
+          framerate: fps, 
+          hardwareAcceleration: 'no-preference' // 让浏览器自动选择最佳实现
+        };
       }
 
       // 4. 打开流与 Muxer
@@ -310,111 +330,81 @@ export function useVideoExport({
       let lastProgressAt = 0;
       let encodedCount = 0;
 
-      // 6. 视频导出循环 (使用 VFC 同步)
-      const vVideo = video as any;
-      if (typeof vVideo.requestVideoFrameCallback === 'function') {
-        console.log('[useVideoExport] Export via VFC started...');
-        await new Promise<void>((resolve, reject) => {
-          let vfcId: number;
-          let timeoutId: NodeJS.Timeout;
-          
-          const cleanup = () => {
-            if (vfcId != null) vVideo.cancelVideoFrameCallback(vfcId);
-            if (timeoutId) clearTimeout(timeoutId);
-            video.removeEventListener('ended', onEnded);
-          };
-          
-          const onFrame = async (_: number, meta: VideoFrameCallbackMetadata) => {
-            if (!isExportingRef.current || encoderError) { 
-              video.pause();
-              cleanup();
-              reject(encoderError || new Error('Aborted')); 
-              return; 
-            }
-            
-            // 改进：增加一个小冗余，确保能捕捉到最后一秒
-            if (meta.mediaTime >= durationSeconds - 0.016) { 
-              console.log('[useVideoExport] VFC Reached target end time:', meta.mediaTime, '/', durationSeconds);
-              video.pause();
-              cleanup();
-              resolve(); 
-              return; 
-            }
+      // 6. 视频导出循环 (离线渲染模式 - 每一帧都必须渲染)
+      // 不再使用 video.play() + VFC，而是手动控制时间轴
+      console.log('[useVideoExport] Starting Offline Rendering Loop...');
+      
+      const frameDuration = 1 / fps;
+      const totalFrames = Math.ceil(durationSeconds * fps);
+      let lastReportTime = performance.now();
 
-            if (videoEncoder && videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
-              video.pause();
-              while (videoEncoder.encodeQueueSize > 2) await new Promise(r => setTimeout(r, 10));
-              video.play().catch(console.error);
-            }
+      // 🎯 优化点：在循环外准备好背景填充 Canvas，避免每帧重复创建 (减少 GC 压力)
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tCtx = tempCanvas.getContext('2d', { alpha: false });
 
-            await renderFrame(meta.mediaTime * 1000);
-            const vFrame = new VideoFrame(canvas, { timestamp: Math.round(meta.mediaTime * 1_000_000) });
-            if (videoEncoder) {
-              videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
-            }
-            vFrame.close();
-            encodedCount++;
+      for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
+        if (!isExportingRef.current || encoderError) {
+          throw encoderError || new Error('Aborted by user');
+        }
 
-            if (encodedCount % 60 === 0) {
-              console.log(`[useVideoExport] Progress - Time: ${meta.mediaTime.toFixed(2)}s, Encoded Frames: ${encodedCount}, Encoder Output: ${encoderOutputCount}`);
-            }
+        const currentTime = frameIdx * frameDuration;
+        const timestampMicros = Math.round(currentTime * 1_000_000);
 
-            if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
-              const progressRatio = meta.mediaTime / durationSeconds;
-              const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
-              setExportProgress(Math.min(0.95, displayProgress));
-              lastProgressAt = performance.now();
-            }
-            vfcId = vVideo.requestVideoFrameCallback(onFrame);
-          };
+        // A. 渲染这一帧
+        // 🎯 关键变化：renderFrame 现在返回一个独立的离屏 Canvas 引用
+        const renderedCanvas = await renderFrame(currentTime * 1000);
+        if (!renderedCanvas) {
+          console.warn(`[useVideoExport] Frame ${frameIdx} render returned null, skipping...`);
+          frameIdx++;
+          continue;
+        }
 
-          const onEnded = () => { 
-            console.log('[useVideoExport] Video native ended. Finalizing frames...');
-            cleanup();
-            resolve(); 
-          };
-          video.addEventListener('ended', onEnded);
-          
-          // 增加超时保护到 10 秒，防止大型项目后台运行略微变慢被误杀
-          timeoutId = setTimeout(() => {
-            console.warn('[useVideoExport] Export timeout reached, resolving current frames.');
-            video.pause();
-            cleanup();
-            resolve();
-          }, (durationSeconds + 10) * 1000);
-
-          vfcId = vVideo.requestVideoFrameCallback(onFrame);
-          video.play().catch((err) => {
-            console.error('[useVideoExport] Video play failed during export:', err);
-            cleanup();
-            reject(err);
-          });
+        // B. 从 Canvas 抓取图像 (确保不透明底色处理在独立的离屏环境中完成)
+        if (tCtx) {
+          tCtx.fillStyle = '#0a0a0a'; 
+          tCtx.fillRect(0, 0, exportWidth, exportHeight);
+          tCtx.drawImage(renderedCanvas, 0, 0);
+        }
+        
+        const frame = new VideoFrame(tempCanvas, { 
+          timestamp: timestampMicros,
+          duration: Math.round(frameDuration * 1_000_000),
+          alpha: 'discard'
         });
-      } else {
-        // Fallback for non-VFC browsers
-        console.log('[useVideoExport] VFC not supported, using manual seek fallback...');
-        for (let t = 0; t < durationSeconds; t += 1/fps) {
-          if (!isExportingRef.current || encoderError) break;
-          video.currentTime = t;
-          await new Promise(r => {
-            const onSd = () => { video.removeEventListener('seeked', onSd); r(null); };
-            video.addEventListener('seeked', onSd);
-            setTimeout(onSd, 500); // 兜底处理
-          });
-          await renderFrame(t * 1000);
-          const vFrame = new VideoFrame(canvas, { timestamp: Math.round(t * 1_000_000) });
-          if (videoEncoder) {
-            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
-          }
-          vFrame.close();
-          encodedCount++;
+        
+        if (videoEncoder) {
+          // 关键帧策略：每 2秒 (120帧) 一个关键帧，平衡拖动性能与体积
+          // 或者每 0.5秒 (30帧) 以获得更好的编辑体验
+          videoEncoder.encode(frame, { keyFrame: frameIdx % 60 === 0 });
+        }
+        frame.close();
+        
+        encodedCount++;
+
+        // C. 进度汇报 (节流)
+        // 为了消除起步阶段的“死机感”，进度条结合了渲染进度(30%)和实际编码进度(70%)。
+        if (performance.now() - lastReportTime > PROGRESS_THROTTLE_MS) {
+          const renderProgress = (frameIdx + 1) / totalFrames;
+          const encodeProgress = encoderOutputCount / totalFrames;
+          const mixedProgress = renderProgress * 0.3 + encodeProgress * 0.7;
           
-          if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
-            const progressRatio = t / durationSeconds;
-            const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
-            setExportProgress(Math.min(0.95, displayProgress));
-            lastProgressAt = performance.now();
-          }
+          const displayProgress = isGif ? mixedProgress * 0.9 : mixedProgress;
+          setExportProgress(Math.min(0.99, displayProgress));
+          // 调试日志保留编码队列大小，监控稳定性
+          console.log(`[useVideoExport] Render:${(renderProgress*100).toFixed(0)}% Encode:${(encodeProgress*100).toFixed(0)}% Queue:${videoEncoder?.encodeQueueSize}`);
+          lastReportTime = performance.now();
+          
+          await new Promise(r => setTimeout(r, 0));
+        }
+
+        // 🎯 核心提速点：生产者-消费者流水线积压保护
+        // 当编码器队列过大时，暂停一下让编码器消化
+        // 🔥 关键修复：不要用 while 循环，会导致导出极慢！
+        if (videoEncoder && videoEncoder.encodeQueueSize > 64) {
+           // 单次等待，让出控制权给编码器
+           await new Promise(r => setTimeout(r, 10)); 
         }
       }
 
@@ -455,13 +445,13 @@ export function useVideoExport({
           ad.close();
         }
         if (audioEncoder) {
-          audioEncoder.flush(); // 不等待 flush，直接继续
+          await audioEncoder.flush(); 
           audioEncoder.close();
         }
       }
 
       if (videoEncoder) {
-        videoEncoder.flush(); // 不等待 flush，直接继续
+        await videoEncoder.flush();
         videoEncoder.close();
       }
       console.log('[useVideoExport] VideoEncoder flushed and closed.');
@@ -514,6 +504,13 @@ export function useVideoExport({
       if (streamId) await ipc.invoke('close-export-stream', { streamId, deleteOnClose: true }).catch(() => {});
       return { success: false };
     } finally {
+      // 恢复 Canvas 到预览分辨率
+      if (canvas) {
+        canvas.width = originalWidth;
+        canvas.height = originalHeight;
+        console.log(`[useVideoExport] Canvas restored to preview resolution: ${originalWidth}x${originalHeight}`);
+      }
+      
       isExportingRef.current = false;
       setIsExporting(false);
       resetCameraCache();

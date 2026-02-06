@@ -41,7 +41,7 @@ ipcMain.handle('save-session-webcam', async (_event, { sessionId, arrayBuffer })
       throw new Error('Session directory does not exist');
     }
 
-    const webcamPath = path.join(sessionDir, 'webcam.webm');
+    const webcamPath = path.join(sessionDir, 'webcam.mp4');
     fs.writeFileSync(webcamPath, Buffer.from(arrayBuffer));
     
     console.log(`[Main] Webcam video saved for session ${sessionId}: ${webcamPath}`);

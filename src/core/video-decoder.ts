@@ -56,9 +56,11 @@ export class VideoFrameManager {
         if (this.isClosed) return resolve();
         this.decoderConfig = config;
         try {
+          console.log('[VideoDecoder] Configuring with:', config);
           this.decoder.configure(config);
           this.isConfigured = true;
           this.samples = this.demuxer.getSamples();
+          console.log(`[VideoDecoder] Ready with ${this.samples.length} samples`);
         } catch (e) {
           console.error('[VideoDecoder] Configure failed:', e);
         }

@@ -280,7 +280,7 @@ export function EditorPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullscreenPreview, togglePlay, graph, maxDuration]);
 
-  const { isReady, renderFrame } = useVideoRenderer({
+  const { isReady, renderFrame, renderFrameForExport } = useVideoRenderer({
     videoRef,
     canvasRef,
     renderGraph: graph!,
@@ -330,7 +330,7 @@ export function EditorPage({
     exportDuration: graph?.duration ? graph.duration / 1000 : maxDuration,
     onSeek: handleSeek,
     setIsPlaying,
-    renderFrame,
+    renderFrame: renderFrameForExport, // 使用导出专用渲染函数
     isExporting,
     setIsExporting,
     renderGraph: graph || undefined,

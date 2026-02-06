@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { ipcMain, app, protocol, desktopCapturer, dialog, screen, shell, BrowserWindow } from "electron";
+import { ipcMain, app, protocol, desktopCapturer, screen, dialog, shell, BrowserWindow } from "electron";
 import { fileURLToPath } from "node:url";
 import path$1 from "node:path";
 import fs$1 from "node:fs";
@@ -39,7 +39,7 @@ ipcMain.handle("save-session-webcam", async (_event, { sessionId, arrayBuffer })
     if (!fs.existsSync(sessionDir)) {
       throw new Error("Session directory does not exist");
     }
-    const webcamPath = path.join(sessionDir, "webcam.webm");
+    const webcamPath = path.join(sessionDir, "webcam.mp4");
     fs.writeFileSync(webcamPath, Buffer.from(arrayBuffer));
     console.log(`[Main] Webcam video saved for session ${sessionId}: ${webcamPath}`);
     return { success: true, path: webcamPath };
@@ -98,6 +98,14 @@ function createWindow() {
   win.center();
   win.once("ready-to-show", () => {
     win == null ? void 0 : win.show();
+  });
+  win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ["media", "mediaKeySystem", "geolocation", "notifications", "midi", "midiSysex", "pointerLock", "fullscreen", "openExternal"];
+    if (allowedPermissions.includes(permission)) {
+      callback(true);
+    } else {
+      callback(false);
+    }
   });
   win.webContents.on("did-finish-load", () => {
     win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
@@ -165,6 +173,32 @@ ipcMain.handle("get-sources", async () => {
     return [];
   }
 });
+ipcMain.handle("get-display-info", async (_event, sourceId) => {
+  const allDisplays = screen.getAllDisplays();
+  let targetDisplay = screen.getPrimaryDisplay();
+  if (sourceId && sourceId.startsWith("screen:")) {
+    const displayId = sourceId.split(":")[1];
+    const found = allDisplays.find((d) => d.id.toString() === displayId);
+    if (found) targetDisplay = found;
+  }
+  return {
+    bounds: targetDisplay.bounds,
+    scaleFactor: targetDisplay.scaleFactor
+  };
+});
+ipcMain.handle("get-temp-path", async () => {
+  const tempDir = app.getPath("temp");
+  const sessionId = crypto.randomUUID();
+  const sessionDir = path$1.join(tempDir, "nuvideo_sessions", sessionId);
+  fs$1.mkdirSync(sessionDir, { recursive: true });
+  const fileName = `video_raw.mp4`;
+  const filePath = path$1.join(sessionDir, fileName);
+  return {
+    filePath,
+    sessionId,
+    customUrl: `nuvideo://session/${sessionId}/${fileName}`
+  };
+});
 ipcMain.handle("save-temp-video", async (_event, arrayBuffer) => {
   try {
     const tempDir = app.getPath("temp");
@@ -203,6 +237,58 @@ ipcMain.handle("show-save-dialog", async (_event, options = {}) => {
 });
 ipcMain.handle("sync-clock", async (_event, tClient) => {
   return { tClient, tServer: performance.now() };
+});
+ipcMain.handle("register-session", async (_event, { sessionId }) => {
+  const sessionDir = path$1.join(app.getPath("temp"), "nuvideo_sessions", sessionId);
+  if (!fs$1.existsSync(sessionDir)) {
+    return { success: false, error: "Session directory not found" };
+  }
+  if (!allSessions.has(sessionId)) {
+    allSessions.set(sessionId, {
+      sessionId,
+      sessionDir
+      // 这里的占位符合协议处理器的最低要求
+    });
+  }
+  console.log("[Main] Registered session for protocol access:", sessionId);
+  return { success: true };
+});
+ipcMain.handle("save-session-events", async (_event, { sessionId, events }) => {
+  try {
+    const sessionDir = path$1.join(app.getPath("temp"), "nuvideo_sessions", sessionId);
+    const eventsDir = path$1.join(sessionDir, "events");
+    if (!fs$1.existsSync(eventsDir)) fs$1.mkdirSync(eventsDir, { recursive: true });
+    const filePath = path$1.join(eventsDir, "mouse.jsonl");
+    const content = events.map((e) => JSON.stringify(e)).join("\n");
+    fs$1.writeFileSync(filePath, content);
+    console.log(`[Main] Saved ${events.length} events to ${filePath}`);
+    return { success: true };
+  } catch (err) {
+    console.error("[Main] save-session-events failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("save-webcodecs-video", async (_event, { sessionId, arrayBuffer }) => {
+  try {
+    const sessionDir = path$1.join(app.getPath("temp"), "nuvideo_sessions", sessionId);
+    if (!fs$1.existsSync(sessionDir)) {
+      fs$1.mkdirSync(sessionDir, { recursive: true });
+    }
+    const videoPath = path$1.join(sessionDir, "video_raw.mp4");
+    const buffer = Buffer.from(arrayBuffer);
+    fs$1.writeFileSync(videoPath, buffer);
+    console.log(`[Main] Saved WebCodecs video: ${videoPath} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    if (!allSessions.has(sessionId)) {
+      allSessions.set(sessionId, {
+        sessionId,
+        sessionDir
+      });
+    }
+    return { success: true, videoPath: `nuvideo://session/${sessionId}/video_raw.mp4` };
+  } catch (err) {
+    console.error("[Main] save-webcodecs-video failed:", err);
+    return { success: false, error: err.message };
+  }
 });
 class SessionRecorder {
   constructor(sourceId, bounds, scaleFactor) {
@@ -252,10 +338,9 @@ class SessionRecorder {
     fs$1.writeFileSync(this.manifestPath, JSON.stringify(this.manifest, null, 2));
   }
   logMouseEvent(event) {
-    if (this.mouseLogStream) {
-      const entry = JSON.stringify({ ...event, ts: performance.now() - this.startTime });
-      this.mouseLogStream.write(entry + "\n");
-    }
+    if (this.isStopping || !this.mouseLogStream) return;
+    const entry = JSON.stringify({ ...event, ts: performance.now() - this.startTime });
+    this.mouseLogStream.write(entry + "\n");
   }
   async start(ffmpegPath2, args, monitorPath) {
     const { spawn } = await import("node:child_process");
@@ -356,6 +441,10 @@ class SessionRecorder {
       this.mouseMonitorProcess.kill();
       this.mouseMonitorProcess = null;
     }
+    if (this.mouseLogStream) {
+      this.mouseLogStream.end();
+      this.mouseLogStream = null;
+    }
     return new Promise((resolve) => {
       const proc = this.ffmpegProcess;
       if (!proc) return resolve("");
@@ -367,10 +456,6 @@ class SessionRecorder {
       }, 3e3);
       proc.once("close", () => {
         clearTimeout(forceKillTimer);
-        if (this.mouseLogStream) {
-          this.mouseLogStream.close();
-          this.mouseLogStream = null;
-        }
         this.manifest.status = "finished";
         this.writeManifest();
         console.log(`[Session] Recording finished: ${this.sessionId}`);
@@ -395,6 +480,34 @@ class SessionRecorder {
 }
 let currentSession = null;
 const allSessions = /* @__PURE__ */ new Map();
+let mouseMonitorTimer = null;
+function startGlobalMouseMonitor() {
+  if (mouseMonitorTimer) return;
+  mouseMonitorTimer = setInterval(() => {
+    const point = screen.getCursorScreenPoint();
+    BrowserWindow.getAllWindows().forEach((w) => {
+      w.webContents.send("mouse-update", {
+        x: point.x,
+        y: point.y,
+        t: performance.now()
+      });
+    });
+  }, 16);
+  console.log("[Main] Global mouse monitor started (60fps)");
+}
+function stopGlobalMouseMonitor() {
+  if (mouseMonitorTimer) {
+    clearInterval(mouseMonitorTimer);
+    mouseMonitorTimer = null;
+    console.log("[Main] Global mouse monitor stopped");
+  }
+}
+ipcMain.on("start-mouse-monitoring", () => {
+  startGlobalMouseMonitor();
+});
+ipcMain.on("stop-mouse-monitoring", () => {
+  stopGlobalMouseMonitor();
+});
 function buildFFmpegArgs(videoInputFiles, outputPath) {
   const args = [
     "-loglevel",
@@ -417,11 +530,19 @@ function buildFFmpegArgs(videoInputFiles, outputPath) {
     "22",
     // 降低 CRF (从 25 到 22) 以提升基础录制质量
     "-movflags",
-    "frag_keyframe+empty_moov+default_base_moof",
+    "+faststart",
+    // 使用 faststart 而不是 fragmented，兼容性更好
     "-threads",
     "0",
     "-pix_fmt",
     "yuv420p",
+    // 🎯 关键修复：减少编码器缓冲，降低停止延迟
+    "-max_muxing_queue_size",
+    "1024",
+    // 限制 muxer 队列大小
+    "-fflags",
+    "+flush_packets",
+    // 立即刷新数据包
     outputPath,
     "-y"
   );
@@ -446,7 +567,8 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
   currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
   const recordingPath = currentSession.videoPath;
   const videoInputDda = [
-    ["-f", "ddagrab", "-framerate", "60", "-draw_mouse", "0", "-output_idx", outputIdx.toString(), "-rtbufsize", "1000M", "-i", "desktop"]
+    // 🎯 关键修复：减小缓冲区大小，降低停止延迟
+    ["-f", "ddagrab", "-framerate", "60", "-draw_mouse", "0", "-output_idx", outputIdx.toString(), "-rtbufsize", "100M", "-i", "desktop"]
   ];
   const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
   const scriptPath = path$1.join(process.env.APP_ROOT || "", "resources", "scripts", "mouse-monitor.ps1");
@@ -464,7 +586,8 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
     const physicalH = toEven(bounds.height * scaleFactor);
     currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
     const videoInputGdi = [
-      ["-f", "gdigrab", "-framerate", "30", "-draw_mouse", "0", "-rtbufsize", "500M", "-offset_x", Math.round(bounds.x * scaleFactor).toString(), "-offset_y", Math.round(bounds.y * scaleFactor).toString(), "-video_size", `${physicalW}x${physicalH}`, "-i", "desktop"]
+      // 🎯 关键修复：减小缓冲区大小，降低停止延迟
+      ["-f", "gdigrab", "-framerate", "30", "-draw_mouse", "0", "-rtbufsize", "50M", "-offset_x", Math.round(bounds.x * scaleFactor).toString(), "-offset_y", Math.round(bounds.y * scaleFactor).toString(), "-video_size", `${physicalW}x${physicalH}`, "-i", "desktop"]
     ];
     const argsGdi = buildFFmpegArgs(videoInputGdi, currentSession.videoPath);
     result = await currentSession.start(ffmpegPath, argsGdi, psPath);

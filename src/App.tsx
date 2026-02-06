@@ -4,14 +4,12 @@ import { EditorPage } from "./components/EditorPage";
 import { RecordingStatusBar } from "./components/RecordingStatusBar";
 import { HomePage } from "./components/HomePage";
 import { AppState, RecordingState, RenderGraph, MouseEvent } from "./types";
-import { mouseTracker, screenRecorder } from "./recorder";
+import { mouseTracker } from "./recorder";
 import { nativeAudioRecorder } from "./recorder/audio-capture";
 import { webcamRecorder } from "./recorder/webcam-capture";
 import { cn } from "@/lib/utils";
-import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
 import { motion, AnimatePresence } from "framer-motion";
-import { CountdownOverlay } from "./components/Common/CountdownOverlay";
 
 function App() {
   const [appState, setAppState] = useState<AppState>("home");
@@ -32,8 +30,6 @@ function App() {
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
   );
-  const [isCountingDown, setIsCountingDown] = useState(false);
-  const countdownDataRef = useRef<any>(null);
 
   const handleUpdateAutoZoom = (val: boolean) => {
     setAutoZoomEnabled(val);
@@ -122,9 +118,10 @@ function App() {
     return () => clearInterval(interval);
   }, [recordingState.isRecording, recordingState.isPaused]);
 
+  const [isStopping, setIsStopping] = useState(false);
+
   const handleStartRecording = useCallback(async (
     sourceId: string,
-    quality: QualityConfig,
     format: "video" | "gif" = "video",
     autoZoom: boolean = true,
     audioConfig: {
@@ -137,35 +134,37 @@ function App() {
       deviceId: string | null;
     },
   ) => {
-    // 存储参数准备在倒计时结束后启动
-    countdownDataRef.current = { sourceId, quality, format, autoZoom, audioConfig, webcamConfig };
-    setIsCountingDown(true);
-  }, []);
-
-  const startActualRecording = async () => {
-    const data = countdownDataRef.current;
-    if (!data) return;
-    const { sourceId, quality, format, autoZoom, audioConfig, webcamConfig } = data;
-
     try {
-      console.log("[App] Starting actual recording after countdown...");
+      console.log("[App] Starting FFmpeg recording...");
       await mouseTracker.syncClock();
-      mouseTracker.start();
+      (window as any).ipcRenderer.send('start-mouse-monitoring');
       
-      const [startResult, audioT0, webcamT0] = await Promise.all([
-        screenRecorder.start(sourceId, quality, audioConfig),
+      // 1. 启动 FFmpeg Sidecar 录制
+      const startResult = await (window as any).ipcRenderer.invoke('start-sidecar-record', sourceId);
+      
+      if (!startResult?.success || !startResult?.bounds || !startResult?.sessionId) {
+         throw new Error(startResult?.error || "Failed to start recording.");
+      }
+
+      // 2. 注册会话
+      await (window as any).ipcRenderer.invoke('register-session', { 
+        sessionId: startResult.sessionId 
+      });
+
+      // 3. 基于视频边界启动鼠标追踪和音频/摄像头
+      mouseTracker.start(startResult.bounds);
+      mouseTracker.align(startResult.t0);
+
+      const [audioT0, webcamT0] = await Promise.all([
         nativeAudioRecorder.start(sourceId, audioConfig),
         webcamConfig.enabled && webcamConfig.deviceId
           ? webcamRecorder.start(webcamConfig.deviceId)
           : Promise.resolve(0),
       ]);
 
-      if (startResult?.t0) {
-        readyOffsetRef.current = startResult.readyOffset;
-        mouseTracker.align(startResult.t0);
-        audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0 + 150;
-        webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
-      }
+      readyOffsetRef.current = startResult.readyOffset;
+      audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0 + 150;
+      webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
 
       setRecordingState({
         isRecording: true,
@@ -176,102 +175,44 @@ function App() {
         autoZoom,
       });
 
-      setIsCountingDown(false);
       transitionTo("recording");
     } catch (err) {
       console.error("Failed to start recording:", err);
-      setIsCountingDown(false);
       setRecordingState((prev) => ({ ...prev, isRecording: false }));
-      alert("录制启动失败");
+      alert("录制启动失败: " + (err as Error).message);
     }
-  };
+  }, [transitionTo]);
 
-  const fetchSessionEvents = async (
-    sessionId: string,
-  ): Promise<MouseEvent[]> => {
-    try {
-      const response = await fetch(
-        `nuvideo://session/${sessionId}/events/mouse.jsonl`,
-      );
-      if (!response.ok) return [];
-      const text = await response.text();
-      const lines = text.trim() ? text.trim().split("\n") : [];
-      const parsed = lines.map((line) => JSON.parse(line));
-
-      const result: MouseEvent[] = [];
-      let lastX = 0.5;
-      let lastY = 0.5;
-
-      for (const raw of parsed) {
-        // 1. 始终优先提取坐标（即使该事件后续被过滤），保证位置继承链不中断
-        const hasXY = typeof raw.x === "number" && typeof raw.y === "number";
-        const x = hasXY ? raw.x : lastX;
-        const y = hasXY ? raw.y : lastY;
-        if (hasXY) {
-          lastX = x;
-          lastY = y;
-        }
-
-        // 2. 减去准备时间偏移。
-        const rawT = typeof raw.t === "number" ? raw.t : raw.ts;
-        if (typeof rawT !== "number") continue;
-
-        const t = rawT - readyOffsetRef.current;
-        // 过滤掉视频开始之前的鼠标动作
-        if (t < 0) continue;
-
-        if (
-          raw.type !== "move" &&
-          raw.type !== "down" &&
-          raw.type !== "up" &&
-          raw.type !== "click"
-        )
-          continue;
-
-        result.push({
-          t,
-          x,
-          y,
-          type: raw.type,
-        });
-      }
-
-      return result.sort((a, b) => a.t - b.t);
-    } catch (e) {
-      console.error("[App] Failed to fetch session events:", e);
-      return [];
-    }
-  };
+  // fetchSessionEvents 已废弃 - WebCodecs 方案直接从 mouseTracker 获取事件
 
   const handleStopRecording = async () => {
     if (!recordingState.isRecording) return;
 
+    setIsStopping(true);
     try {
-      // 关键修复：立即标记停止录制，防止计时器继续累加（IPC 通信期间可能产生几百毫秒误差）
+      // 关键修复：立即标记停止录制，防止计时器继续累加
       setRecordingState((prev) => ({
         ...prev,
         isRecording: false,
+        duration: 0,
         isPaused: false,
       }));
 
-      mouseTracker.stop();
-      console.log(
-        "[App] Stopping recording. isRecording:",
-        recordingState.isRecording,
-      );
+      // 🎯 关键修复:先停止鼠标追踪并获取事件数组
+      const mouseEvents = mouseTracker.stop();
+      console.log("[App] Stopping all recording streams...");
 
-      const sessionResult = await screenRecorder.stop();
-      // 停止原生音频录制并获取数据 { micBuffer, sysBuffer }
-      const audioBuffers = await nativeAudioRecorder.stop();
-      // 停止摄像头录制并获取数据
-      const webcamBuffer = await webcamRecorder.stop();
+      // 🎯 极致优化:并发停止所有流
+      const [sessionResult, audioBuffers, webcamBuffer] = await Promise.all([
+        (window as any).ipcRenderer.invoke('stop-sidecar-record'),
+        nativeAudioRecorder.stop(),
+        webcamRecorder.stop(),
+      ]);
 
-      console.log("[App] Recording stop result:", sessionResult);
+      console.log("[App] All streams stopped synchronously");
 
-      if (!sessionResult) {
-        throw new Error(
-          `Empty recording result. Main process state might have been lost or recording crashed.`,
-        );
+      if (!sessionResult?.success) {
+        throw new Error("Failed to stop recording");
       }
 
       const { sessionId } = sessionResult;
@@ -279,7 +220,7 @@ function App() {
       // 如果有录制到音频，保存到会话目录 (分轨模式)
       const audioTracks: any[] = [];
       if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
-        const saveResult = await (window as any).ipcRenderer.invoke(
+        const audioSaveResult = await (window as any).ipcRenderer.invoke(
           "save-session-audio-segments",
           {
             sessionId,
@@ -288,9 +229,8 @@ function App() {
           },
         );
 
-        if (saveResult.success) {
-          // 构建多轨音频配置
-          if (saveResult.micPath) {
+        if (audioSaveResult.success) {
+          if (audioSaveResult.micPath) {
             audioTracks.push({
               source: "microphone",
               startTime: 0,
@@ -300,7 +240,7 @@ function App() {
               fadeOut: 300,
             });
           }
-          if (saveResult.sysPath) {
+          if (audioSaveResult.sysPath) {
             audioTracks.push({
               source: "system",
               startTime: 0,
@@ -316,22 +256,27 @@ function App() {
       // 处理摄像头视频保存
       let finalWebcamPath = undefined;
       if (webcamBuffer && webcamBuffer.byteLength > 0) {
-        const saveResult = await (window as any).ipcRenderer.invoke(
+        const webcamSaveResult = await (window as any).ipcRenderer.invoke(
           "save-session-webcam",
           {
             sessionId,
             arrayBuffer: webcamBuffer,
           },
         );
-        if (saveResult.success) {
-          finalWebcamPath = `nuvideo://session/${sessionId}/webcam.webm`;
+        if (webcamSaveResult.success) {
+          finalWebcamPath = `nuvideo://session/${sessionId}/webcam.mp4`;
         }
       }
-      const mouseEvents = await fetchSessionEvents(sessionId);
-
+      
+      // 🎯 关键修复:保存鼠标事件到文件系统
+      await (window as any).ipcRenderer.invoke('save-session-events', {
+        sessionId,
+        events: mouseEvents
+      });
+      console.log(`[App] Saved ${mouseEvents.length} mouse events to session`);
+      
       const tailPaddingMs = 150;
-      const lastEventT =
-        mouseEvents.length > 0 ? mouseEvents[mouseEvents.length - 1].t : 0;
+      const lastEventT = mouseEvents.length > 0 ? mouseEvents[mouseEvents.length - 1].t : 0;
       const finalDurationMs = Math.max(
         recordingState.duration,
         Math.ceil(lastEventT + tailPaddingMs),
@@ -340,10 +285,7 @@ function App() {
       const finalGraph: RenderGraph = {
         videoSource: `nuvideo://session/${sessionId}/video_raw.mp4`,
         duration: finalDurationMs,
-        // 支持多轨音频
-        audio: {
-          tracks: audioTracks,
-        },
+        audio: { tracks: audioTracks },
         webcamSource: finalWebcamPath,
         webcamDelay: webcamDelayRef.current,
         mouse: mouseEvents,
@@ -355,10 +297,7 @@ function App() {
           showHighlight: false,
           highlightColor: "rgba(255,255,255,0.2)",
         },
-        mousePhysics: {
-          smoothing: 0.88,
-          speedLimit: 2400,
-        },
+        mousePhysics: { smoothing: 0.88, speedLimit: 2400 },
         camera: {
           intents: [],
           algorithm: "spring",
@@ -371,9 +310,7 @@ function App() {
           targetFormat: recordingState.format,
         },
         autoZoom: recordingState.autoZoom,
-        webcam: {
-          isEnabled: !!finalWebcamPath,
-        },
+        webcam: { isEnabled: !!finalWebcamPath },
         audioDelay: audioDelayRef.current,
       };
 
@@ -384,17 +321,14 @@ function App() {
         isPaused: false,
       }));
       setRenderGraph(finalGraph);
-
       transitionTo("editor");
     } catch (err) {
-      console.error("[App] Failed to finalize recording:", err);
-      setRecordingState((prev) => ({
-        ...prev,
-        isRecording: false,
-        duration: 0,
-        isPaused: false,
-      }));
+      console.error("[App] Stop recording failed:", err);
+      alert("停止录制失败: " + (err as Error).message);
       transitionTo("home");
+    } finally {
+      setIsStopping(false);
+      (window as any).ipcRenderer.send('stop-mouse-monitoring');
     }
   };
 
@@ -472,8 +406,7 @@ function App() {
       <div 
         style={{ willChange: 'transform, filter' }}
         className={cn(
-          "flex h-full w-full flex-col relative z-10 transition-[filter,transform,opacity] duration-500 ease-out-expo",
-          isCountingDown ? "scale-[0.98] blur-[10px] saturate-[0.8]" : "scale-100 blur-0"
+          "flex h-full w-full flex-col relative z-10 transition-[filter,transform,opacity] duration-500 ease-out-expo"
         )} 
         key={language}
       >
@@ -494,6 +427,7 @@ function App() {
                 onPause={handlePauseRecording}
                 onResume={handleResumeRecording}
                 language={language}
+                isStopping={isStopping}
               />
             </motion.div>
           )}
@@ -540,11 +474,6 @@ function App() {
         </AnimatePresence>
       </div>
 
-      <AnimatePresence>
-        {isCountingDown && (
-          <CountdownOverlay onComplete={startActualRecording} />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

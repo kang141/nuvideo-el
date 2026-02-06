@@ -100,14 +100,15 @@ export function EditorHeader({
       <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <div className="flex items-center gap-2">
           <Select value={qualityId} onValueChange={setQualityId} disabled={isExporting}>
-            <SelectTrigger className="h-8 w-[110px] border border-white/[0.04] bg-white/[0.02] text-[11px] font-black text-white/60 hover:text-white hover:bg-white/[0.04] rounded-lg focus:ring-0 transition-all">
-               <Zap size={10} className="mr-1.5 text-emerald-500/80" />
+            <SelectTrigger className="h-8 w-[120px] border border-white/[0.04] bg-white/[0.02] text-[10px] font-bold text-white/60 hover:text-white hover:bg-white/[0.04] rounded-lg focus:ring-0 transition-all">
+               <Zap size={10} className="mr-1 text-emerald-500/80" />
+               <span className="mr-1 opacity-50">导出:</span>
                <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#121212] border-white/[0.08] text-white/80 shadow-2xl backdrop-blur-xl min-w-[110px]">
+            <SelectContent className="bg-[#121212] border-white/[0.08] text-white/80 shadow-2xl backdrop-blur-xl min-w-[120px]">
               {QUALITY_OPTIONS.map((q) => (
                 <SelectItem key={q.id} value={q.id} className="text-[11px] font-bold focus:bg-white/10 focus:text-white py-2 cursor-pointer">
-                  {q.label}
+                  {q.label} ({q.maxWidth}x{q.maxHeight})
                 </SelectItem>
               ))}
             </SelectContent>

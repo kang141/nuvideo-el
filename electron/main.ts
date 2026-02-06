@@ -74,6 +74,17 @@ function createWindow() {
     win?.show()
   })
 
+  // 🎯 关键修复：设置媒体权限处理
+  win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'geolocation', 'notifications', 'midi', 'midiSysex', 'pointerLock', 'fullscreen', 'openExternal'];
+    
+    if (allowedPermissions.includes(permission)) {
+      callback(true); // 允许
+    } else {
+      callback(false); // 拒绝
+    }
+  });
+
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
     win?.webContents.send('main-process-message', (new Date).toLocaleString())
@@ -155,6 +166,40 @@ ipcMain.handle('get-sources', async () => {
   }
 })
 
+// 获取显示器精确信息 (用于 WebCodecs 物理分辨率计算)
+ipcMain.handle('get-display-info', async (_event, sourceId: string) => {
+  const allDisplays = screen.getAllDisplays();
+  let targetDisplay = screen.getPrimaryDisplay();
+
+  if (sourceId && sourceId.startsWith('screen:')) {
+    const displayId = sourceId.split(':')[1];
+    const found = allDisplays.find(d => d.id.toString() === displayId);
+    if (found) targetDisplay = found;
+  }
+
+  return {
+    bounds: targetDisplay.bounds,
+    scaleFactor: targetDisplay.scaleFactor
+  };
+});
+
+// 获取临时录制路径
+ipcMain.handle('get-temp-path', async () => {
+  const tempDir = app.getPath('temp');
+  const sessionId = crypto.randomUUID();
+  const sessionDir = path.join(tempDir, 'nuvideo_sessions', sessionId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  
+  const fileName = `video_raw.mp4`;
+  const filePath = path.join(sessionDir, fileName);
+  
+  return {
+    filePath,
+    sessionId,
+    customUrl: `nuvideo://session/${sessionId}/${fileName}`
+  };
+});
+
 // 保存录制的视频到临时文件
 ipcMain.handle('save-temp-video', async (_event, arrayBuffer: ArrayBuffer) => {
   try {
@@ -205,6 +250,74 @@ ipcMain.handle('show-save-dialog', async (_event, options: { defaultPath?: strin
 ipcMain.handle('sync-clock', async (_event, tClient: number) => {
   return { tClient, tServer: performance.now() }
 })
+
+// 注册新会话到主进程映射 (用于 nuvideo:// 协议处理)
+ipcMain.handle('register-session', async (_event, { sessionId }) => {
+  const sessionDir = path.join(app.getPath('temp'), 'nuvideo_sessions', sessionId);
+  if (!fs.existsSync(sessionDir)) {
+    return { success: false, error: 'Session directory not found' };
+  }
+  
+  // 如果会话尚未在 allSessions 中，通过路径特征创建一个“虚拟会话”对象注入
+  if (!allSessions.has(sessionId)) {
+    allSessions.set(sessionId, {
+      sessionId,
+      sessionDir,
+      // 这里的占位符合协议处理器的最低要求
+    } as any);
+  }
+  
+  console.log('[Main] Registered session for protocol access:', sessionId);
+  return { success: true };
+});
+
+// 保存录制事件轨迹 (JSONL)
+ipcMain.handle('save-session-events', async (_event, { sessionId, events }) => {
+  try {
+    const sessionDir = path.join(app.getPath('temp'), 'nuvideo_sessions', sessionId);
+    const eventsDir = path.join(sessionDir, 'events');
+    if (!fs.existsSync(eventsDir)) fs.mkdirSync(eventsDir, { recursive: true });
+
+    const filePath = path.join(eventsDir, 'mouse.jsonl');
+    const content = events.map((e: any) => JSON.stringify(e)).join('\n');
+    fs.writeFileSync(filePath, content);
+    
+    console.log(`[Main] Saved ${events.length} events to ${filePath}`);
+    return { success: true };
+  } catch (err) {
+    console.error('[Main] save-session-events failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 保存 WebCodecs 录制的视频到会话目录
+ipcMain.handle('save-webcodecs-video', async (_event, { sessionId, arrayBuffer }) => {
+  try {
+    const sessionDir = path.join(app.getPath('temp'), 'nuvideo_sessions', sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    }
+
+    const videoPath = path.join(sessionDir, 'video_raw.mp4');
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(videoPath, buffer);
+
+    console.log(`[Main] Saved WebCodecs video: ${videoPath} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+
+    // 注册会话到映射
+    if (!allSessions.has(sessionId)) {
+      allSessions.set(sessionId, {
+        sessionId,
+        sessionDir,
+      } as any);
+    }
+
+    return { success: true, videoPath: `nuvideo://session/${sessionId}/video_raw.mp4` };
+  } catch (err) {
+    console.error('[Main] save-webcodecs-video failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
 
 // --- Session 架构核心类 ---
 interface Manifest {
@@ -281,11 +394,12 @@ class SessionRecorder {
   }
 
   logMouseEvent(event: any) {
-    if (this.mouseLogStream) {
-      // 统一使用微秒级精度或毫秒级浮点
-      const entry = JSON.stringify({ ...event, ts: performance.now() - this.startTime });
-      this.mouseLogStream.write(entry + '\n');
-    }
+    // 🎯 关键修复：如果正在停止，不再记录新事件
+    if (this.isStopping || !this.mouseLogStream) return;
+    
+    // 统一使用微秒级精度或毫秒级浮点
+    const entry = JSON.stringify({ ...event, ts: performance.now() - this.startTime });
+    this.mouseLogStream.write(entry + '\n');
   }
 
   async start(ffmpegPath: string, args: string[], monitorPath: string): Promise<{ success: boolean; error?: string; readyOffset?: number }> {
@@ -395,6 +509,7 @@ class SessionRecorder {
     if (this.isStopping) return '';
     this.isStopping = true;
 
+    // 🎯 关键修复：立即停止鼠标事件记录
     // 清理鼠标轮询定时器
     if (this.mousePollTimer) {
       clearInterval(this.mousePollTimer);
@@ -407,6 +522,12 @@ class SessionRecorder {
       this.mouseMonitorProcess = null;
     }
 
+    // 🎯 立即关闭鼠标日志流，防止继续写入
+    if (this.mouseLogStream) {
+      this.mouseLogStream.end(); // 使用 end() 而不是 close()，确保缓冲区刷新
+      this.mouseLogStream = null;
+    }
+
     return new Promise((resolve) => {
       const proc = this.ffmpegProcess;
       if (!proc) return resolve('');
@@ -417,12 +538,6 @@ class SessionRecorder {
 
       proc.once('close', () => {
         clearTimeout(forceKillTimer);
-        
-        // 关闭鼠标日志流
-        if (this.mouseLogStream) {
-          this.mouseLogStream.close();
-          this.mouseLogStream = null;
-        }
 
         this.manifest.status = 'finished';
         this.writeManifest();
@@ -453,6 +568,45 @@ class SessionRecorder {
 
 let currentSession: SessionRecorder | null = null;
 const allSessions = new Map<string, SessionRecorder>();
+let mouseMonitorTimer: any = null;
+
+// 每 16ms (约 60fps) 轮询一次鼠标物理位置并广播给所有渲染层
+function startGlobalMouseMonitor() {
+  if (mouseMonitorTimer) return;
+  
+  mouseMonitorTimer = setInterval(() => {
+    const point = screen.getCursorScreenPoint();
+    // 转发给所有打开的窗口 (主要用于录制器渲染层捕获)
+    BrowserWindow.getAllWindows().forEach(w => {
+      w.webContents.send('mouse-update', {
+        x: point.x,
+        y: point.y,
+        t: performance.now()
+      });
+    });
+  }, 16);
+
+  console.log('[Main] Global mouse monitor started (60fps)');
+}
+
+function stopGlobalMouseMonitor() {
+  if (mouseMonitorTimer) {
+    clearInterval(mouseMonitorTimer);
+    mouseMonitorTimer = null;
+    console.log('[Main] Global mouse monitor stopped');
+  }
+}
+
+// 监听鼠标点击并广播
+// 注意：由于 Electron 限制，我们需要显式在窗口层捕获或使用底层钩子
+// 这里我们使用简化的方案：当窗口获取焦点时转发事件，或者在 App.tsx 启动时激活全局监听
+ipcMain.on('start-mouse-monitoring', () => {
+  startGlobalMouseMonitor();
+});
+
+ipcMain.on('stop-mouse-monitoring', () => {
+  stopGlobalMouseMonitor();
+});
 
 /**
  * 助手函数：构建带音频支持的 FFmpeg 参数
@@ -474,9 +628,12 @@ function buildFFmpegArgs(videoInputFiles: string[][], outputPath: string) {
     '-preset', 'veryfast', // 从 ultrafast 升级到 veryfast，在保证实时性的前提下显著提升画质
     '-tune', 'zerolatency',
     '-crf', '22', // 降低 CRF (从 25 到 22) 以提升基础录制质量
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-movflags', '+faststart', // 使用 faststart 而不是 fragmented，兼容性更好
     '-threads', '0',
     '-pix_fmt', 'yuv420p',
+    // 🎯 关键修复：减少编码器缓冲，降低停止延迟
+    '-max_muxing_queue_size', '1024', // 限制 muxer 队列大小
+    '-fflags', '+flush_packets',      // 立即刷新数据包
     outputPath,
     '-y'
   );
@@ -511,7 +668,8 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   // --- 尝试方案 A: ddagrab (现代引擎) ---
   const videoInputDda = [
-    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '1000M', '-i', 'desktop']
+    // 🎯 关键修复：减小缓冲区大小，降低停止延迟
+    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '100M', '-i', 'desktop']
   ];
   
   const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
@@ -538,7 +696,8 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
 
     const videoInputGdi = [
-      ['-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '0', '-rtbufsize', '500M', '-offset_x', Math.round(bounds.x * scaleFactor).toString(), '-offset_y', Math.round(bounds.y * scaleFactor).toString(), '-video_size', `${physicalW}x${physicalH}`, '-i', 'desktop']
+      // 🎯 关键修复：减小缓冲区大小，降低停止延迟
+      ['-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '0', '-rtbufsize', '50M', '-offset_x', Math.round(bounds.x * scaleFactor).toString(), '-offset_y', Math.round(bounds.y * scaleFactor).toString(), '-video_size', `${physicalW}x${physicalH}`, '-i', 'desktop']
     ];
 
     const argsGdi = buildFFmpegArgs(videoInputGdi, currentSession.videoPath);
