@@ -66,6 +66,10 @@ const getFFmpegPath = () => {
 };
 const ffmpegPath = getFFmpegPath();
 let win;
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-features", "WebRtcUseWgcCapturer");
+  app.commandLine.appendSwitch("log-level", "3");
+}
 protocol.registerSchemesAsPrivileged([
   { scheme: "nuvideo", privileges: { bypassCSP: true, stream: true, secure: true, standard: true, supportFetchAPI: true } },
   { scheme: "asset", privileges: { bypassCSP: true, secure: true, standard: true, supportFetchAPI: true } }
@@ -91,8 +95,10 @@ function createWindow() {
     webPreferences: {
       preload: path$1.join(__dirname$1, "preload.mjs"),
       webSecurity: true,
-      backgroundThrottling: false
+      backgroundThrottling: false,
       // 关键：防止后台导出时由于节能导致的解码/渲染暂停
+      // 禁用 WGC 捕获，避免 wgc_capturer_win.cc 错误
+      enableWebSQL: false
     }
   });
   win.center();
@@ -153,23 +159,31 @@ ipcMain.on("set-ignore-mouse-events", (_event, ignore, options) => {
     win.setIgnoreMouseEvents(ignore, options);
   }
 });
-ipcMain.handle("get-sources", async () => {
+ipcMain.handle("get-sources", async (_event, options) => {
   try {
+    const requestedTypes = (options == null ? void 0 : options.types) || ["screen", "window"];
     const sources = await desktopCapturer.getSources({
-      types: ["window", "screen"],
+      types: requestedTypes,
       thumbnailSize: { width: 400, height: 225 },
-      // 略微提升分辨率以匹配 UI 宽度 (清晰度+)
       fetchWindowIcons: false
-      // 首页暂不需要图标，减少开销
     });
-    return sources.map((source) => ({
+    const uncapturablePatterns = [
+      /NVIDIA GeForce/i,
+      /GeForce Overlay/i,
+      /Windows\.UI\.Core/i,
+      /ApplicationFrameHost/i,
+      /ShellExperienceHost/i,
+      /SystemSettings/i
+    ];
+    return sources.filter((source) => {
+      if (source.id.startsWith("screen:")) return true;
+      return !uncapturablePatterns.some((pattern) => pattern.test(source.name));
+    }).map((source) => ({
       id: source.id,
       name: source.name,
-      // 使用 85% 质量的 JPEG，平衡清晰度与性能
       thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString("base64")}`
     }));
   } catch (err) {
-    console.error("Failed to get sources:", err);
     return [];
   }
 });
@@ -838,6 +852,198 @@ ipcMain.on("window-control", (_event, action, value) => {
     case "close":
       win.close();
       break;
+  }
+});
+const activeExportSessions = /* @__PURE__ */ new Map();
+ipcMain.handle("start-ffmpeg-export", async (_event, {
+  width,
+  height,
+  fps,
+  outputPath,
+  audioPath,
+  bitrate = 5e7
+}) => {
+  var _a;
+  try {
+    const { spawn } = await import("node:child_process");
+    const sessionId = `export_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const hwEncoders = [
+      "h264_nvenc",
+      // NVIDIA
+      "h264_qsv",
+      // Intel Quick Sync
+      "h264_amf",
+      // AMD
+      "h264_videotoolbox"
+      // macOS
+    ];
+    let selectedEncoder = "libx264";
+    let encoderPreset = "veryfast";
+    if (process.platform === "win32") {
+      selectedEncoder = "h264_nvenc";
+      encoderPreset = "p4";
+    } else if (process.platform === "darwin") {
+      selectedEncoder = "h264_videotoolbox";
+      encoderPreset = "medium";
+    }
+    const args = [
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgba",
+      "-s",
+      `${width}x${height}`,
+      "-r",
+      fps.toString(),
+      "-i",
+      "pipe:0"
+      // 从 stdin 读取视频帧
+    ];
+    if (audioPath) {
+      args.push("-i", audioPath);
+    }
+    args.push(
+      "-c:v",
+      selectedEncoder,
+      "-b:v",
+      bitrate.toString(),
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart"
+    );
+    if (selectedEncoder === "h264_nvenc") {
+      args.push("-preset", encoderPreset, "-rc", "vbr");
+    } else if (selectedEncoder === "libx264") {
+      args.push("-preset", encoderPreset, "-crf", "18");
+    }
+    if (audioPath) {
+      args.push("-c:a", "aac", "-b:a", "192k");
+    }
+    args.push("-y", outputPath);
+    console.log("[FFmpeg Export] Starting with encoder:", selectedEncoder);
+    console.log("[FFmpeg Export] Command:", ffmpegPath, args.join(" "));
+    const ffmpegProcess = spawn(ffmpegPath, args, {
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stderrOutput = "";
+    (_a = ffmpegProcess.stderr) == null ? void 0 : _a.on("data", (data) => {
+      const log = data.toString();
+      stderrOutput += log;
+      if (log.includes("frame=")) {
+        process.stdout.write(`\r[FFmpeg Export] ${log.trim()}`);
+      }
+    });
+    ffmpegProcess.on("error", (err) => {
+      console.error("[FFmpeg Export] Process error:", err);
+      activeExportSessions.delete(sessionId);
+    });
+    ffmpegProcess.on("exit", (code) => {
+      console.log(`
+[FFmpeg Export] Process exited with code ${code}`);
+      if (code !== 0) {
+        console.error("[FFmpeg Export] stderr:", stderrOutput);
+      }
+      activeExportSessions.delete(sessionId);
+    });
+    activeExportSessions.set(sessionId, {
+      process: ffmpegProcess,
+      outputPath,
+      width,
+      height,
+      fps,
+      frameCount: 0,
+      audioPath
+    });
+    return { success: true, sessionId, encoder: selectedEncoder };
+  } catch (err) {
+    console.error("[FFmpeg Export] Failed to start:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("write-ffmpeg-frame", async (_event, { sessionId, frameData }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    const buffer = Buffer.from(frameData);
+    return new Promise((resolve, reject) => {
+      if (!session.process.stdin || !session.process.stdin.writable) {
+        reject(new Error("FFmpeg stdin not writable"));
+        return;
+      }
+      const canWrite = session.process.stdin.write(buffer, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          session.frameCount++;
+          resolve({ success: true, frameCount: session.frameCount });
+        }
+      });
+      if (!canWrite) {
+        session.process.stdin.once("drain", () => {
+        });
+      }
+    });
+  } catch (err) {
+    console.error("[FFmpeg Export] Write frame failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("finish-ffmpeg-export", async (_event, { sessionId }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    return new Promise((resolve) => {
+      const proc = session.process;
+      const timeout = setTimeout(() => {
+        proc.kill("SIGKILL");
+        resolve({ success: false, frameCount: session.frameCount });
+      }, 1e4);
+      proc.once("exit", (code) => {
+        clearTimeout(timeout);
+        activeExportSessions.delete(sessionId);
+        console.log(`[FFmpeg Export] Finished. Total frames: ${session.frameCount}, Exit code: ${code}`);
+        resolve({ success: code === 0, frameCount: session.frameCount });
+      });
+      if (proc.stdin) {
+        proc.stdin.end();
+      }
+    });
+  } catch (err) {
+    console.error("[FFmpeg Export] Finish failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("cancel-ffmpeg-export", async (_event, { sessionId }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      return { success: false, error: "Session not found" };
+    }
+    session.process.kill("SIGKILL");
+    activeExportSessions.delete(sessionId);
+    if (fs$1.existsSync(session.outputPath)) {
+      fs$1.unlinkSync(session.outputPath);
+    }
+    return { success: true };
+  } catch (err) {
+    console.error("[FFmpeg Export] Cancel failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("save-temp-audio", async (_event, { arrayBuffer, path: audioPath }) => {
+  try {
+    const buffer = Buffer.from(arrayBuffer);
+    fs$1.writeFileSync(audioPath, buffer);
+    console.log("[Main] Temp audio saved:", audioPath);
+    return { success: true, path: audioPath };
+  } catch (err) {
+    console.error("[Main] save-temp-audio failed:", err);
+    return { success: false, error: err.message };
   }
 });
 export {

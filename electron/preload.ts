@@ -20,5 +20,5 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   },
 
   // You can expose other APTs you need here.
-  getSources: () => ipcRenderer.invoke('get-sources'),
+  getSources: (options?: { types?: ('screen' | 'window')[] }) => ipcRenderer.invoke('get-sources', options),
 })

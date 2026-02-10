@@ -64,7 +64,7 @@ export function useVideoExport({
       return { success: false };
     }
     
-    let streamId: string | null = null;
+    let ffmpegSessionId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
     const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
     const fps = 60;
@@ -330,12 +330,24 @@ export function useVideoExport({
       let lastProgressAt = 0;
       let encodedCount = 0;
 
-      // 6. 视频导出循环 (离线渲染模式 - 每一帧都必须渲染)
-      // 不再使用 video.play() + VFC，而是手动控制时间轴
-      console.log('[useVideoExport] Starting Offline Rendering Loop...');
-      
+      // 6. 视频导出循环 - 逐帧渲染
+      console.log('[useVideoExport] Starting export render loop...');
       const frameDuration = 1 / fps;
       const totalFrames = Math.ceil(durationSeconds * fps);
+      
+      setExportProgress(0.05);
+      
+      // 确保视频准备就绪
+      video.pause();
+      video.currentTime = 0;
+      
+      if (video.readyState < 2) {
+        await new Promise(r => {
+          video.addEventListener('loadeddata', () => r(null), { once: true });
+        });
+      }
+      
+      console.log('[useVideoExport] Starting frame capture...');
       let lastReportTime = performance.now();
 
       // 🎯 优化点：在循环外准备好背景填充 Canvas，避免每帧重复创建 (减少 GC 压力)
@@ -352,16 +364,14 @@ export function useVideoExport({
         const currentTime = frameIdx * frameDuration;
         const timestampMicros = Math.round(currentTime * 1_000_000);
 
-        // A. 渲染这一帧
-        // 🎯 关键变化：renderFrame 现在返回一个独立的离屏 Canvas 引用
+        // A. 渲染这一帧（WebCodecs 会自动处理，带 50ms 超时）
         const renderedCanvas = await renderFrame(currentTime * 1000);
         if (!renderedCanvas) {
           console.warn(`[useVideoExport] Frame ${frameIdx} render returned null, skipping...`);
-          frameIdx++;
           continue;
         }
 
-        // B. 从 Canvas 抓取图像 (确保不透明底色处理在独立的离屏环境中完成)
+        // B. 从 Canvas 抓取图像
         if (tCtx) {
           tCtx.fillStyle = '#0a0a0a'; 
           tCtx.fillRect(0, 0, exportWidth, exportHeight);
@@ -399,13 +409,8 @@ export function useVideoExport({
           await new Promise(r => setTimeout(r, 0));
         }
 
-        // 🎯 核心提速点：生产者-消费者流水线积压保护
-        // 当编码器队列过大时，暂停一下让编码器消化
-        // 🔥 关键修复：不要用 while 循环，会导致导出极慢！
-        if (videoEncoder && videoEncoder.encodeQueueSize > 64) {
-           // 单次等待，让出控制权给编码器
-           await new Promise(r => setTimeout(r, 10)); 
-        }
+        // 队列等待已移除 - 让编码器自己管理队列
+        // 如果遇到内存问题，可以重新启用队列检查
       }
 
       // 7. 音频编码处理

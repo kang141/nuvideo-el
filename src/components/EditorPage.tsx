@@ -9,7 +9,7 @@ import { generateAutoZoomIntents } from "../core/auto-zoom";
 // Hooks
 import { useVideoPlayback } from "../hooks/editor/useVideoPlayback";
 import { useVideoRenderer } from "../hooks/editor/useVideoRenderer";
-import { useVideoExport } from "../hooks/editor/useVideoExport";
+import { useVideoExportFFmpeg } from "../hooks/editor/useVideoExportFFmpeg";
 
 // Components
 import { EditorHeader } from "./Editor/EditorHeader";
@@ -323,7 +323,7 @@ export function EditorPage({
     exportProgress,
     handleExport: handleExportRaw,
     cancelExport,
-  } = useVideoExport({
+  } = useVideoExportFFmpeg({
     videoRef,
     canvasRef,
     maxDuration,

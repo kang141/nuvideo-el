@@ -36,6 +36,13 @@ const ffmpegPath = getFFmpegPath();
 
 let win: BrowserWindow | null
 
+// 禁用 Windows Graphics Capture API，避免 wgc_capturer_win.cc 错误刷屏
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'WebRtcUseWgcCapturer');
+  // 设置日志级别，过滤 WGC 相关错误
+  app.commandLine.appendSwitch('log-level', '3'); // 只显示 FATAL 级别的日志
+}
+
 protocol.registerSchemesAsPrivileged([
   { scheme: 'nuvideo', privileges: { bypassCSP: true, stream: true, secure: true, standard: true, supportFetchAPI: true } },
   { scheme: 'asset', privileges: { bypassCSP: true, secure: true, standard: true, supportFetchAPI: true } }
@@ -65,6 +72,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.mjs'),
       webSecurity: true,
       backgroundThrottling: false, // 关键：防止后台导出时由于节能导致的解码/渲染暂停
+      // 禁用 WGC 捕获，避免 wgc_capturer_win.cc 错误
+      enableWebSQL: false,
     },
   })
 
@@ -146,22 +155,42 @@ ipcMain.on('set-ignore-mouse-events', (_event, ignore, options) => {
   }
 })
 
-// 获取屏幕录制源
-ipcMain.handle('get-sources', async () => {
+// 获取屏幕录制源（支持按类型过滤）
+ipcMain.handle('get-sources', async (_event, options?: { types?: ('screen' | 'window')[] }) => {
   try {
+    const requestedTypes = options?.types || ['screen', 'window'];
+    
     const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 400, height: 225 }, // 略微提升分辨率以匹配 UI 宽度 (清晰度+)
-      fetchWindowIcons: false // 首页暂不需要图标，减少开销
+      types: requestedTypes,
+      thumbnailSize: { width: 400, height: 225 },
+      fetchWindowIcons: false
     })
-    return sources.map(source => ({
-      id: source.id,
-      name: source.name,
-      // 使用 85% 质量的 JPEG，平衡清晰度与性能
-      thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString('base64')}`
-    }))
+    
+    // 过滤掉无法捕获的窗口（如 NVIDIA GeForce Overlay、Windows 系统窗口等）
+    const uncapturablePatterns = [
+      /NVIDIA GeForce/i,
+      /GeForce Overlay/i,
+      /Windows\.UI\.Core/i,
+      /ApplicationFrameHost/i,
+      /ShellExperienceHost/i,
+      /SystemSettings/i,
+    ]
+    
+    return sources
+      .filter(source => {
+        // 保留所有屏幕源
+        if (source.id.startsWith('screen:')) return true
+        
+        // 过滤掉匹配无法捕获模式的窗口
+        return !uncapturablePatterns.some(pattern => pattern.test(source.name))
+      })
+      .map(source => ({
+        id: source.id,
+        name: source.name,
+        thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString('base64')}`
+      }))
   } catch (err) {
-    console.error('Failed to get sources:', err)
+    // 静默处理 WGC 错误，避免控制台刷屏
     return []
   }
 })
@@ -1038,3 +1067,251 @@ ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | '
       break
   }
 })
+
+// ============ FFmpeg 管道导出 API (硬件加速) ============
+import { ChildProcess } from 'node:child_process';
+
+interface FFmpegExportSession {
+  process: ChildProcess;
+  outputPath: string;
+  width: number;
+  height: number;
+  fps: number;
+  frameCount: number;
+  audioPath?: string;
+}
+
+const activeExportSessions = new Map<string, FFmpegExportSession>();
+
+// 启动 FFmpeg 管道导出
+ipcMain.handle('start-ffmpeg-export', async (_event, { 
+  width, 
+  height, 
+  fps, 
+  outputPath, 
+  audioPath,
+  bitrate = 50_000_000 
+}: { 
+  width: number; 
+  height: number; 
+  fps: number; 
+  outputPath: string; 
+  audioPath?: string;
+  bitrate?: number;
+}) => {
+  try {
+    const { spawn } = await import('node:child_process');
+    const sessionId = `export_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    // 检测可用的硬件编码器
+    const hwEncoders = [
+      'h264_nvenc',      // NVIDIA
+      'h264_qsv',        // Intel Quick Sync
+      'h264_amf',        // AMD
+      'h264_videotoolbox' // macOS
+    ];
+    
+    let selectedEncoder = 'libx264'; // 软件编码作为后备
+    let encoderPreset = 'veryfast';
+    
+    // 简单的硬件编码器探测（实际使用中第一个可用的）
+    if (process.platform === 'win32') {
+      selectedEncoder = 'h264_nvenc'; // 优先 NVIDIA
+      encoderPreset = 'p4'; // NVENC 预设
+    } else if (process.platform === 'darwin') {
+      selectedEncoder = 'h264_videotoolbox';
+      encoderPreset = 'medium';
+    }
+    
+    const args = [
+      '-f', 'rawvideo',
+      '-pix_fmt', 'rgba',
+      '-s', `${width}x${height}`,
+      '-r', fps.toString(),
+      '-i', 'pipe:0',  // 从 stdin 读取视频帧
+    ];
+    
+    // 如果有音频，添加音频输入
+    if (audioPath) {
+      args.push('-i', audioPath);
+    }
+    
+    // 视频编码参数
+    args.push(
+      '-c:v', selectedEncoder,
+      '-b:v', bitrate.toString(),
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart'
+    );
+    
+    // 编码器特定参数
+    if (selectedEncoder === 'h264_nvenc') {
+      args.push('-preset', encoderPreset, '-rc', 'vbr');
+    } else if (selectedEncoder === 'libx264') {
+      args.push('-preset', encoderPreset, '-crf', '18');
+    }
+    
+    // 音频编码参数
+    if (audioPath) {
+      args.push('-c:a', 'aac', '-b:a', '192k');
+    }
+    
+    args.push('-y', outputPath);
+    
+    console.log('[FFmpeg Export] Starting with encoder:', selectedEncoder);
+    console.log('[FFmpeg Export] Command:', ffmpegPath, args.join(' '));
+    
+    const ffmpegProcess = spawn(ffmpegPath, args, {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    let stderrOutput = '';
+    
+    ffmpegProcess.stderr?.on('data', (data: Buffer) => {
+      const log = data.toString();
+      stderrOutput += log;
+      
+      // 实时输出进度
+      if (log.includes('frame=')) {
+        process.stdout.write(`\r[FFmpeg Export] ${log.trim()}`);
+      }
+    });
+    
+    ffmpegProcess.on('error', (err) => {
+      console.error('[FFmpeg Export] Process error:', err);
+      activeExportSessions.delete(sessionId);
+    });
+    
+    ffmpegProcess.on('exit', (code) => {
+      console.log(`\n[FFmpeg Export] Process exited with code ${code}`);
+      if (code !== 0) {
+        console.error('[FFmpeg Export] stderr:', stderrOutput);
+      }
+      activeExportSessions.delete(sessionId);
+    });
+    
+    activeExportSessions.set(sessionId, {
+      process: ffmpegProcess,
+      outputPath,
+      width,
+      height,
+      fps,
+      frameCount: 0,
+      audioPath
+    });
+    
+    return { success: true, sessionId, encoder: selectedEncoder };
+  } catch (err) {
+    console.error('[FFmpeg Export] Failed to start:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 写入一帧数据
+ipcMain.handle('write-ffmpeg-frame', async (_event, { sessionId, frameData }: { sessionId: string; frameData: ArrayBuffer }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    
+    const buffer = Buffer.from(frameData);
+    
+    return new Promise<{ success: boolean; frameCount?: number }>((resolve, reject) => {
+      if (!session.process.stdin || !session.process.stdin.writable) {
+        reject(new Error('FFmpeg stdin not writable'));
+        return;
+      }
+      
+      const canWrite = session.process.stdin.write(buffer, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          session.frameCount++;
+          resolve({ success: true, frameCount: session.frameCount });
+        }
+      });
+      
+      // 如果缓冲区满了，等待 drain 事件
+      if (!canWrite) {
+        session.process.stdin.once('drain', () => {
+          // 缓冲区已清空，可以继续写入
+        });
+      }
+    });
+  } catch (err) {
+    console.error('[FFmpeg Export] Write frame failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 完成导出
+ipcMain.handle('finish-ffmpeg-export', async (_event, { sessionId }: { sessionId: string }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    
+    return new Promise<{ success: boolean; frameCount: number }>((resolve) => {
+      const proc = session.process;
+      
+      const timeout = setTimeout(() => {
+        proc.kill('SIGKILL');
+        resolve({ success: false, frameCount: session.frameCount } as any);
+      }, 10000);
+      
+      proc.once('exit', (code) => {
+        clearTimeout(timeout);
+        activeExportSessions.delete(sessionId);
+        
+        console.log(`[FFmpeg Export] Finished. Total frames: ${session.frameCount}, Exit code: ${code}`);
+        resolve({ success: code === 0, frameCount: session.frameCount });
+      });
+      
+      // 关闭 stdin，触发 FFmpeg 完成编码
+      if (proc.stdin) {
+        proc.stdin.end();
+      }
+    });
+  } catch (err) {
+    console.error('[FFmpeg Export] Finish failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 取消导出
+ipcMain.handle('cancel-ffmpeg-export', async (_event, { sessionId }: { sessionId: string }) => {
+  try {
+    const session = activeExportSessions.get(sessionId);
+    if (!session) {
+      return { success: false, error: 'Session not found' };
+    }
+    
+    session.process.kill('SIGKILL');
+    activeExportSessions.delete(sessionId);
+    
+    // 删除未完成的输出文件
+    if (fs.existsSync(session.outputPath)) {
+      fs.unlinkSync(session.outputPath);
+    }
+    
+    return { success: true };
+  } catch (err) {
+    console.error('[FFmpeg Export] Cancel failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 保存临时音频文件
+ipcMain.handle('save-temp-audio', async (_event, { arrayBuffer, path: audioPath }: { arrayBuffer: ArrayBuffer; path: string }) => {
+  try {
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(audioPath, buffer);
+    console.log('[Main] Temp audio saved:', audioPath);
+    return { success: true, path: audioPath };
+  } catch (err) {
+    console.error('[Main] save-temp-audio failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});

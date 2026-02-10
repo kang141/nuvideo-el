@@ -841,28 +841,11 @@ export function useVideoRenderer({
     ctx.translate(Math.round(-camera.cx * dw), Math.round(-camera.cy * dh));
 
     // --- D. 核心渲染路径 ---
-    const manager = frameManagerRef.current;
-    let frameRendered = false;
-
-    if (manager) {
-      try {
-        const frame = await manager.getFrame(timestampMs);
-        if (frame) {
-          // 使用坐标取齐防止亚像素闪烁
-          ctx.drawImage(frame, 0, 0, frame.codedWidth, frame.codedHeight, 0, 0, Math.floor(dw), Math.floor(dh));
-          frameRendered = true;
-          frame.close?.();
-        }
-      } catch (e) {
-        // WebCodecs 失败时不做阻塞等待，直接跳到降级
-      }
-    }
-
-    // 降级策略：如果 WebCodecs 失败，使用视频标签
-    if (!frameRendered && video) {
-      if (video.readyState >= 2) {
-        ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, Math.floor(dw), Math.floor(dh));
-      }
+    // 🚀 导出模式强制优化：完全跳过 WebCodecs，直接用 video 元素
+    // 原因：WebCodecs 解码器可能不支持某些编码格式，导致卡顿
+    
+    if (video && video.readyState >= 2) {
+      ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, Math.floor(dw), Math.floor(dh));
     }
 
     drawSmoothMouse(ctx, camera, dw, dh, renderGraph, timestampMs);
@@ -926,21 +909,8 @@ export function useVideoRenderer({
       };
 
       if (adjWebcamTs >= 0) {
-        let webcamFrameRendered = false;
-        const webcamManager = webcamFrameManagerRef.current;
-        
-        if (webcamManager) {
-          try {
-            const frame = await webcamManager.getFrame(adjWebcamTs);
-            if (frame) {
-              drawPip(frame);
-              frame.close();
-              webcamFrameRendered = true;
-            }
-          } catch (e) {}
-        }
-
-        if (!webcamFrameRendered && webcamVideo && webcamVideo.readyState >= 2) {
+        // 🚀 导出模式：直接用 video 元素，跳过 WebCodecs
+        if (webcamVideo && webcamVideo.readyState >= 2) {
            drawPip(webcamVideo);
         }
       }

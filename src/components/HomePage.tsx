@@ -244,7 +244,11 @@ export function HomePage({
   const fetchSources = useCallback(async () => {
     if (isStarting) return;
     try {
-      const result = await (window as any).ipcRenderer.getSources();
+      // 🎯 关键修复：根据当前选择的类型来决定获取哪些源
+      // 只在"窗口"模式时才获取窗口列表，避免触发 WGC 错误
+      const types = sourceType === "screen" ? ["screen"] : ["screen", "window"];
+      const result = await (window as any).ipcRenderer.invoke('get-sources', { types });
+      
       setSources(result);
       if (
         !selectedSourceId ||

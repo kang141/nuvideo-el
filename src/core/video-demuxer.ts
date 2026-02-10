@@ -49,7 +49,7 @@ export class VideoDemuxer {
       }
 
       const config: VideoDecoderConfig = {
-        codec: track.codec,
+        codec: this.buildFullCodec(track),
         codedWidth: track.track_width,
         codedHeight: track.track_height,
         description: this.getExtraData(track),
@@ -100,6 +100,48 @@ export class VideoDemuxer {
     } finally {
       reader.releaseLock();
     }
+  }
+
+  private buildFullCodec(trackSummary: any): string {
+    // 如果 track.codec 已经是完整格式（包含 profile/level），直接使用
+    if (trackSummary.codec && trackSummary.codec.includes('.')) {
+      return trackSummary.codec;
+    }
+    
+    // 否则，从 avcC box 中提取 profile/level 信息
+    const track = this.mp4box.getTrackById(trackSummary.id);
+    if (!track || !track.mdia || !track.mdia.minf || !track.mdia.minf.stbl || !track.mdia.minf.stbl.stsd) {
+      // 降级：使用通用的 H.264 Baseline Profile
+      console.warn('[VideoDemuxer] Cannot extract codec info, using fallback');
+      return 'avc1.42E01E'; // H.264 Baseline Profile, Level 3.0
+    }
+
+    const entry = track.mdia.minf.stbl.stsd.entries[0];
+    const avcC = entry.avcC;
+    
+    if (avcC) {
+      // H.264: 从 avcC box 提取 profile/level
+      const profile = avcC.AVCProfileIndication;
+      const compat = avcC.profile_compatibility;
+      const level = avcC.AVCLevelIndication;
+      
+      // 构建完整的 codec 字符串
+      const codecStr = `avc1.${profile.toString(16).padStart(2, '0').toUpperCase()}${compat.toString(16).padStart(2, '0').toUpperCase()}${level.toString(16).padStart(2, '0').toUpperCase()}`;
+      console.log('[VideoDemuxer] Built codec string:', codecStr);
+      return codecStr;
+    }
+    
+    // 其他编码器（HEVC, VP9 等）的处理
+    if (entry.hvcC) {
+      return 'hvc1.1.6.L93.B0'; // HEVC 默认
+    }
+    if (entry.vpcC) {
+      return 'vp09.00.10.08'; // VP9 默认
+    }
+    
+    // 最终降级
+    console.warn('[VideoDemuxer] Unknown codec, using H.264 fallback');
+    return 'avc1.42E01E';
   }
 
   private getExtraData(trackSummary: any) {

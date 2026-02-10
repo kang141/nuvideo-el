@@ -18,5 +18,5 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
     return electron.ipcRenderer.invoke(channel, ...omit);
   },
   // You can expose other APTs you need here.
-  getSources: () => electron.ipcRenderer.invoke("get-sources")
+  getSources: (options) => electron.ipcRenderer.invoke("get-sources", options)
 });
