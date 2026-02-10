@@ -2,7 +2,8 @@ import { useEffect, useRef, RefObject, useState } from 'react';
 import { EDITOR_CANVAS_SIZE } from '../../constants/editor';
 import { RenderGraph } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
-import { VideoFrameManager } from '../../core/video-decoder';
+import { ModernVideoRenderer } from '../../core/modern-video-renderer';
+import { applyRenderConfig, getRenderConfig } from '../../core/render-config';
 
 interface UseVideoRendererOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -26,11 +27,10 @@ export function useVideoRenderer({
   const [isReady, setIsReady] = useState(false);
   const isFirstLoadRef = useRef(true);
   const rafRef = useRef<number>();
-  const vfcRef = useRef<number | null>(null);
   const videoSizeRef = useRef({ width: 1920, height: 1080 });
   const layoutRef = useRef({ dx: 0, dy: 0, dw: 0, dh: 0, totalW: 0, totalH: 0, r: 16 });
-  const frameManagerRef = useRef<VideoFrameManager | null>(null);
-  const webcamFrameManagerRef = useRef<VideoFrameManager | null>(null);
+  const rendererRef = useRef<ModernVideoRenderer | null>(null);
+  const webcamRendererRef = useRef<ModernVideoRenderer | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   // 核心修复：视频帧缓存备份，彻底消除 seek 时的黑屏闪烁
   const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null); 
@@ -56,8 +56,10 @@ export function useVideoRenderer({
     const { width: W, height: H } = EDITOR_CANVAS_SIZE;
     oCtx.clearRect(0, 0, W, H);
 
-    // 1. 导出模式下必须在 Canvas 中绘制背景图，否则最终视频将是黑底
-    if (isExporting && bgImageRef.current) {
+    // 🎯 预览和导出模式都绘制背景
+    if (bgImageRef.current) {
+       oCtx.imageSmoothingEnabled = true;
+       oCtx.imageSmoothingQuality = 'high';
        oCtx.drawImage(bgImageRef.current, 0, 0, W, H);
     }
 
@@ -137,52 +139,31 @@ export function useVideoRenderer({
     };
   }, [bgCategory, bgFile, isExporting]); // 增加 isExporting 依赖，确保导出开始时重绘离屏层
 
-  // 启动 WebCodecs FrameManager
+  // 启动现代化渲染器
   useEffect(() => {
-    const videoSource = renderGraph.videoSource;
-    if (!videoSource) return;
+    const video = videoRef.current;
+    if (!video) return;
 
-    const manager = new VideoFrameManager();
-    frameManagerRef.current = manager;
+    const renderer = new ModernVideoRenderer(video);
+    rendererRef.current = renderer;
 
-    manager.initialize(videoSource).then(() => {
-      // 解码器就绪后，我们可能需要根据视频实际尺寸更新布局
-      // 注意：WebCodecs 解码器加载后会自动解析尺寸
-      console.log('[useVideoRenderer] WebCodecs Manager initialized');
+    renderer.initialize().then(() => {
+      console.log('[useVideoRenderer] Modern renderer initialized');
+      if (isExporting) {
+        requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
+      }
     });
 
     return () => {
-      manager.destroy();
-      frameManagerRef.current = null;
+      renderer.destroy();
+      rendererRef.current = null;
     };
-  }, [renderGraph.videoSource]);
+  }, [videoRef, isExporting]);
 
-  // 启动摄像头 WebCodecs FrameManager
+  // 启动摄像头渲染器
   useEffect(() => {
     const webcamSource = renderGraph.webcamSource;
     if (!webcamSource) return;
-
-    const manager = new VideoFrameManager();
-    webcamFrameManagerRef.current = manager;
-
-    // 注意：摄像头视频通常是 720p 甚至更低，解码压力很小
-    manager.initialize(webcamSource).then(() => {
-      console.log('[useVideoRenderer] Webcam WebCodecs Manager initialized');
-    });
-
-    return () => {
-      manager.destroy();
-      webcamFrameManagerRef.current = null;
-    };
-  }, [renderGraph.webcamSource]);
-
-  // 初始化隐藏的 Webcam 视频播放器 (直接使用原生 Video 以支持 WebM)
-  useEffect(() => {
-    const webcamSource = renderGraph.webcamSource;
-    if (!webcamSource) {
-      webcamVideoRef.current = null;
-      return;
-    }
 
     const video = document.createElement('video');
     video.src = webcamSource;
@@ -190,6 +171,13 @@ export function useVideoRenderer({
     video.playsInline = true;
     video.preload = 'auto';
     webcamVideoRef.current = video;
+
+    const renderer = new ModernVideoRenderer(video);
+    webcamRendererRef.current = renderer;
+
+    renderer.initialize().then(() => {
+      console.log('[useVideoRenderer] Webcam renderer initialized');
+    });
 
     // 状态同步逻辑：让摄像头播放器跟随主视频状态
     const mainVideo = videoRef.current;
@@ -239,6 +227,8 @@ export function useVideoRenderer({
         mainVideo.removeEventListener('ratechange', onRateChange);
         mainVideo.removeEventListener('seeked', onSeeked);
       }
+      renderer.destroy();
+      webcamRendererRef.current = null;
       video.pause();
       video.src = '';
       video.load();
@@ -297,24 +287,30 @@ export function useVideoRenderer({
     const canvas = canvasRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) return;
 
-    const ctx = canvas.getContext('2d', { alpha: true });
+    // 🎯 统一获取 context：确保预览和导出使用相同的配置
+    const ctx = canvas.getContext('2d', { 
+      alpha: false,
+      willReadFrequently: false 
+    });
     if (!ctx) return;
+    
+
     
     // 关键修正：必须每一帧手动清空画布，否则由于开启了 alpha 模式且背景由 CSS 提供，
     // 每一帧的绘制都会在上一帧的基础上叠加，导致画面“糊掉”或出现重影。
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
 
     const renderGraph = renderGraphRef.current;
-    if (!renderGraph) return;
+    if (!renderGraph) {
+      if (isExporting) console.warn('[渲染] renderGraph 为空！');
+      return;
+    }
 
     const camera = computeCameraState(renderGraph, timestampMs);
     const s = camera.scale;
 
     // --- A. 绘制预渲染的背景/窗口层 ---
-    ctx.save();
-    // 如果正在导出，offscreen 已经包含了壁纸；如果是预览，offscreen 只有窗口装饰
-    ctx.drawImage(offscreenRef.current, 0, 0);
-    ctx.restore();
+    ctx.drawImage(offscreenRef.current, 0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
 
     // --- B. 布局参数 ---
     const TB_H = 34;
@@ -334,42 +330,51 @@ export function useVideoRenderer({
     ctx.scale(s, s);
     ctx.translate(-camera.cx * dw, -camera.cy * dh);
 
-    const manager = frameManagerRef.current;
+    const renderer = rendererRef.current;
     let frameRendered = false;
 
-    // --- 核心性能决策策略 ---
-    // 1. 如果正在导出，则必须使用 WebCodecs 解码以保证帧精准度和最高画质
-    if (isExporting && manager) {
-      try {
-        const frame = await manager.getFrame(timestampMs);
-        if (frame) {
-          ctx.drawImage(frame, 0, 0, dw, dh);
-          frameRendered = true;
-          // 更新缓存供预览瞬间回退
+    // --- 统一的现代化渲染策略 ---
+    if (renderer) {
+      // 预览模式：直接绘制（最快，硬件加速）
+      if (!isExporting) {
+        frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
+        
+        // 更新缓存
+        if (frameRendered) {
           if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
-          if (mainVideoCacheRef.current.width !== dw) mainVideoCacheRef.current.width = dw;
-          if (mainVideoCacheRef.current.height !== dh) mainVideoCacheRef.current.height = dh;
-          mainVideoCacheRef.current.getContext('2d')?.drawImage(frame, 0, 0, dw, dh);
+          if (mainVideoCacheRef.current.width !== dw) {
+            mainVideoCacheRef.current.width = dw;
+            mainVideoCacheRef.current.height = dh;
+          }
+          const cacheCtx = mainVideoCacheRef.current.getContext('2d');
+          if (cacheCtx) cacheCtx.drawImage(video, 0, 0, dw, dh);
         }
-      } catch (e) {
-        console.warn('[Renderer] WebCodecs export frame failed:', e);
-      }
-    } 
-    // 2. 如果是实时预览，则优先使用原生 Video 标签进行绘制
-    // 原生 Video 走硬件解码管线，且由浏览器高度优化，不会阻塞 JS 主线程
-    else if (video.readyState >= 2) {
-      ctx.drawImage(video, 0, 0, dw, dh);
-      frameRendered = true;
-      
-      // 在预览间隔中尝试预加载帧缓存
-      if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
-      if (mainVideoCacheRef.current.width !== dw) {
-         mainVideoCacheRef.current.width = dw; 
-         mainVideoCacheRef.current.height = dh;
+      } 
+      // 导出模式：获取 VideoFrame（精确到帧）
+      else {
+        try {
+          const frame = await renderer.getFrameAt(timestampMs);
+          if (frame) {
+            ctx.drawImage(frame, 0, 0, dw, dh);
+            frame.close();
+            frameRendered = true;
+            
+            // 更新缓存
+            if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
+            if (mainVideoCacheRef.current.width !== dw) {
+              mainVideoCacheRef.current.width = dw;
+              mainVideoCacheRef.current.height = dh;
+            }
+            const cacheCtx = mainVideoCacheRef.current.getContext('2d');
+            if (cacheCtx && frame) cacheCtx.drawImage(frame, 0, 0, dw, dh);
+          }
+        } catch (e) {
+          console.warn('[渲染] 获取帧失败:', e);
+        }
       }
     }
 
-    // 3. 核心跳转兜底：如果在 Seek 过程中或解码掉帧，回退到最后一帧有效缓存，彻底消除黑屏
+    // 兜底：如果渲染失败，使用缓存
     if (!frameRendered && mainVideoCacheRef.current) {
       ctx.drawImage(mainVideoCacheRef.current, 0, 0, dw, dh);
     }
@@ -382,7 +387,8 @@ export function useVideoRenderer({
 
     // --- F. 摄像头画中画 (Webcam PiP) 层 ---
     const webcamVideo = webcamVideoRef.current;
-    if (webcamVideo && renderGraph.webcamSource && renderGraph.webcam?.isEnabled) {
+    const webcamRenderer = webcamRendererRef.current;
+    if (webcamVideo && webcamRenderer && renderGraph.webcamSource && renderGraph.webcam?.isEnabled) {
       const pipSize = renderGraph.webcam?.size ?? 360; 
       const padding = 60;   
       const px = EDITOR_CANVAS_SIZE.width - pipSize/2 - padding;
@@ -420,68 +426,105 @@ export function useVideoRenderer({
       };
 
       if (adjWebcamTs >= 0) {
-        const isReady = webcamVideo.readyState >= 2;
-        if (isReady && webcamVideo.videoWidth > 0) {
+        // 预览模式：直接绘制
+        if (!isExporting && webcamVideo.readyState >= 2 && webcamVideo.videoWidth > 0) {
           drawPip(webcamVideo);
-        } else if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
-          // 兜底使用缓存
+        } 
+        // 导出模式：获取精确帧
+        else if (isExporting) {
+          try {
+            const webcamFrame = await webcamRenderer.getFrameAt(adjWebcamTs);
+            if (webcamFrame) {
+              // 创建临时 canvas 来绘制 VideoFrame
+              if (!webcamCacheRef.current) {
+                webcamCacheRef.current = document.createElement('canvas');
+              }
+              const { width, height } = webcamRenderer.getVideoSize();
+              if (webcamCacheRef.current.width !== width) {
+                webcamCacheRef.current.width = width;
+                webcamCacheRef.current.height = height;
+              }
+              const cacheCtx = webcamCacheRef.current.getContext('2d');
+              if (cacheCtx) {
+                cacheCtx.drawImage(webcamFrame, 0, 0);
+                drawPip(webcamCacheRef.current);
+              }
+              webcamFrame.close();
+            } else if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
+              drawPip(webcamCacheRef.current);
+            }
+          } catch (e) {
+            console.warn('[渲染] 摄像头帧获取失败:', e);
+            if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
+              drawPip(webcamCacheRef.current);
+            }
+          }
+        }
+        // 兜底：使用缓存
+        else if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
           drawPip(webcamCacheRef.current);
         }
       }
     }
   };
 
-  // 预览渲染
+  // 🚀 现代化预览渲染：强制使用 RAF 实现 60fps 流畅预览
   useEffect(() => {
     if (!isReady || isExporting) return;
     const canvas = canvasRef.current;
     if (canvas) { 
-      // 性能优化：在预览模式下使用 1.0 DPR。
-      // 因为 CSS 已经应用了 max-width[1024px]，2.5K 的画布会导致严重的像素填充率瓶颈和下采样开销。
-      const dpr = 1.0;
-      canvas.width = EDITOR_CANVAS_SIZE.width * dpr; 
-      canvas.height = EDITOR_CANVAS_SIZE.height * dpr;
-      const ctx = canvas.getContext('2d', { 
-        alpha: true,
-        willReadFrequently: false 
-      }); 
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-      }
+      // 🎯 使用统一的渲染配置
+      const config = getRenderConfig(false); // 预览模式
+      applyRenderConfig(canvas, config);
     }
     const video = videoRef.current;
     if (!video) return;
 
     let stopped = false;
-    const renderFromCurrentTime = () => { if (!stopped) void renderFrame(video.currentTime * 1000); };
-    const onSync = () => requestAnimationFrame(renderFromCurrentTime);
+    let lastFrameTime = 0;
+    const TARGET_FPS = 60;
+    const FRAME_INTERVAL = 1000 / TARGET_FPS;
+
+    // 🚀 核心优化：使用节流的 RAF 循环，确保 60fps 流畅预览
+    // 不再依赖 VFC（它会被视频解码器锁定在低帧率）
+    const tick = (now: number) => {
+      if (stopped) return;
+
+      // 节流：确保帧间隔不小于 16.67ms (60fps)
+      if (now - lastFrameTime >= FRAME_INTERVAL) {
+        lastFrameTime = now;
+        void renderFrame(video.currentTime * 1000);
+      }
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    // 🚀 关键：监听视频事件，但不阻塞渲染循环
+    const onSync = () => {
+      // 立即渲染一帧，确保响应性
+      void renderFrame(video.currentTime * 1000);
+    };
+    
     video.addEventListener('seeked', onSync);
     video.addEventListener('pause', onSync);
+    video.addEventListener('play', onSync);
     video.addEventListener('loadeddata', onSync);
 
-    const hasVfc = typeof (video as any).requestVideoFrameCallback === 'function';
-    if (hasVfc) {
-      const onVfc = (_now: number, metadata: VideoFrameCallbackMetadata) => {
-        if (!stopped) { void renderFrame(metadata.mediaTime * 1000); vfcRef.current = (video as any).requestVideoFrameCallback(onVfc); }
-      };
-      vfcRef.current = (video as any).requestVideoFrameCallback(onVfc);
-    } else {
-      const tick = () => { if (!stopped) { renderFromCurrentTime(); rafRef.current = requestAnimationFrame(tick); } };
-      rafRef.current = requestAnimationFrame(tick);
-    }
+    // 启动渲染循环
+    rafRef.current = requestAnimationFrame(tick);
     
-    // 关键修正：无论是否有 VFC，在进入预览模式的一瞬间强制重绘当前时刻。
-    // 这解决了导出结束后，由于视频处于暂停状态且没有新帧产生，导致的预览区变黑/挂起的问题。
-    renderFromCurrentTime();
+    // 立即渲染第一帧
+    onSync();
 
     return () => {
       stopped = true;
       video.removeEventListener('seeked', onSync);
+      video.removeEventListener('pause', onSync);
+      video.removeEventListener('play', onSync);
+      video.removeEventListener('loadeddata', onSync);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [isReady, videoRef, canvasRef, isExporting]); // 关键修复：移除了 renderGraph 依赖，防止拖拽时的 Effect 重置闪烁
+  }, [isReady, videoRef, canvasRef, isExporting]);
 
   // 保持 renderGraphRef 最新，供 renderFrame 内部读取
   const renderGraphRef = useRef(renderGraph);

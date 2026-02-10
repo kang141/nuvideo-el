@@ -291,7 +291,8 @@ class SessionRecorder {
   async start(ffmpegPath: string, args: string[], monitorPath: string): Promise<{ success: boolean; error?: string; readyOffset?: number }> {
     const { spawn } = await import('node:child_process');
 
-    // 1. 启动 FFmpeg
+    // 1. 启动 FFmpeg (打印完整命令用于调试)
+    console.log(`[Session] Starting FFmpeg: ${ffmpegPath} ${args.join(' ')}`);
     this.ffmpegProcess = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], shell: false });
 
     // 防止 stdin 写入错误（如 EPIPE）导致整个主进程崩溃
@@ -306,20 +307,19 @@ class SessionRecorder {
 
       this.ffmpegProcess.stderr.on('data', (data: Buffer) => {
         const log = data.toString().trim();
+        // 打印实时日志到控制台，不只是简单的 log
+        process.stderr.write(`[FFmpeg Err] ${log}\n`);
+
         if (log.includes('frame=')) {
-          process.stdout.write(`\r[FFmpeg Record] ${log}`);
           if (!resolved) {
             resolved = true;
             this.readyOffset = performance.now() - this.startTime;
             resolve({ success: true, readyOffset: this.readyOffset });
           }
-        } else {
-          console.log('[FFmpeg Log]', log);
-          if (log.toLowerCase().includes('failed') || log.toLowerCase().includes('error')) {
-            if (!resolved) {
-              resolved = true;
-              resolve({ success: false, error: log });
-            }
+        } else if (log.toLowerCase().includes('failed') || log.toLowerCase().includes('error')) {
+          if (!resolved) {
+            resolved = true;
+            resolve({ success: false, error: log });
           }
         }
       });
@@ -347,7 +347,9 @@ class SessionRecorder {
           });
         }
 
-        // 3. 实时坐标轮询 (同步 50FPS 频率，约 20ms)
+        // 3. 🎯 优化：高频鼠标轮询 (120Hz = 8.33ms)，确保流畅捕获
+        // 采样频率应该是视频帧率的 2 倍以上（奈奎斯特定理）
+        // 60fps 视频 → 至少 120Hz 采样才能避免闪烁
         this.mousePollTimer = setInterval(() => {
           if (!win) return;
           const point = screen.getCursorScreenPoint();
@@ -358,7 +360,7 @@ class SessionRecorder {
 
           this.logMouseEvent({ type: 'move', x, y });
           win.webContents.send('mouse-update', { x, y, t });
-        }, 20);
+        }, 8); // 从 20ms 降低到 8ms (120Hz)
 
         // 如果 3 秒后还没看到帧，视为启动失败
         setTimeout(() => {
@@ -389,6 +391,37 @@ class SessionRecorder {
         }
       });
     });
+  }
+
+  /**
+   * 仅清理进程，不销毁 Session 环境
+   * 用于在 start 循环中尝试不同编码器
+   */
+  async cleanupProcess() {
+    if (this.mousePollTimer) {
+      clearInterval(this.mousePollTimer);
+      this.mousePollTimer = null;
+    }
+    if (this.mouseMonitorProcess) {
+      this.mouseMonitorProcess.kill();
+      this.mouseMonitorProcess = null;
+    }
+    if (this.ffmpegProcess) {
+      const proc = this.ffmpegProcess;
+      this.ffmpegProcess = null;
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(() => proc.kill('SIGKILL'), 1000);
+        proc.once('close', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        if (proc.stdin && proc.stdin.writable) {
+          try { proc.stdin.write('q\n'); proc.stdin.end(); } catch(e) {}
+        } else {
+          proc.kill('SIGKILL');
+        }
+      });
+    }
   }
 
   async stop(): Promise<string> {
@@ -456,31 +489,93 @@ const allSessions = new Map<string, SessionRecorder>();
 
 /**
  * 助手函数：构建带音频支持的 FFmpeg 参数
+ * 支持智能编码器选择：NVENC > AMF > QSV > libx264
  */
-function buildFFmpegArgs(videoInputFiles: string[][], outputPath: string) {
+function buildFFmpegArgs(videoInputParams: string[], outputPath: string, encoderPreference: 'nvenc' | 'amf' | 'qsv' | 'software' = 'nvenc') {
   const args = [
     '-loglevel', 'info',
-    '-thread_queue_size', '8192',
+    '-thread_queue_size', '16384',
+    '-init_hw_device', 'd3d11va', // 显式初始化硬件设备以供后续滤镜使用
   ];
 
-  // 1. 视频输入 (索引为 0)
-  for (const vInput of videoInputFiles) {
-    args.push(...vInput);
+  // 1. 注入视频输入参数
+  args.push(...videoInputParams);
+
+  // 2. 视频编码 - 根据偏好选择编码器及其对应的滤镜链
+  switch (encoderPreference) {
+    case 'nvenc': // NVIDIA GPU
+      args.push(
+        '-c:v', 'h264_nvenc',
+        '-preset', 'p4',
+        '-tune', 'hq',
+        '-rc', 'vbr',
+        '-cq', '19',
+        '-b:v', '0',
+        '-maxrate', '100M',
+        '-bufsize', '200M',
+        '-profile:v', 'high',
+        '-level', '5.1',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', 'faststart+frag_keyframe+empty_moov',
+        '-g', '120'
+      );
+      break;
+
+    case 'amf': // AMD GPU
+      args.push(
+        '-c:v', 'h264_amf',
+        '-quality', 'quality',
+        '-rc', 'vbr_latency',
+        '-qp_i', '18',
+        '-qp_p', '20',
+        '-b:v', '50M',
+        '-maxrate', '100M',
+        '-bufsize', '200M',
+        '-profile:v', 'high',
+        '-level', '5.1',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', 'faststart+frag_keyframe+empty_moov',
+        '-g', '120'
+      );
+      break;
+
+    case 'qsv': // Intel Quick Sync
+      args.push(
+        '-vf', 'hwmap=derive_device=qsv,format=qsv', // QSV 专用转换逻辑
+        '-c:v', 'h264_qsv',
+        '-preset', 'medium',
+        '-global_quality', '20',
+        '-look_ahead', '1',
+        '-b:v', '50M',
+        '-maxrate', '100M',
+        '-bufsize', '200M',
+        '-profile:v', 'high',
+        '-level', '5.1',
+        '-pix_fmt', 'nv12', // QSV 通常在 NV12 下工作得最好
+        '-movflags', 'faststart+frag_keyframe+empty_moov',
+        '-g', '120'
+      );
+      break;
+
+    case 'software': // CPU 软件编码 (兜底)
+    default:
+      args.push(
+        '-vf', 'hwdownload,format=bgra,format=yuv420p', // 下载显存到内存并转换
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-crf', '20',
+        '-profile:v', 'high',
+        '-level', '5.1',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', 'faststart+frag_keyframe+empty_moov',
+        '-threads', '0',
+        '-g', '120'
+      );
+      break;
   }
 
-  // 2. 视频编码
-  args.push(
-    '-c:v', 'libx264',
-    '-preset', 'veryfast', // 从 ultrafast 升级到 veryfast，在保证实时性的前提下显著提升画质
-    '-tune', 'zerolatency',
-    '-crf', '22', // 降低 CRF (从 25 到 22) 以提升基础录制质量
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-threads', '0',
-    '-pix_fmt', 'yuv420p',
-    outputPath,
-    '-y'
-  );
-
+  args.push(outputPath, '-y');
   return args;
 }
 
@@ -508,42 +603,43 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
   const recordingPath = currentSession.videoPath;
+ 
+  // --- 核心修复：更鲁棒的 ddagrab 参数 ---
+  // 加入 dup_frames=0 解决 Invalid argument 报错，增加稳定性
+  const inputSource = `ddagrab=output_idx=${outputIdx}:draw_mouse=0:framerate=60:dup_frames=0`;
 
-  // --- 尝试方案 A: ddagrab (现代引擎) ---
   const videoInputDda = [
-    ['-f', 'ddagrab', '-framerate', '60', '-draw_mouse', '0', '-output_idx', outputIdx.toString(), '-rtbufsize', '1000M', '-i', 'desktop']
+    '-f', 'lavfi',
+    '-i', inputSource
   ];
-  
-  const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
 
   const scriptPath = path.join(process.env.APP_ROOT || '', 'resources', 'scripts', 'mouse-monitor.ps1');
   const psPath = fs.existsSync(scriptPath)
     ? scriptPath
     : path.join(process.resourcesPath, 'scripts', 'mouse-monitor.ps1');
 
-  console.log('[Main] Attempting ddagrab capture (Video Only)...');
-  let result = await currentSession.start(ffmpegPath, argsDda, psPath);
-
-  if (!result.success) {
-    console.warn(`[Main] ddagrab failed: ${result.error}. Falling back to gdigrab...`);
-    await currentSession.stop();
-
-    const toEven = (val: number) => {
-      const v = Math.round(val);
-      return v % 2 === 0 ? v : v - 1;
-    };
-    const physicalW = toEven(bounds.width * scaleFactor);
-    const physicalH = toEven(bounds.height * scaleFactor);
-
-    currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
-
-    const videoInputGdi = [
-      ['-f', 'gdigrab', '-framerate', '30', '-draw_mouse', '0', '-rtbufsize', '500M', '-offset_x', Math.round(bounds.x * scaleFactor).toString(), '-offset_y', Math.round(bounds.y * scaleFactor).toString(), '-video_size', `${physicalW}x${physicalH}`, '-i', 'desktop']
-    ];
-
-    const argsGdi = buildFFmpegArgs(videoInputGdi, currentSession.videoPath);
-    result = await currentSession.start(ffmpegPath, argsGdi, psPath);
+  console.log('[Main] Starting Ultra-High-Performance ddagrab capture (Re-entrant cycle)...');
+  
+  const encoderFallback: Array<'nvenc' | 'amf' | 'qsv' | 'software'> = ['nvenc', 'amf', 'qsv', 'software'];
+  let result: any = null;
+  
+  for (const encoder of encoderFallback) {
+    const argsDda = buildFFmpegArgs(videoInputDda, recordingPath, encoder);
+    console.log(`[Main] Attempting [${encoder}] for session [${currentSession.sessionId}]`);
+    
+    result = await currentSession.start(ffmpegPath, argsDda, psPath);
+    
+    if (result.success) {
+      console.log(`[Main] ✅ Recording started successfully via [${encoder}]`);
+      break;
+    } else {
+      console.warn(`[Main] ❌ [${encoder}] failed: ${result.error}. Trying next fallback...`);
+      // 关键：仅清理进程，保留 Session 目录和 ID
+      await currentSession.cleanupProcess();
+      // 如果文件已创建但损坏，重试时 FFmpeg 的 -y 会覆盖它
+    }
   }
+
 
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
@@ -799,33 +895,44 @@ app.whenReady().then(() => {
   // 处理 nuvideo://load/filename 格式，将其映射到临时目录
   // 注册协议处理器
   protocol.registerFileProtocol('nuvideo', (request, callback) => {
-    const url = request.url;
+    // 关键修正：必须对 URL 进行解码，因为浏览器传入的路径可能包含编码字符
+    const url = decodeURIComponent(request.url);
 
     if (url.startsWith('nuvideo://load/')) {
       const fileName = url.replace('nuvideo://load/', '');
-      // 防止路径遍历攻击
       const normalizedFileName = path.basename(fileName);
       const filePath = path.join(app.getPath('temp'), normalizedFileName);
       return callback({ path: filePath })
     }
 
     if (url.startsWith('nuvideo://session/')) {
-      // 格式: nuvideo://session/{uuid}/{relPath}
       const parts = url.replace('nuvideo://session/', '').split('/');
       const sessionId = parts[0];
       const relPath = parts.slice(1).join('/') || 'manifest.json';
 
       const session = allSessions.get(sessionId);
-      if (session) {
-        // 防止路径遍历攻击，只允许访问session目录下的文件
+      let sessionDir = session?.sessionDir;
+
+      if (!sessionDir) {
+        const tempDir = path.join(app.getPath('temp'), 'nuvideo_sessions', sessionId);
+        if (fs.existsSync(tempDir)) {
+          sessionDir = tempDir;
+        }
+      }
+
+      if (sessionDir) {
         const normalizedRelPath = path.normalize(relPath);
         if (normalizedRelPath.includes('..')) {
-          console.error('[Protocol Handler] Path traversal attempt blocked:', relPath);
-          callback({ error: -6 }); // NET_ERROR(FILE_NOT_FOUND, -6)
-          return;
+          return callback({ error: -6 });
         }
-        const filePath = path.join(session.sessionDir, normalizedRelPath);
-        return callback({ path: filePath });
+        const filePath = path.join(sessionDir, normalizedRelPath);
+        
+        // 增加文件存在性硬检查
+        if (fs.existsSync(filePath)) {
+          return callback({ path: filePath });
+        } else {
+          console.warn('[Protocol Handler] File not found on disk:', filePath);
+        }
       }
     }
 

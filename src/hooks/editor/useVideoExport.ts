@@ -3,6 +3,7 @@ import { Muxer, StreamTarget } from 'mp4-muxer';
 import { QualityConfig } from '../../constants/quality';
 import { RenderGraph } from '../../types/render-graph';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
+import { applyRenderConfig, EXPORT_CONFIG, PREVIEW_CONFIG } from '../../core/render-config';
 
 interface UseVideoExportOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -65,14 +66,36 @@ export function useVideoExport({
       return { success: false };
     }
     
+    // 🎯 关键修复：导出前应用统一的渲染配置
+    console.log('[导出] 应用导出渲染配置...');
+    console.log('[导出] 画布当前尺寸:', { 
+      width: canvas.width, 
+      height: canvas.height,
+      style: { width: canvas.style.width, height: canvas.style.height }
+    });
+    
+    applyRenderConfig(canvas, EXPORT_CONFIG);
+    
+    console.log('[导出] 配置应用后画布尺寸:', { 
+      width: canvas.width, 
+      height: canvas.height,
+      logicalWidth: EXPORT_CONFIG.canvasWidth,
+      logicalHeight: EXPORT_CONFIG.canvasHeight,
+      dpr: EXPORT_CONFIG.dpr
+    });
+    
     let streamId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
     const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
     const fps = 60;
     const durationSeconds = exportDuration ?? maxDuration;
     // 稳定性加固：强制分辨率为偶数以适配硬件编码器
-    const width = canvas.width % 2 === 0 ? canvas.width : canvas.width - 1;
-    const height = canvas.height % 2 === 0 ? canvas.height : canvas.height - 1;
+    // 使用逻辑尺寸（EXPORT_CONFIG 已经处理了 DPR）
+    const width = EXPORT_CONFIG.canvasWidth % 2 === 0 ? EXPORT_CONFIG.canvasWidth : EXPORT_CONFIG.canvasWidth - 1;
+    const height = EXPORT_CONFIG.canvasHeight % 2 === 0 ? EXPORT_CONFIG.canvasHeight : EXPORT_CONFIG.canvasHeight - 1;
+    
+    console.log('[导出] 编码器尺寸:', { width, height, dpr: EXPORT_CONFIG.dpr });
+    console.log('[导出] 视频参数:', { fps, bitrate, durationSeconds, isGif });
 
     // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
@@ -309,6 +332,11 @@ export function useVideoExport({
       const startTime = performance.now();
       let lastProgressAt = 0;
       let encodedCount = 0;
+      
+      // 🎯 关键修复：使用单调递增的帧计数器生成时间戳，而不是依赖 mediaTime
+      // 这样可以确保时间戳永远是递增的，避免 muxer 报错
+      let frameTimestamp = 0;
+      const frameDuration = 1_000_000 / fps; // 微秒为单位的帧间隔
 
       // 6. 视频导出循环 (使用 VFC 同步)
       const vVideo = video as any;
@@ -347,13 +375,44 @@ export function useVideoExport({
               video.play().catch(console.error);
             }
 
+            if (encodedCount % 60 === 0) {
+              console.log('[导出] 准备渲染帧:', { 
+                frameIndex: encodedCount, 
+                mediaTime: meta.mediaTime.toFixed(3),
+                timestampMs: meta.mediaTime * 1000
+              });
+            }
+            
             await renderFrame(meta.mediaTime * 1000);
-            const vFrame = new VideoFrame(canvas, { timestamp: Math.round(meta.mediaTime * 1_000_000) });
+            
+            // 🎯 调试：检查画布内容
+            if (encodedCount === 0) {
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                const imageData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height));
+                const hasContent = Array.from(imageData.data).some(v => v !== 0);
+                console.log('[导出] 第一帧画布检查:', {
+                  canvasSize: { width: canvas.width, height: canvas.height },
+                  hasContent,
+                  samplePixels: Array.from(imageData.data.slice(0, 16))
+                });
+              }
+            }
+            
+            const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp });
+            console.log('[导出] 创建视频帧:', {
+              frameIndex: encodedCount,
+              timestamp: frameTimestamp,
+              mediaTime: meta.mediaTime.toFixed(3),
+              frameSize: { width: vFrame.displayWidth, height: vFrame.displayHeight }
+            });
+            
             if (videoEncoder) {
               videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
             }
             vFrame.close();
             encodedCount++;
+            frameTimestamp += frameDuration; // 递增时间戳
 
             if (encodedCount % 60 === 0) {
               console.log(`[useVideoExport] Progress - Time: ${meta.mediaTime.toFixed(2)}s, Encoded Frames: ${encodedCount}, Encoder Output: ${encoderOutputCount}`);
@@ -402,12 +461,13 @@ export function useVideoExport({
             setTimeout(onSd, 500); // 兜底处理
           });
           await renderFrame(t * 1000);
-          const vFrame = new VideoFrame(canvas, { timestamp: Math.round(t * 1_000_000) });
+          const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp });
           if (videoEncoder) {
             videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
           }
           vFrame.close();
           encodedCount++;
+          frameTimestamp += frameDuration; // 递增时间戳
           
           if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
             const progressRatio = t / durationSeconds;
@@ -455,13 +515,13 @@ export function useVideoExport({
           ad.close();
         }
         if (audioEncoder) {
-          audioEncoder.flush(); // 不等待 flush，直接继续
+          await audioEncoder.flush();
           audioEncoder.close();
         }
       }
 
       if (videoEncoder) {
-        videoEncoder.flush(); // 不等待 flush，直接继续
+        await videoEncoder.flush();
         videoEncoder.close();
       }
       console.log('[useVideoExport] VideoEncoder flushed and closed.');
@@ -494,6 +554,11 @@ export function useVideoExport({
 
       setExportProgress(1);
       console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
+      
+      // 🎯 导出完成后恢复预览配置
+      console.log('[useVideoExport] Restoring preview render config...');
+      if (canvas) applyRenderConfig(canvas, PREVIEW_CONFIG);
+      
       return { success: true, filePath: finalPath };
 
     } catch (e: any) {
@@ -501,17 +566,22 @@ export function useVideoExport({
       // 确保清理资源
       try {
         if (typeof videoEncoder !== 'undefined' && videoEncoder && videoEncoder.state !== 'closed') {
-          videoEncoder.flush();
+          await videoEncoder.flush().catch(() => {});
           videoEncoder.close();
         }
         if (typeof audioEncoder !== 'undefined' && audioEncoder && audioEncoder.state !== 'closed') {
-          audioEncoder.flush();
+          await audioEncoder.flush().catch(() => {});
           audioEncoder.close();
         }
       } catch (cleanupErr) {
         console.error('[useVideoExport] Error during encoder cleanup:', cleanupErr);
       }
       if (streamId) await ipc.invoke('close-export-stream', { streamId, deleteOnClose: true }).catch(() => {});
+      
+      // 🎯 导出失败后也要恢复预览配置
+      console.log('[useVideoExport] Restoring preview config after error...');
+      if (canvas) applyRenderConfig(canvas, PREVIEW_CONFIG);
+      
       return { success: false };
     } finally {
       isExportingRef.current = false;

@@ -11,7 +11,6 @@ import { cn } from "@/lib/utils";
 import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
 import { motion, AnimatePresence } from "framer-motion";
-import { CountdownOverlay } from "./components/Common/CountdownOverlay";
 
 function App() {
   const [appState, setAppState] = useState<AppState>("home");
@@ -32,8 +31,6 @@ function App() {
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
   );
-  const [isCountingDown, setIsCountingDown] = useState(false);
-  const countdownDataRef = useRef<any>(null);
 
   const handleUpdateAutoZoom = (val: boolean) => {
     setAutoZoomEnabled(val);
@@ -137,18 +134,8 @@ function App() {
       deviceId: string | null;
     },
   ) => {
-    // 存储参数准备在倒计时结束后启动
-    countdownDataRef.current = { sourceId, quality, format, autoZoom, audioConfig, webcamConfig };
-    setIsCountingDown(true);
-  }, []);
-
-  const startActualRecording = async () => {
-    const data = countdownDataRef.current;
-    if (!data) return;
-    const { sourceId, quality, format, autoZoom, audioConfig, webcamConfig } = data;
-
     try {
-      console.log("[App] Starting actual recording after countdown...");
+      console.log("[App] Starting recording...");
       await mouseTracker.syncClock();
       mouseTracker.start();
       
@@ -176,15 +163,13 @@ function App() {
         autoZoom,
       });
 
-      setIsCountingDown(false);
       transitionTo("recording");
     } catch (err) {
       console.error("Failed to start recording:", err);
-      setIsCountingDown(false);
       setRecordingState((prev) => ({ ...prev, isRecording: false }));
       alert("录制启动失败");
     }
-  };
+  }, []);
 
   const fetchSessionEvents = async (
     sessionId: string,
@@ -471,10 +456,7 @@ function App() {
     >
       <div 
         style={{ willChange: 'transform, filter' }}
-        className={cn(
-          "flex h-full w-full flex-col relative z-10 transition-[filter,transform,opacity] duration-500 ease-out-expo",
-          isCountingDown ? "scale-[0.98] blur-[10px] saturate-[0.8]" : "scale-100 blur-0"
-        )} 
+        className="flex h-full w-full flex-col relative z-10"
         key={language}
       >
         <AnimatePresence mode="wait">
@@ -539,12 +521,6 @@ function App() {
           )}
         </AnimatePresence>
       </div>
-
-      <AnimatePresence>
-        {isCountingDown && (
-          <CountdownOverlay onComplete={startActualRecording} />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

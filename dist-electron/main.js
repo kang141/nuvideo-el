@@ -259,6 +259,7 @@ class SessionRecorder {
   }
   async start(ffmpegPath2, args, monitorPath) {
     const { spawn } = await import("node:child_process");
+    console.log(`[Session] Starting FFmpeg: ${ffmpegPath2} ${args.join(" ")}`);
     this.ffmpegProcess = spawn(ffmpegPath2, args, { stdio: ["pipe", "pipe", "pipe"], shell: false });
     if (this.ffmpegProcess.stdin) {
       this.ffmpegProcess.stdin.on("error", (err) => {
@@ -269,20 +270,18 @@ class SessionRecorder {
       let resolved = false;
       this.ffmpegProcess.stderr.on("data", (data) => {
         const log = data.toString().trim();
+        process.stderr.write(`[FFmpeg Err] ${log}
+`);
         if (log.includes("frame=")) {
-          process.stdout.write(`\r[FFmpeg Record] ${log}`);
           if (!resolved) {
             resolved = true;
             this.readyOffset = performance.now() - this.startTime;
             resolve({ success: true, readyOffset: this.readyOffset });
           }
-        } else {
-          console.log("[FFmpeg Log]", log);
-          if (log.toLowerCase().includes("failed") || log.toLowerCase().includes("error")) {
-            if (!resolved) {
-              resolved = true;
-              resolve({ success: false, error: log });
-            }
+        } else if (log.toLowerCase().includes("failed") || log.toLowerCase().includes("error")) {
+          if (!resolved) {
+            resolved = true;
+            resolve({ success: false, error: log });
           }
         }
       });
@@ -317,7 +316,7 @@ class SessionRecorder {
           const y = (point.y - this.bounds.y) / this.bounds.height;
           this.logMouseEvent({ type: "move", x, y });
           win.webContents.send("mouse-update", { x, y, t });
-        }, 20);
+        }, 8);
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
@@ -344,6 +343,40 @@ class SessionRecorder {
         }
       });
     });
+  }
+  /**
+   * 仅清理进程，不销毁 Session 环境
+   * 用于在 start 循环中尝试不同编码器
+   */
+  async cleanupProcess() {
+    if (this.mousePollTimer) {
+      clearInterval(this.mousePollTimer);
+      this.mousePollTimer = null;
+    }
+    if (this.mouseMonitorProcess) {
+      this.mouseMonitorProcess.kill();
+      this.mouseMonitorProcess = null;
+    }
+    if (this.ffmpegProcess) {
+      const proc = this.ffmpegProcess;
+      this.ffmpegProcess = null;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => proc.kill("SIGKILL"), 1e3);
+        proc.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        if (proc.stdin && proc.stdin.writable) {
+          try {
+            proc.stdin.write("q\n");
+            proc.stdin.end();
+          } catch (e) {
+          }
+        } else {
+          proc.kill("SIGKILL");
+        }
+      });
+    }
   }
   async stop() {
     if (this.isStopping) return "";
@@ -395,36 +428,140 @@ class SessionRecorder {
 }
 let currentSession = null;
 const allSessions = /* @__PURE__ */ new Map();
-function buildFFmpegArgs(videoInputFiles, outputPath) {
+function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nvenc") {
   const args = [
     "-loglevel",
     "info",
     "-thread_queue_size",
-    "8192"
+    "16384",
+    "-init_hw_device",
+    "d3d11va"
+    // 显式初始化硬件设备以供后续滤镜使用
   ];
-  for (const vInput of videoInputFiles) {
-    args.push(...vInput);
+  args.push(...videoInputParams);
+  switch (encoderPreference) {
+    case "nvenc":
+      args.push(
+        "-c:v",
+        "h264_nvenc",
+        "-preset",
+        "p4",
+        "-tune",
+        "hq",
+        "-rc",
+        "vbr",
+        "-cq",
+        "19",
+        "-b:v",
+        "0",
+        "-maxrate",
+        "100M",
+        "-bufsize",
+        "200M",
+        "-profile:v",
+        "high",
+        "-level",
+        "5.1",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "faststart+frag_keyframe+empty_moov",
+        "-g",
+        "120"
+      );
+      break;
+    case "amf":
+      args.push(
+        "-c:v",
+        "h264_amf",
+        "-quality",
+        "quality",
+        "-rc",
+        "vbr_latency",
+        "-qp_i",
+        "18",
+        "-qp_p",
+        "20",
+        "-b:v",
+        "50M",
+        "-maxrate",
+        "100M",
+        "-bufsize",
+        "200M",
+        "-profile:v",
+        "high",
+        "-level",
+        "5.1",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "faststart+frag_keyframe+empty_moov",
+        "-g",
+        "120"
+      );
+      break;
+    case "qsv":
+      args.push(
+        "-vf",
+        "hwmap=derive_device=qsv,format=qsv",
+        // QSV 专用转换逻辑
+        "-c:v",
+        "h264_qsv",
+        "-preset",
+        "medium",
+        "-global_quality",
+        "20",
+        "-look_ahead",
+        "1",
+        "-b:v",
+        "50M",
+        "-maxrate",
+        "100M",
+        "-bufsize",
+        "200M",
+        "-profile:v",
+        "high",
+        "-level",
+        "5.1",
+        "-pix_fmt",
+        "nv12",
+        // QSV 通常在 NV12 下工作得最好
+        "-movflags",
+        "faststart+frag_keyframe+empty_moov",
+        "-g",
+        "120"
+      );
+      break;
+    case "software":
+    default:
+      args.push(
+        "-vf",
+        "hwdownload,format=bgra,format=yuv420p",
+        // 下载显存到内存并转换
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-crf",
+        "20",
+        "-profile:v",
+        "high",
+        "-level",
+        "5.1",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "faststart+frag_keyframe+empty_moov",
+        "-threads",
+        "0",
+        "-g",
+        "120"
+      );
+      break;
   }
-  args.push(
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    // 从 ultrafast 升级到 veryfast，在保证实时性的前提下显著提升画质
-    "-tune",
-    "zerolatency",
-    "-crf",
-    "22",
-    // 降低 CRF (从 25 到 22) 以提升基础录制质量
-    "-movflags",
-    "frag_keyframe+empty_moov+default_base_moof",
-    "-threads",
-    "0",
-    "-pix_fmt",
-    "yuv420p",
-    outputPath,
-    "-y"
-  );
+  args.push(outputPath, "-y");
   return args;
 }
 ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
@@ -445,29 +582,29 @@ ipcMain.handle("start-sidecar-record", async (_event, sourceId) => {
   }
   currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
   const recordingPath = currentSession.videoPath;
+  const inputSource = `ddagrab=output_idx=${outputIdx}:draw_mouse=0:framerate=60:dup_frames=0`;
   const videoInputDda = [
-    ["-f", "ddagrab", "-framerate", "60", "-draw_mouse", "0", "-output_idx", outputIdx.toString(), "-rtbufsize", "1000M", "-i", "desktop"]
+    "-f",
+    "lavfi",
+    "-i",
+    inputSource
   ];
-  const argsDda = buildFFmpegArgs(videoInputDda, recordingPath);
   const scriptPath = path$1.join(process.env.APP_ROOT || "", "resources", "scripts", "mouse-monitor.ps1");
   const psPath = fs$1.existsSync(scriptPath) ? scriptPath : path$1.join(process.resourcesPath, "scripts", "mouse-monitor.ps1");
-  console.log("[Main] Attempting ddagrab capture (Video Only)...");
-  let result = await currentSession.start(ffmpegPath, argsDda, psPath);
-  if (!result.success) {
-    console.warn(`[Main] ddagrab failed: ${result.error}. Falling back to gdigrab...`);
-    await currentSession.stop();
-    const toEven = (val) => {
-      const v = Math.round(val);
-      return v % 2 === 0 ? v : v - 1;
-    };
-    const physicalW = toEven(bounds.width * scaleFactor);
-    const physicalH = toEven(bounds.height * scaleFactor);
-    currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
-    const videoInputGdi = [
-      ["-f", "gdigrab", "-framerate", "30", "-draw_mouse", "0", "-rtbufsize", "500M", "-offset_x", Math.round(bounds.x * scaleFactor).toString(), "-offset_y", Math.round(bounds.y * scaleFactor).toString(), "-video_size", `${physicalW}x${physicalH}`, "-i", "desktop"]
-    ];
-    const argsGdi = buildFFmpegArgs(videoInputGdi, currentSession.videoPath);
-    result = await currentSession.start(ffmpegPath, argsGdi, psPath);
+  console.log("[Main] Starting Ultra-High-Performance ddagrab capture (Re-entrant cycle)...");
+  const encoderFallback = ["nvenc", "amf", "qsv", "software"];
+  let result = null;
+  for (const encoder of encoderFallback) {
+    const argsDda = buildFFmpegArgs(videoInputDda, recordingPath, encoder);
+    console.log(`[Main] Attempting [${encoder}] for session [${currentSession.sessionId}]`);
+    result = await currentSession.start(ffmpegPath, argsDda, psPath);
+    if (result.success) {
+      console.log(`[Main] ✅ Recording started successfully via [${encoder}]`);
+      break;
+    } else {
+      console.warn(`[Main] ❌ [${encoder}] failed: ${result.error}. Trying next fallback...`);
+      await currentSession.cleanupProcess();
+    }
   }
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
@@ -655,7 +792,7 @@ class CleanUpManager {
 app.whenReady().then(() => {
   CleanUpManager.runSilentCleanup();
   protocol.registerFileProtocol("nuvideo", (request, callback) => {
-    const url = request.url;
+    const url = decodeURIComponent(request.url);
     if (url.startsWith("nuvideo://load/")) {
       const fileName = url.replace("nuvideo://load/", "");
       const normalizedFileName = path$1.basename(fileName);
@@ -667,15 +804,24 @@ app.whenReady().then(() => {
       const sessionId = parts[0];
       const relPath = parts.slice(1).join("/") || "manifest.json";
       const session = allSessions.get(sessionId);
-      if (session) {
+      let sessionDir = session == null ? void 0 : session.sessionDir;
+      if (!sessionDir) {
+        const tempDir = path$1.join(app.getPath("temp"), "nuvideo_sessions", sessionId);
+        if (fs$1.existsSync(tempDir)) {
+          sessionDir = tempDir;
+        }
+      }
+      if (sessionDir) {
         const normalizedRelPath = path$1.normalize(relPath);
         if (normalizedRelPath.includes("..")) {
-          console.error("[Protocol Handler] Path traversal attempt blocked:", relPath);
-          callback({ error: -6 });
-          return;
+          return callback({ error: -6 });
         }
-        const filePath = path$1.join(session.sessionDir, normalizedRelPath);
-        return callback({ path: filePath });
+        const filePath = path$1.join(sessionDir, normalizedRelPath);
+        if (fs$1.existsSync(filePath)) {
+          return callback({ path: filePath });
+        } else {
+          console.warn("[Protocol Handler] File not found on disk:", filePath);
+        }
       }
     }
     callback({ error: -6 });

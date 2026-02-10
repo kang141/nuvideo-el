@@ -87,9 +87,8 @@ function findMousePos(
 ): { x: number; y: number } | null {
   if (!events || events.length === 0) return null;
 
-  // 1. 找到当前时间点的事件索引
+  // 1. 找到当前时间点的事件索引（使用缓存优化）
   let idx = -1;
-  // 由于 t 是单调增加的，利用缓存优化
   for (let i = lastMouseIdx; i < events.length; i++) {
     if (events[i].t <= t) {
       idx = i;
@@ -113,31 +112,42 @@ function findMousePos(
   const p2 = events[idx + 1];
   
   const span = p2.t - p1.t;
-  if (span <= 0.1) return { x: p1.x, y: p1.y };
+  
+  // 🎯 优化：对于极短时间跨度（<1ms），直接返回 p1，避免数值不稳定
+  if (span <= 1.0) return { x: p1.x, y: p1.y };
 
-  const ratio = (t - p1.t) / span;
+  const ratio = Math.max(0, Math.min(1, (t - p1.t) / span));
 
-  // 使用三次 Hermite 插值 (Cubic Hermite Spline) 的简化版
-  // 它比线性插值更平滑，且不需要未来的点（除了 p2）
-  // 实际上为了最优平滑度，我们可以看 p0 和 p3
+  // 🎯 优化：使用 Catmull-Rom 样条插值（四点插值）
+  // 这是业界标准的平滑曲线算法，广泛用于动画和图形学
   const p0 = events[Math.max(0, idx - 1)];
   const p3 = events[Math.min(events.length - 1, idx + 2)];
 
-  // 计算切线 (Tangents)
-  const m1 = (p2.x - p0.x) / 2;
-  const m2 = (p3.x - p1.x) / 2;
+  // Catmull-Rom 张力参数（0.5 是标准值，产生最平滑的曲线）
+  const tension = 0.5;
 
-  // Hermite Basis Functions
+  // 计算切线 (Tangents) - 使用相邻点的差值
+  const m1x = (p2.x - p0.x) * tension;
+  const m1y = (p2.y - p0.y) * tension;
+  const m2x = (p3.x - p1.x) * tension;
+  const m2y = (p3.y - p1.y) * tension;
+
+  // Hermite Basis Functions（三次多项式基函数）
   const r2 = ratio * ratio;
   const r3 = r2 * ratio;
-  const h1 = 2 * r3 - 3 * r2 + 1;
-  const h2 = -2 * r3 + 3 * r2;
-  const h3 = r3 - 2 * r2 + ratio;
-  const h4 = r3 - r2;
+  const h1 = 2 * r3 - 3 * r2 + 1;      // p1 的权重
+  const h2 = -2 * r3 + 3 * r2;         // p2 的权重
+  const h3 = r3 - 2 * r2 + ratio;      // m1 的权重
+  const h4 = r3 - r2;                  // m2 的权重
 
+  // 🎯 最终插值结果
+  const x = h1 * p1.x + h2 * p2.x + h3 * m1x + h4 * m2x;
+  const y = h1 * p1.y + h2 * p2.y + h3 * m1y + h4 * m2y;
+
+  // 🎯 边界保护：确保插值结果不会超出 [0, 1] 范围
   return {
-    x: h1 * p1.x + h2 * p2.x + h3 * m1 + h4 * m2,
-    y: h1 * p1.y + h2 * p2.y + h3 * ( (p2.y - p0.y) / 2 ) + h4 * ( (p3.y - p1.y) / 2 )
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y))
   };
 }
 
