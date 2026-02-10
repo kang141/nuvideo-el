@@ -32,6 +32,8 @@ export const translations = {
       engineReady: '原生捕获引擎已就绪',
       allScreens: '全部显示器',
       runningApps: '正在运行的应用',
+      starting: '启动中...',
+      startRecording: '开始录制',
     },
     editor: {
       appearance: '外观',
@@ -79,6 +81,8 @@ export const translations = {
     },
     recording: {
       stop: '停止',
+      pause: '暂停',
+      resume: '继续',
     }
   },
   en: {
@@ -114,6 +118,8 @@ export const translations = {
       engineReady: 'Native Engine Ready',
       allScreens: 'All Monitors',
       runningApps: 'Running Apps',
+      starting: 'Starting...',
+      startRecording: 'Start Recording',
     },
     editor: {
       appearance: 'Appearance',
@@ -161,6 +167,8 @@ export const translations = {
     },
     recording: {
       stop: 'Stop',
+      pause: 'Pause',
+      resume: 'Resume',
     }
   }
 };

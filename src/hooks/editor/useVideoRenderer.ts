@@ -289,9 +289,9 @@ export function useVideoRenderer({
   const renderFrame = async (timestampMs: number) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    if (!video || !canvas || !isReady || !offscreenRef.current) return;
+
     const isExportingNow = isExportingRef.current;
-    
-    // 🎯 诊断日志：导出模式下首帧如果跳过，记录原因
     if (!video || !canvas || !isReady || !offscreenRef.current) {
       if (isExportingNow) {
         console.warn('[渲染] 帧被跳过:', { 

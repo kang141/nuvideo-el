@@ -26,6 +26,8 @@ interface EditorPageProps {
   setLanguage: (lang: Language) => void;
   autoZoomEnabled: boolean;
   onToggleAutoZoom: (enabled: boolean) => void;
+  isExporting: boolean;
+  setIsExporting: (v: boolean) => void;
 }
 
 export function EditorPage({
@@ -35,6 +37,8 @@ export function EditorPage({
   setLanguage,
   autoZoomEnabled,
   onToggleAutoZoom,
+  isExporting,
+  setIsExporting,
 }: EditorPageProps) {
   // 1. 数据状态 (Single Source of Truth)
   const [graph, setGraph] = useState<RenderGraph | null>(initialGraph);
@@ -56,7 +60,6 @@ export function EditorPage({
   const defaultFileName = `nubideo ${now.toLocaleDateString().replace(/\//g, "-")} at ${timeStr}${ext}`;
   const [filename, setFilename] = useState(defaultFileName);
   const [exportPath, setExportPath] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [lastExportPath, setLastExportPath] = useState<string | null>(null);
 
@@ -330,10 +333,11 @@ export function EditorPage({
     exportDuration: graph?.duration ? graph.duration / 1000 : maxDuration,
     onSeek: handleSeek,
     setIsPlaying,
-    renderFrame,
-    isExporting,
     setIsExporting,
     renderGraph: graph || undefined,
+    bgCategory: activeWallpaper.category,
+    bgFile: activeWallpaper.file,
+    renderFrame: renderFrame,
   });
 
   const handleExport = useCallback(

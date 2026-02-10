@@ -12,10 +12,11 @@ interface UseVideoExportOptions {
   exportDuration?: number;
   onSeek: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
-  renderFrame: (timestampMs: number) => void | Promise<void>;
-  isExporting: boolean;
   setIsExporting: (v: boolean) => void;
   renderGraph?: RenderGraph;
+  bgCategory?: string;
+  bgFile?: string;
+  renderFrame: (t: number) => Promise<void>;
 }
 
 const ENCODER_QUEUE_THRESHOLD = 12;
@@ -28,10 +29,11 @@ export function useVideoExport({
   exportDuration,
   onSeek: _onSeek,
   setIsPlaying,
-  renderFrame,
-  isExporting: _isExporting,
   setIsExporting,
   renderGraph,
+  bgCategory,
+  bgFile,
+  renderFrame,
 }: UseVideoExportOptions) {
   const [exportProgress, setExportProgress] = useState(0);
   const isExportingRef = useRef(false);
@@ -66,36 +68,17 @@ export function useVideoExport({
       return { success: false };
     }
     
-    // 🎯 关键修复：导出前应用统一的渲染配置
-    console.log('[导出] 应用导出渲染配置...');
-    console.log('[导出] 画布当前尺寸:', { 
-      width: canvas.width, 
-      height: canvas.height,
-      style: { width: canvas.style.width, height: canvas.style.height }
-    });
     
     applyRenderConfig(canvas, EXPORT_CONFIG);
-    
-    console.log('[导出] 配置应用后画布尺寸:', { 
-      width: canvas.width, 
-      height: canvas.height,
-      logicalWidth: EXPORT_CONFIG.canvasWidth,
-      logicalHeight: EXPORT_CONFIG.canvasHeight,
-      dpr: EXPORT_CONFIG.dpr
-    });
-    
+   
     let streamId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
     const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
     const fps = 60;
     const durationSeconds = exportDuration ?? maxDuration;
     // 稳定性加固：强制分辨率为偶数以适配硬件编码器
-    // 使用逻辑尺寸（EXPORT_CONFIG 已经处理了 DPR）
     const width = EXPORT_CONFIG.canvasWidth % 2 === 0 ? EXPORT_CONFIG.canvasWidth : EXPORT_CONFIG.canvasWidth - 1;
     const height = EXPORT_CONFIG.canvasHeight % 2 === 0 ? EXPORT_CONFIG.canvasHeight : EXPORT_CONFIG.canvasHeight - 1;
-    
-    console.log('[导出] 编码器尺寸:', { width, height, dpr: EXPORT_CONFIG.dpr });
-    console.log('[导出] 视频参数:', { fps, bitrate, durationSeconds, isGif });
 
     // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
@@ -206,58 +189,33 @@ export function useVideoExport({
         console.warn('[useVideoExport] renderGraph.audio or .tracks is missing!');
       }
 
-      // 3. 准备编码器探测
-      const codecCandidates = isGif 
-        ? ['vp09.00.10.08'] 
-        : [
-            'avc1.640033', // High Profile, Level 5.1 (支持 4K)
-            'avc1.4d0033', // Main Profile, Level 5.1 (支持 4K)
-            'avc1.42E034', // Baseline Profile, Level 5.2 (极高兼容性，且支持超大分辨率)
-          ];
+      // 3. 2026 极致精简：仅保留通用 H.264 (AVC)
+      const codecCandidates = [
+        'avc1.640033', // High Profile (推荐)
+        'avc1.4d0033', // Main Profile
+        'avc1.42E01E', // Baseline Profile (终极兼容)
+      ];
       
       let videoConfig: VideoEncoderConfig | null = null;
       for (const codec of codecCandidates) {
         const testConfig: VideoEncoderConfig = { 
           codec, width, height, bitrate, framerate: fps, 
-          hardwareAcceleration: 'prefer-hardware' 
+          hardwareAcceleration: 'no-preference' // 让系统自动选择硬件或软件
         };
         try {
           const support = await VideoEncoder.isConfigSupported(testConfig);
           if (support.supported) {
             videoConfig = testConfig;
-            console.log('[useVideoExport] Selected codec:', codec);
+            console.log(`[useVideoExport] Selected H.264 codec: ${codec}`);
             break;
           }
         } catch (err) {
-          console.warn(`[useVideoExport] Codec ${codec} not supported:`, err);
+          console.warn(`[useVideoExport] AVC ${codec} not supported:`, err);
         }
       }
       
       if (!videoConfig) {
-        // 额外尝试基本配置，确保至少有一个可用的编码器
-        try {
-          // 尝试使用基本的VP8编码器（通常在大多数系统上可用）
-          const basicConfig: VideoEncoderConfig = { 
-            codec: 'vp8', width, height, bitrate, framerate: fps, 
-            hardwareAcceleration: 'prefer-software' 
-          };
-          const basicSupport = await VideoEncoder.isConfigSupported(basicConfig);
-          if (basicSupport.supported) {
-            videoConfig = basicConfig;
-            console.log('[useVideoExport] Selected fallback codec: vp8');
-          }
-        } catch (err) {
-          console.warn('[useVideoExport] Basic VP8 codec not supported:', err);
-        }
-        
-        // 如果仍然没有找到合适的配置，使用默认配置
-        if (!videoConfig) {
-          videoConfig = { 
-            codec: isGif ? 'vp09.00.10.08' : 'avc1.42E034', 
-            width, height, bitrate, framerate: fps, 
-            hardwareAcceleration: 'prefer-software' 
-          };
-        }
+        throw new Error('H.264 (AVC) encoding is not supported on this system.');
       }
 
       // 4. 打开流与 Muxer
@@ -290,7 +248,12 @@ export function useVideoExport({
 
       const muxer = new Muxer({
         target: muxerTarget as any,
-        video: { codec: (videoConfig.codec.startsWith('vp') ? 'vp9' : 'avc') as any, width, height, frameRate: fps },
+        video: { 
+          codec: 'avc', 
+          width, 
+          height, 
+          frameRate: fps 
+        },
         audio: decodedAudio && !isGif ? { codec: 'aac', sampleRate: 48000, numberOfChannels: 2 } : undefined,
         fastStart: 'in-memory', // 改为内存缓冲模式，对于短视频（数分钟内）来说更稳定，避免回填失败
         firstTimestampBehavior: 'offset',
@@ -337,6 +300,27 @@ export function useVideoExport({
       // 这样可以确保时间戳永远是递增的，避免 muxer 报错
       let frameTimestamp = 0;
       const frameDuration = 1_000_000 / fps; // 微秒为单位的帧间隔
+
+      if (!renderGraph) {
+        throw new Error('RenderGraph is required for export');
+      }
+
+      console.log('[导出] 正在加载渲染资源...');
+      
+      // 加载背景图（从 Props 获取，带默认值兜底）
+      const bgImage = new Image();
+      const cat = bgCategory || 'macOS';
+      const file = bgFile || 'sequoia-dark.jpg';
+      await new Promise<void>((resolve) => {
+        bgImage.onload = () => resolve();
+        bgImage.onerror = () => {
+          console.warn(`[导出] 背景加载失败: ${cat}/${file}, 尝试使用默认背景`);
+          bgImage.src = 'asset://backgrounds/macOS/sequoia-dark.jpg'; // 二次尝试默认路径
+        };
+        bgImage.src = `asset://backgrounds/${cat}/${file}`;
+      });
+
+      console.log('[导出] 渲染流程准备完成 (使用主画布)');
 
       // 6. 视频导出循环 (使用 VFC 同步)
       const vVideo = video as any;
@@ -394,17 +378,19 @@ export function useVideoExport({
               });
             }
             
+            // 🎯 使用主渲染器绘制到主画布
             await renderFrame(meta.mediaTime * 1000);
+            const exportCanvas = canvas;
             
             // 🎯 调试：检查画布内容（每10帧检查一次）
             if (encodedCount % 10 === 0) {
-              const ctx = canvas.getContext('2d');
+              const ctx = exportCanvas.getContext('2d');
               if (ctx) {
-                const imageData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height));
+                const imageData = ctx.getImageData(0, 0, Math.min(10, exportCanvas.width), Math.min(10, exportCanvas.height));
                 const hasContent = Array.from(imageData.data).some(v => v !== 0);
                 const nonZeroCount = Array.from(imageData.data).filter(v => v !== 0).length;
                 console.log(`[导出] 第${encodedCount}帧画布检查:`, {
-                  canvasSize: { width: canvas.width, height: canvas.height },
+                  canvasSize: { width: exportCanvas.width, height: exportCanvas.height },
                   hasContent,
                   nonZeroPixels: nonZeroCount,
                   totalPixels: imageData.data.length,
@@ -413,7 +399,7 @@ export function useVideoExport({
               }
             }
             
-            const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp, alpha: 'discard' });
+            const vFrame = new VideoFrame(exportCanvas, { timestamp: frameTimestamp, alpha: 'discard' });
             console.log('[导出] 创建视频帧:', {
               frameIndex: encodedCount,
               timestamp: frameTimestamp,
@@ -482,8 +468,11 @@ export function useVideoExport({
             video.addEventListener('seeked', onSd);
             setTimeout(onSd, 500); // 兜底处理
           });
+          
           await renderFrame(t * 1000);
-          const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp, alpha: 'discard' });
+          const exportCanvas = canvas;
+          
+          const vFrame = new VideoFrame(exportCanvas, { timestamp: frameTimestamp, alpha: 'discard' });
           if (videoEncoder) {
             videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
           }

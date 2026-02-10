@@ -86,12 +86,17 @@ export function RecordingStatusBar({
         {/* 控制组 */}
         <div className="flex items-center gap-0.5">
           {/* 暂停/继续 */}
-          <button
-            onClick={isPaused ? onResume : onPause}
-            className={`p-2.5 rounded-full transition-all ${isPaused ? 'text-amber-500 hover:bg-amber-500/10' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}`}
-          >
-            {isPaused ? <Play size={22} fill="currentColor" /> : <Pause size={22} fill="currentColor" />}
-          </button>
+          <div className="group relative">
+            <button
+              onClick={isPaused ? onResume : onPause}
+              className={`p-2.5 rounded-full transition-all ${isPaused ? 'text-amber-500 hover:bg-amber-500/10' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}`}
+            >
+              {isPaused ? <Play size={22} fill="currentColor" /> : <Pause size={22} fill="currentColor" />}
+            </button>
+            <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black/80 backdrop-blur rounded text-[10px] text-white/60 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap border border-white/10 pointer-events-none">
+              F9 {isPaused ? t.recording.resume : t.recording.pause}
+            </div>
+          </div>
 
           <div className="w-px h-5 bg-white/10 mx-1.5" />
 
@@ -103,6 +108,7 @@ export function RecordingStatusBar({
             <div className="relative z-10 flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-black rounded-[1px]" />
               <span className="tracking-tight uppercase">{t.recording.stop}</span>
+              <span className="text-[9px] opacity-30 font-extrabold ml-1">F10</span>
             </div>
             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent group-hover:translate-x-full duration-500 transition-transform" />
           </button>

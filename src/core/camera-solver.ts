@@ -352,5 +352,7 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     scale: state.scale,
     mx: state.mx,
     my: state.my,
+    mvx: state.mvx,
+    mvy: state.mvy,
   };
 }

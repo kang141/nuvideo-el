@@ -46,6 +46,7 @@ interface HomePageProps {
   onToggleAutoZoom: (enabled: boolean) => void;
   language: Language;
   setLanguage: (lang: Language) => void;
+  onRegisterStart?: (fn: () => void) => void;
 }
 
 const QUALITY_KEY = "nuvideo_last_quality";
@@ -188,6 +189,7 @@ export function HomePage({
   onToggleAutoZoom,
   language,
   setLanguage,
+  onRegisterStart,
 }: HomePageProps) {
   const {
     microphones,
@@ -293,6 +295,7 @@ export function HomePage({
     return () => clearInterval(interval);
   }, [fetchSources, isStarting]);
 
+
   const screenSources = sources.filter((s) => s.id.startsWith("screen:"));
   const windowSources = sources.filter((s) => !s.id.startsWith("screen:"));
   const selectedSource = sources.find((s) => s.id === selectedSourceId);
@@ -302,7 +305,7 @@ export function HomePage({
     (window as any).ipcRenderer.send("window-control", action);
   };
 
-  const handleStartRecording = async () => {
+  const handleStartRecording = useCallback(async () => {
     if (!selectedSourceId || isStarting) return;
 
     setIsStarting(true);
@@ -328,7 +331,15 @@ export function HomePage({
     } catch (e) {
       setIsStarting(false);
     }
-  };
+  }, [selectedSourceId, isStarting, selectedQuality, recordFormat, autoZoomEnabled, selectedMicrophone, microphones, systemAudioEnabled, webcamEnabled, selectedWebcam, onStartRecording]);
+
+
+  // 将开始录制函数注册到父组件
+  useEffect(() => {
+    if (onRegisterStart) {
+      onRegisterStart(handleStartRecording);
+    }
+  }, [onRegisterStart, handleStartRecording]);
 
   const handleSelectSourceType = (nextType: "screen" | "window") => {
     setSourceType(nextType);
@@ -803,46 +814,26 @@ export function HomePage({
                   : "bg-white text-black font-bold shadow-[0_20px_40px_-12px_rgba(255,255,255,0.2)] hover:shadow-[0_24px_48px_-12px_rgba(255,255,255,0.3)] shimmer-btn",
               )}
             >
-              <div
-                className={cn(
-                  "w-7 h-7 rounded-full flex items-center justify-center transition-all duration-500",
-                  isStarting ? "bg-white/[0.05]" : "bg-black/10 shadow-inner",
-                )}
-              >
-                {isStarting ? (
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{
-                      duration: 1.5,
-                      repeat: Infinity,
-                      ease: "linear",
-                    }}
-                  >
-                    <Sparkles size={15} className="text-blue-400/80" />
-                  </motion.div>
-                ) : (
-                  <Zap size={15} className="fill-black" />
-                )}
-              </div>
-              <span className="tracking-tight">
-                {isStarting ? "正在初始化..." : "开启录制"}
-              </span>
+              {isStarting ? (
+                <div className="flex items-center gap-2.5">
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+                  <span className="font-medium tracking-wide">
+                    {t.home.starting}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse ring-4 ring-red-500/20" />
+                  <span className="uppercase tracking-[0.08em] font-extrabold">
+                    {t.home.startRecording}
+                  </span>
+                  <div className="flex items-center gap-1.5 ml-1 px-1.5 py-0.5 rounded-md bg-black/5 text-[9px] font-bold text-black/40 border border-black/5">
+                    <Zap size={10} className="fill-current" />
+                    F10
+                  </div>
+                </>
+              )}
             </motion.button>
-
-            <div className="mt-3 pb-1 flex items-center justify-center gap-5">
-              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 status-dot-pulse" />
-                <span className="text-[11px] text-white/25 tracking-wide">
-                  Engine Ready
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Sparkles size={10} className="text-white/15" />
-                <span className="text-[11px] text-white/25 tracking-wide">
-                  AI Focus On
-                </span>
-              </div>
-            </div>
           </div>
         </div>
       </main>

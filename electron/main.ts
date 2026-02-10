@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell, globalShortcut } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -957,7 +957,19 @@ app.whenReady().then(() => {
     callback({ path: path.normalize(fullPath) })
   })
 
+  // 注册全局快捷键
+  globalShortcut.register('F10', () => {
+    win?.webContents.send('hotkey-toggle-record');
+  });
+  globalShortcut.register('F9', () => {
+    win?.webContents.send('hotkey-pause-resume');
+  });
+
   createWindow()
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 })
 
 ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | 'close' | 'toggle-fullscreen' | 'set-content-protection', value?: any) => {

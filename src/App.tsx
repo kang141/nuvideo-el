@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 function App() {
   const [appState, setAppState] = useState<AppState>("home");
+  const homeStartRef = useRef<() => void>();
 
   const [recordingState, setRecordingState] = useState<RecordingState>(() => ({
     isRecording: false,
@@ -22,6 +23,17 @@ function App() {
     format: "video",
     autoZoom: localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
   }));
+  const recordingStateRef = useRef<RecordingState>(recordingState);
+  useEffect(() => {
+    recordingStateRef.current = recordingState;
+  }, [recordingState]);
+
+  const [isExporting, setIsExporting] = useState(false);
+  const isExportingRef = useRef(isExporting);
+  useEffect(() => {
+    isExportingRef.current = isExporting;
+  }, [isExporting]);
+
   const [renderGraph, setRenderGraph] = useState<RenderGraph | null>(null);
   const lastVideoUrlRef = useRef<string | null>(null);
   const audioDelayRef = useRef<number>(0);
@@ -47,7 +59,6 @@ function App() {
   };
 
   const transitionTo = useCallback((nextState: AppState) => {
-    // 立即通知 UI 进入切换状态
     setAppState(nextState);
   }, []);
 
@@ -56,37 +67,13 @@ function App() {
     return () => document.documentElement.classList.remove("dark");
   }, []);
 
-  useEffect(() => {
-    const ipc = (window as any).ipcRenderer;
-    if (!ipc) return;
+  const handlePauseRecording = useCallback(() => {
+    setRecordingState((prev) => ({ ...prev, isPaused: true }));
+  }, []);
 
-    // 针对录制模式做极速处理
-    const delay = appState === "recording" ? 80 : 150;
-
-    // 缩短延迟，确保 Resize 发生在 AnimatePresence 的 Exit 之后，Enter 之前
-    const timeout = setTimeout(() => {
-      if (appState === "home") {
-        ipc.send("resize-window", { width: 720, height: 480, resizable: true });
-      } else if (appState === "editor") {
-        ipc.send("resize-window", {
-          width: 1200,
-          height: 800,
-          resizable: true,
-        });
-      } else if (appState === "recording") {
-        // 关键：先让背景透明，再缩放
-        ipc.send("resize-window", {
-          width: 520,
-          height: 84, // 从 72 增加到 84，为阴影留出空间
-          resizable: false,
-          position: "bottom",
-          mode: "recording",
-        });
-      }
-    }, delay); // 150ms 是 exit 动画进行到一半的时间，此时窗口透明度极低，微调尺寸最不易察觉
-
-    return () => clearTimeout(timeout);
-  }, [appState]);
+  const handleResumeRecording = useCallback(() => {
+    setRecordingState((prev) => ({ ...prev, isPaused: false }));
+  }, []);
 
   useEffect(() => {
     if (!recordingState.isRecording || recordingState.isPaused) {
@@ -169,7 +156,7 @@ function App() {
       setRecordingState((prev) => ({ ...prev, isRecording: false }));
       alert("录制启动失败");
     }
-  }, []);
+  }, [transitionTo]);
 
   const fetchSessionEvents = async (
     sessionId: string,
@@ -188,7 +175,6 @@ function App() {
       let lastY = 0.5;
 
       for (const raw of parsed) {
-        // 1. 始终优先提取坐标（即使该事件后续被过滤），保证位置继承链不中断
         const hasXY = typeof raw.x === "number" && typeof raw.y === "number";
         const x = hasXY ? raw.x : lastX;
         const y = hasXY ? raw.y : lastY;
@@ -197,12 +183,10 @@ function App() {
           lastY = y;
         }
 
-        // 2. 减去准备时间偏移。
         const rawT = typeof raw.t === "number" ? raw.t : raw.ts;
         if (typeof rawT !== "number") continue;
 
         const t = rawT - readyOffsetRef.current;
-        // 过滤掉视频开始之前的鼠标动作
         if (t < 0) continue;
 
         if (
@@ -228,11 +212,11 @@ function App() {
     }
   };
 
-  const handleStopRecording = async () => {
-    if (!recordingState.isRecording) return;
+  const handleStopRecording = useCallback(async () => {
+    const currentState = recordingStateRef.current;
+    if (!currentState.isRecording) return;
 
     try {
-      // 关键修复：立即标记停止录制，防止计时器继续累加（IPC 通信期间可能产生几百毫秒误差）
       setRecordingState((prev) => ({
         ...prev,
         isRecording: false,
@@ -240,28 +224,15 @@ function App() {
       }));
 
       mouseTracker.stop();
-      console.log(
-        "[App] Stopping recording. isRecording:",
-        recordingState.isRecording,
-      );
-
       const sessionResult = await screenRecorder.stop();
-      // 停止原生音频录制并获取数据 { micBuffer, sysBuffer }
       const audioBuffers = await nativeAudioRecorder.stop();
-      // 停止摄像头录制并获取数据
       const webcamBuffer = await webcamRecorder.stop();
 
-      console.log("[App] Recording stop result:", sessionResult);
-
       if (!sessionResult) {
-        throw new Error(
-          `Empty recording result. Main process state might have been lost or recording crashed.`,
-        );
+        throw new Error(`Empty recording result.`);
       }
 
       const { sessionId } = sessionResult;
-
-      // 如果有录制到音频，保存到会话目录 (分轨模式)
       const audioTracks: any[] = [];
       if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
         const saveResult = await (window as any).ipcRenderer.invoke(
@@ -274,7 +245,6 @@ function App() {
         );
 
         if (saveResult.success) {
-          // 构建多轨音频配置
           if (saveResult.micPath) {
             audioTracks.push({
               source: "microphone",
@@ -298,7 +268,6 @@ function App() {
         }
       }
 
-      // 处理摄像头视频保存
       let finalWebcamPath = undefined;
       if (webcamBuffer && webcamBuffer.byteLength > 0) {
         const saveResult = await (window as any).ipcRenderer.invoke(
@@ -318,14 +287,13 @@ function App() {
       const lastEventT =
         mouseEvents.length > 0 ? mouseEvents[mouseEvents.length - 1].t : 0;
       const finalDurationMs = Math.max(
-        recordingState.duration,
+        currentState.duration,
         Math.ceil(lastEventT + tailPaddingMs),
       );
 
       const finalGraph: RenderGraph = {
         videoSource: `nuvideo://session/${sessionId}/video_raw.mp4`,
         duration: finalDurationMs,
-        // 支持多轨音频
         audio: {
           tracks: audioTracks,
         },
@@ -353,9 +321,9 @@ function App() {
           fps: 60,
           ratio: "16:9",
           outputWidth: 1920,
-          targetFormat: recordingState.format,
+          targetFormat: currentState.format,
         },
-        autoZoom: recordingState.autoZoom,
+        autoZoom: currentState.autoZoom,
         webcam: {
           isEnabled: !!finalWebcamPath,
         },
@@ -369,7 +337,6 @@ function App() {
         isPaused: false,
       }));
       setRenderGraph(finalGraph);
-
       transitionTo("editor");
     } catch (err) {
       console.error("[App] Failed to finalize recording:", err);
@@ -381,24 +348,24 @@ function App() {
       }));
       transitionTo("home");
     }
-  };
+  }, [transitionTo]); // 依赖项现在非常稳定
 
+  // --- 关键生命周期：窗口尺寸与模式同步 ---
   useEffect(() => {
     const ipc = (window as any).ipcRenderer;
     if (!ipc) return;
 
-    // 彻底抛弃动画，Resize 几乎立即触发，与 React 渲染同步
     const timeout = setTimeout(() => {
       if (appState === "home") {
         ipc.send("resize-window", { width: 720, height: 480, resizable: true });
-        ipc.send('set-ignore-mouse-events', false); // 关键：恢复首页的交互性
+        ipc.send('set-ignore-mouse-events', false);
       } else if (appState === "editor") {
         ipc.send("resize-window", {
           width: 1200,
           height: 800,
           resizable: true,
         });
-        ipc.send('set-ignore-mouse-events', false); // 关键：恢复编辑器的交互性
+        ipc.send('set-ignore-mouse-events', false);
       } else if (appState === "recording") {
         ipc.send("resize-window", {
           width: 520,
@@ -413,13 +380,40 @@ function App() {
     return () => clearTimeout(timeout);
   }, [appState]);
 
-  const handlePauseRecording = () => {
-    setRecordingState((prev) => ({ ...prev, isPaused: true }));
-  };
+  // --- 快捷键逻辑 ---
+  useEffect(() => {
+    const ipc = (window as any).ipcRenderer;
+    if (!ipc) return;
 
-  const handleResumeRecording = () => {
-    setRecordingState((prev) => ({ ...prev, isPaused: false }));
-  };
+    const onToggle = () => {
+      if (isExportingRef.current) return;
+      
+      const state = recordingStateRef.current;
+      if (state.isRecording) {
+        handleStopRecording();
+      } else if (appState === 'home' && homeStartRef.current) {
+        homeStartRef.current();
+      }
+    };
+
+    const onPauseResume = () => {
+      const state = recordingStateRef.current;
+      if (state.isRecording) {
+        if (state.isPaused) handleResumeRecording();
+        else handlePauseRecording();
+      }
+    };
+
+    ipc.on('hotkey-toggle-record', onToggle);
+    ipc.on('hotkey-pause-resume', onPauseResume);
+
+    return () => {
+      if (ipc.removeAllListeners) {
+        ipc.removeAllListeners('hotkey-toggle-record');
+        ipc.removeAllListeners('hotkey-pause-resume');
+      }
+    };
+  }, [appState, handleStopRecording, handlePauseRecording, handleResumeRecording]);
 
   const handleBackToHome = () => {
     transitionTo("home");
@@ -460,7 +454,6 @@ function App() {
         key={language}
       >
         <AnimatePresence mode="wait">
-        {/* 1. 录制模式 */}
           {appState === "recording" && (
             <motion.div 
               key="recording"
@@ -480,7 +473,6 @@ function App() {
             </motion.div>
           )}
 
-          {/* 2. 首页 */}
           {appState === "home" && (
             <motion.div 
               key="home"
@@ -492,6 +484,7 @@ function App() {
             >
               <HomePage
                 onStartRecording={handleStartRecording}
+                onRegisterStart={(fn) => { homeStartRef.current = fn; }}
                 autoZoomEnabled={autoZoomEnabled}
                 onToggleAutoZoom={handleUpdateAutoZoom}
                 language={language}
@@ -500,7 +493,6 @@ function App() {
             </motion.div>
           )}
 
-          {/* 3. 编辑器 */}
           {appState === "editor" && (
             <motion.div 
               key="editor"
@@ -512,6 +504,8 @@ function App() {
               <EditorPage
                 renderGraph={renderGraph}
                 onBack={handleBackToHome}
+                isExporting={isExporting}
+                setIsExporting={setIsExporting}
                 language={language}
                 setLanguage={handleUpdateLanguage}
                 autoZoomEnabled={autoZoomEnabled}
