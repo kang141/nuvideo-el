@@ -61,7 +61,15 @@ export function CanvasPreview({
         
         <video 
           ref={videoRef} 
-          className="hidden" 
+          style={{
+            position: 'fixed',
+            top: '-1000px',
+            left: '-1000px',
+            width: '1px',
+            height: '1px',
+            opacity: 0.01, // 极小不透明度确保激活 GL 上下文
+            pointerEvents: 'none',
+          }}
           muted 
           playsInline 
           onEnded={onEnded} 

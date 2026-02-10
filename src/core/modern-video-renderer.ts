@@ -38,28 +38,40 @@ export class ModernVideoRenderer {
    * 获取指定时间点的视频帧
    * 使用原生 Video 元素 + VideoFrame API
    */
-  async getFrameAt(timestampMs: number): Promise<VideoFrame | null> {
+  async getFrameAt(timestampMs: number, allowSeek = true): Promise<VideoFrame | null> {
     if (!this.isReady) return null;
 
     const targetTime = timestampMs / 1000;
+    const currentTime = this.video.currentTime;
     
-    // 如果当前时间已经接近目标时间，直接使用
-    if (Math.abs(this.video.currentTime - targetTime) < 0.016) {
+    // 🎯 容差逻辑优化：如果当前时间已经非常接近目标时间（32ms 容差，约 2 帧），直接使用
+    // 这样可以避免在播放过程中由于微小的进度差异触发频繁的 seek 导致黑屏
+    if (Math.abs(currentTime - targetTime) < 0.032) {
+      return this.captureCurrentFrame();
+    }
+
+    // 如果不允许 seek，直接返回当前帧（用于流畅播放模式下的导出）
+    if (!allowSeek) {
       return this.captureCurrentFrame();
     }
 
     // 否则需要 seek
     return new Promise((resolve) => {
+      let resolved = false;
       const onSeeked = () => {
+        if (resolved) return;
+        resolved = true;
         this.video.removeEventListener('seeked', onSeeked);
         resolve(this.captureCurrentFrame());
       };
 
-      this.video.addEventListener('seeked', onSeeked);
+      this.video.addEventListener('seeked', onSeeked, { once: true });
       this.video.currentTime = targetTime;
 
       // 超时保护
       setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
         this.video.removeEventListener('seeked', onSeeked);
         resolve(this.captureCurrentFrame());
       }, 500);
@@ -69,12 +81,13 @@ export class ModernVideoRenderer {
   /**
    * 捕获当前帧
    */
-  private captureCurrentFrame(): VideoFrame | null {
-    if (!this.isReady || this.video.readyState < 2) return null;
+  public captureCurrentFrame(): VideoFrame | null {
+    // 🎯 即使 renderer 内部 isReady 为 false，只要 video 元素本身 ready，也可以尝试捕获
+    if (this.video.readyState < 2) return null;
 
     try {
       return new VideoFrame(this.video, {
-        timestamp: this.video.currentTime * 1_000_000, // 转换为微秒
+        timestamp: this.video.currentTime * 1_000_000, 
       });
     } catch (e) {
       console.warn('[ModernVideoRenderer] Failed to capture frame:', e);

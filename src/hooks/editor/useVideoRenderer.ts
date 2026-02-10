@@ -39,6 +39,10 @@ export function useVideoRenderer({
   // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
 
+  // 🎯 使用 Ref 跟踪导出状态，确保 renderFrame 闭包始终能获取最新值
+  const isExportingRef = useRef(isExporting);
+  useEffect(() => { isExportingRef.current = isExporting; }, [isExporting]);
+
   // 绘制/刷新离屏静态层
   const updateOffscreen = (vw: number, vh: number) => {
     if (!bgImageRef.current) return;
@@ -137,7 +141,7 @@ export function useVideoRenderer({
       const video = videoRef.current;
       if (video) requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
     };
-  }, [bgCategory, bgFile, isExporting]); // 增加 isExporting 依赖，确保导出开始时重绘离屏层
+  }, [bgCategory, bgFile]); // 移除 isExporting 依赖，背景图加载与是否导出无关
 
   // 启动现代化渲染器
   useEffect(() => {
@@ -158,7 +162,7 @@ export function useVideoRenderer({
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, [videoRef, isExporting]);
+  }, [videoRef]); // 移除 isExporting 依赖，避免导出开始时销毁并重建渲染器
 
   // 启动摄像头渲染器
   useEffect(() => {
@@ -281,11 +285,24 @@ export function useVideoRenderer({
     };
   };
 
-  // 核心渲染逻辑 (可重复调用)
+  // 核心渲染 logic (可重复调用)
   const renderFrame = async (timestampMs: number) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !isReady || !offscreenRef.current) return;
+    const isExportingNow = isExportingRef.current;
+    
+    // 🎯 诊断日志：导出模式下首帧如果跳过，记录原因
+    if (!video || !canvas || !isReady || !offscreenRef.current) {
+      if (isExportingNow) {
+        console.warn('[渲染] 帧被跳过:', { 
+          hasVideo: !!video, 
+          hasCanvas: !!canvas, 
+          isReady, 
+          hasOffscreen: !!offscreenRef.current 
+        });
+      }
+      return;
+    }
 
     // 🎯 统一获取 context：确保预览和导出使用相同的配置
     const ctx = canvas.getContext('2d', { 
@@ -310,6 +327,10 @@ export function useVideoRenderer({
     const s = camera.scale;
 
     // --- A. 绘制预渲染的背景/窗口层 ---
+    // 🎯 核心补丁：即使在 alpha: false 模式下，也要显式填充背景颜色
+    // 确保 Canvas 生成的每一帧都对应有底色，不让 VideoFrame 抓到“空洞”
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
     ctx.drawImage(offscreenRef.current, 0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
 
     // --- B. 布局参数 ---
@@ -335,11 +356,31 @@ export function useVideoRenderer({
 
     // --- 统一的现代化渲染策略 ---
     if (renderer) {
-      // 预览模式：直接绘制（最快，硬件加速）
-      if (!isExporting) {
+      // 🎯 核心优化：导出模式且视频正在播放时（VFC模式），不使用 seek 模式的 getFrameAt
+      // 而是直接使用捕获当前帧，避免 seek 导致的黑屏。
+      const isActuallyPlaying = video && !video.paused;
+      
+      // 🎯 诊断日志
+      if (isExportingNow && timestampMs < 100) {
+        console.log('[渲染] 渲染路径选择:', {
+          isExportingNow,
+          isActuallyPlaying,
+          videoPaused: video.paused,
+          videoCurrentTime: video.currentTime,
+          videoReadyState: video.readyState,
+          timestampMs
+        });
+      }
+      
+      if (!isExportingNow || isActuallyPlaying) {
+        // 预览模式或正在播放的导出，直接从视频层抽取
         frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
         
-        // 更新缓存
+        if (isExportingNow && timestampMs < 100) {
+          console.log('[渲染] drawToCanvas 结果:', { frameRendered, videoReadyState: video.readyState });
+        }
+        
+        // 更新缓存（用于丢帧时的兜底）
         if (frameRendered) {
           if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
           if (mainVideoCacheRef.current.width !== dw) {
@@ -347,16 +388,22 @@ export function useVideoRenderer({
             mainVideoCacheRef.current.height = dh;
           }
           const cacheCtx = mainVideoCacheRef.current.getContext('2d');
-          if (cacheCtx) cacheCtx.drawImage(video, 0, 0, dw, dh);
+          if (cacheCtx) {
+            try {
+              cacheCtx.drawImage(video, 0, 0, dw, dh);
+            } catch (e) { /* ignore */ }
+          }
         }
       } 
-      // 导出模式：获取 VideoFrame（精确到帧）
       else {
+        // 导出模式且视频暂停（手动 Seek 模式）：使用精确帧获取
+        if (timestampMs < 100) {
+          console.log('[渲染] 使用 getFrameAt 模式');
+        }
         try {
-          const frame = await renderer.getFrameAt(timestampMs);
+          const frame = await renderer.getFrameAt(timestampMs, true);
           if (frame) {
             ctx.drawImage(frame, 0, 0, dw, dh);
-            frame.close();
             frameRendered = true;
             
             // 更新缓存
@@ -366,10 +413,14 @@ export function useVideoRenderer({
               mainVideoCacheRef.current.height = dh;
             }
             const cacheCtx = mainVideoCacheRef.current.getContext('2d');
-            if (cacheCtx && frame) cacheCtx.drawImage(frame, 0, 0, dw, dh);
+            if (cacheCtx) cacheCtx.drawImage(frame, 0, 0, dw, dh);
+            
+            frame.close();
+          } else {
+             if (isExportingNow) console.warn('[渲染] getFrameAt 返回空, 时间戳:', timestampMs);
           }
         } catch (e) {
-          console.warn('[渲染] 获取帧失败:', e);
+          console.warn('[渲染] 获取精确帧失败:', e);
         }
       }
     }

@@ -383,23 +383,37 @@ export function useVideoExport({
               });
             }
             
+            // 🎯 关键诊断：在渲染前检查视频状态
+            if (encodedCount === 0) {
+              console.log('[导出] 渲染前视频状态:', {
+                paused: video.paused,
+                currentTime: video.currentTime,
+                readyState: video.readyState,
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight
+              });
+            }
+            
             await renderFrame(meta.mediaTime * 1000);
             
-            // 🎯 调试：检查画布内容
-            if (encodedCount === 0) {
+            // 🎯 调试：检查画布内容（每10帧检查一次）
+            if (encodedCount % 10 === 0) {
               const ctx = canvas.getContext('2d');
               if (ctx) {
                 const imageData = ctx.getImageData(0, 0, Math.min(10, canvas.width), Math.min(10, canvas.height));
                 const hasContent = Array.from(imageData.data).some(v => v !== 0);
-                console.log('[导出] 第一帧画布检查:', {
+                const nonZeroCount = Array.from(imageData.data).filter(v => v !== 0).length;
+                console.log(`[导出] 第${encodedCount}帧画布检查:`, {
                   canvasSize: { width: canvas.width, height: canvas.height },
                   hasContent,
+                  nonZeroPixels: nonZeroCount,
+                  totalPixels: imageData.data.length,
                   samplePixels: Array.from(imageData.data.slice(0, 16))
                 });
               }
             }
             
-            const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp });
+            const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp, alpha: 'discard' });
             console.log('[导出] 创建视频帧:', {
               frameIndex: encodedCount,
               timestamp: frameTimestamp,
@@ -434,20 +448,28 @@ export function useVideoExport({
           };
           video.addEventListener('ended', onEnded);
           
-          // 增加超时保护到 10 秒，防止大型项目后台运行略微变慢被误杀
+          // 增加超时保护
           timeoutId = setTimeout(() => {
             console.warn('[useVideoExport] Export timeout reached, resolving current frames.');
             video.pause();
             cleanup();
             resolve();
-          }, (durationSeconds + 10) * 1000);
+          }, (durationSeconds + 15) * 1000);
 
+          // 🎯 核心同步机制修复：
+          // 1. 显式对齐时间轴到 0 
+          // 2. 只有在收到第一个 requestVideoFrameCallback 后才开始计数，确保 mediaTime 与 frameTimestamp 对齐
+          video.currentTime = 0;
           vfcId = vVideo.requestVideoFrameCallback(onFrame);
-          video.play().catch((err) => {
-            console.error('[useVideoExport] Video play failed during export:', err);
-            cleanup();
-            reject(err);
-          });
+          
+          // 给解码器一点点启动时间（50ms）
+          setTimeout(() => {
+            video.play().catch((err) => {
+              console.error('[useVideoExport] Video play failed during export:', err);
+              cleanup();
+              reject(err);
+            });
+          }, 50);
         });
       } else {
         // Fallback for non-VFC browsers
@@ -461,7 +483,7 @@ export function useVideoExport({
             setTimeout(onSd, 500); // 兜底处理
           });
           await renderFrame(t * 1000);
-          const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp });
+          const vFrame = new VideoFrame(canvas, { timestamp: frameTimestamp, alpha: 'discard' });
           if (videoEncoder) {
             videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
           }

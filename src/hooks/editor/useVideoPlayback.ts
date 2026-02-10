@@ -54,7 +54,12 @@ export function useVideoPlayback(
     const onLoaded = async () => {
       try {
         video.muted = true;
-        await video.play();
+        // 尝试播放以预热解码器，静默处理由于异步导致的潜在中断
+        try {
+          await video.play();
+        } catch (playErr) {
+          // 初始化时的播放失败通常可以忽略
+        }
         video.pause();
         video.currentTime = 0;
         
@@ -62,8 +67,10 @@ export function useVideoPlayback(
           audio.currentTime = 0;
           audio.volume = 1.0;
         }
-      } catch (e) {
-        console.warn('[useVideoPlayback] Force load failed:', e);
+      } catch (e: any) {
+        if (e.name !== 'AbortError') {
+          console.warn('[useVideoPlayback] Force load failed:', e);
+        }
       }
       updateDuration();
     };
@@ -195,7 +202,9 @@ export function useVideoPlayback(
           } else {
              // 状态同步：如果视频在播且时间已到，音频也得播
              if (isPlaying && audio.paused) {
-                audio.play().catch(e => console.warn('Audio play failed:', e));
+                audio.play().catch(e => {
+                  if (e.name !== 'AbortError') console.warn('Audio play failed:', e);
+                });
              }
 
              // 时间同步策略优化
@@ -234,7 +243,9 @@ export function useVideoPlayback(
     const audios = audioTracksRef.current;
     if (isPlaying) {
       audios.forEach(a => {
-        if (a.paused) a.play().catch(e => console.warn('Audio play failed:', e));
+        if (a.paused) a.play().catch(e => {
+          if (e.name !== 'AbortError') console.warn('Audio play failed:', e);
+        });
       });
     } else {
       audios.forEach(a => {
@@ -267,7 +278,8 @@ export function useVideoPlayback(
         // 音频暂停同理
         setIsPlaying(false);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
       console.warn('[useVideoPlayback] Toggle play failed:', err);
       setIsPlaying(false);
     }
