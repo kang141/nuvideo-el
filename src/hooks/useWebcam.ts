@@ -5,7 +5,9 @@ export function useWebcam() {
   const [selectedWebcam, setSelectedWebcam] = useState<string | null>(() => {
     return localStorage.getItem('nuvideo_last_webcam') || null;
   });
-  const [isEnabled, setIsEnabled] = useState(false);
+  const [isEnabled, setIsEnabled] = useState(() => {
+    return localStorage.getItem('nuvideo_webcam_enabled') === 'true';
+  });
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -50,7 +52,11 @@ export function useWebcam() {
   }, [fetchDevices]);
 
   const toggleWebcam = useCallback(() => {
-    setIsEnabled(prev => !prev);
+    setIsEnabled(prev => {
+      const next = !prev;
+      localStorage.setItem('nuvideo_webcam_enabled', String(next));
+      return next;
+    });
   }, []);
 
   const selectWebcam = useCallback((deviceId: string) => {

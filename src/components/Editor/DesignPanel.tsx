@@ -7,12 +7,22 @@ import {
   Circle,
   MousePointer2,
   Volume2,
+  RefreshCw,
+  Zap,
+  Target,
+  Film,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { AVAILABLE_BG_CATEGORIES } from "../../constants/editor";
+import {
+  AVAILABLE_BG_CATEGORIES,
+  AVAILABLE_CURSORS,
+  AVAILABLE_POINTERS,
+} from "../../constants/editor";
 import type { RenderGraph } from "../../types";
 import { Language, translations } from "@/i18n/translations";
 
@@ -72,6 +82,8 @@ export const DesignPanel = memo(function DesignPanel({
   onResetZoom,
   mouseTheme,
   onUpdateMouseTheme,
+  mousePhysics,
+  onUpdateMousePhysics,
   language,
   audioTracks,
   onToggleSystemAudio,
@@ -120,9 +132,9 @@ export const DesignPanel = memo(function DesignPanel({
   }, [exportFormat, activeTab, setActiveTab]);
 
   return (
-    <aside className="w-[320px] border-l border-white/[0.1] bg-white/[0.03] backdrop-blur-3xl flex flex-col z-40 relative">
-      <header className="h-14 border-b border-white/[0.03] flex items-center px-4">
-        <nav className="flex bg-white/[0.03] p-1 rounded-xl w-full border border-white/[0.02] relative overflow-hidden">
+    <aside className="w-[320px] h-full border-l border-white/[0.08] bg-[#0A0A0A]/80 backdrop-blur-[60px] flex flex-col z-40 relative shadow-2xl">
+      <header className="h-[72px] flex items-center px-5 pt-4">
+        <nav className="flex bg-white/[0.04] p-1.5 rounded-[18px] w-full border border-white/[0.06] relative overflow-hidden shadow-[inset_0_1px_4px_rgba(0,0,0,0.2)]">
           {TABS.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -130,25 +142,29 @@ export const DesignPanel = memo(function DesignPanel({
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex-1 h-7 flex items-center justify-center rounded-lg transition-all duration-300 relative z-10",
-                  isActive ? "text-white" : "text-white/20 hover:text-white/40",
+                  "flex-1 h-[32px] flex items-center justify-center rounded-[12px] transition-all duration-500 relative z-10",
+                  isActive ? "text-white" : "text-white/30 hover:text-white/50",
                 )}
               >
                 {isActive && (
                   <motion.div
                     layoutId="activeTab"
-                    className="absolute inset-0 bg-white/10 rounded-lg shadow-sm"
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    className="absolute inset-0 bg-white/[0.1] border border-white/[0.08] rounded-[12px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
                   />
                 )}
-                <tab.icon size={15} className="relative z-20" />
+                <tab.icon 
+                  size={15} 
+                  strokeWidth={isActive ? 2.5 : 2}
+                  className={cn("relative z-20 transition-transform duration-500", isActive ? "scale-110" : "scale-100")} 
+                />
               </button>
             );
           })}
         </nav>
       </header>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-5 space-y-6 pb-12">
           <AnimatePresence mode="wait">
             {activeTab === "camera" && exportFormat !== "gif" && (
@@ -167,14 +183,19 @@ export const DesignPanel = memo(function DesignPanel({
                     <div className="h-px flex-1 bg-white/[0.08]" />
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-white/60 tracking-tight">
-                      {t.editor.webcam}
-                    </span>
+                  <div className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-md">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[13px] font-medium text-white/90 tracking-tight">
+                        {t.editor.webcam}
+                      </span>
+                      <span className="text-[10px] text-white/30">
+                        {webcamEnabled ? '已开启实时预览' : '开启后可在画面中叠加上方摄像头'}
+                      </span>
+                    </div>
                     <Switch
                       checked={webcamEnabled}
                       onCheckedChange={onToggleWebcam}
-                      className="scale-[0.8] origin-right"
+                      className="scale-[0.85] origin-right"
                     />
                   </div>
 
@@ -186,17 +207,19 @@ export const DesignPanel = memo(function DesignPanel({
                         </span>
                         <div className="h-px flex-1 bg-white/[0.06]" />
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-3">
                         {[
                           {
                             id: "circle",
                             icon: Circle,
                             label: t.editor.shapeCircle,
+                            desc: '全圆形裁剪'
                           },
                           {
                             id: "rect",
                             icon: Square,
                             label: t.editor.shapeRect,
+                            desc: '圆角矩形裁剪'
                           },
                         ].map((shape) => (
                           <button
@@ -205,23 +228,31 @@ export const DesignPanel = memo(function DesignPanel({
                               onUpdateWebcam?.({ shape: shape.id as any })
                             }
                             className={cn(
-                              "flex flex-col items-center justify-center gap-2 h-16 rounded-xl border transition-all duration-300",
+                              "flex flex-col items-center justify-center gap-3 h-24 rounded-2xl border transition-all duration-500",
                               webcamShape === shape.id
-                                ? "bg-white/10 border-white/10 text-white shadow-lg"
+                                ? "bg-white/[0.08] border-white/20 text-emerald-400 shadow-2xl shadow-emerald-500/10"
                                 : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:bg-white/[0.04] hover:text-white/40",
                             )}
                           >
-                            <shape.icon
-                              size={14}
-                              className={
-                                shape.id === "rect"
-                                  ? "rounded-sm overflow-hidden"
-                                  : ""
-                              }
-                            />
-                            <span className="text-[9px] font-bold tracking-tight">
-                              {shape.label}
-                            </span>
+                            <div className={cn(
+                              "w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-500",
+                              webcamShape === shape.id ? "bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)]" : "bg-white/5"
+                            )}>
+                              <shape.icon
+                                size={16}
+                                strokeWidth={webcamShape === shape.id ? 2.5 : 1.5}
+                                className={cn(
+                                  "transition-transform duration-500",
+                                  webcamShape === shape.id ? "scale-110" : "scale-100",
+                                  shape.id === "rect" ? "rounded-[4px] overflow-hidden" : ""
+                                )}
+                              />
+                            </div>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-[11px] font-semibold tracking-tight">
+                                {shape.label}
+                              </span>
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -268,8 +299,9 @@ export const DesignPanel = memo(function DesignPanel({
                     <Button
                       variant="outline"
                       onClick={onResetZoom}
-                      className="w-full h-9 bg-white/[0.08] border-white/[0.15] text-white/80 hover:bg-white/[0.12] hover:text-white hover:border-white/[0.3] rounded-lg text-[11px] font-bold transition-all"
+                      className="w-full h-11 bg-white/[0.03] border-white/[0.06] text-white/60 hover:bg-white/[0.08] hover:text-white hover:border-emerald-500/30 rounded-xl text-[12px] font-medium transition-all group/reset"
                     >
+                      <RefreshCw size={14} className="mr-2 opacity-40 group-hover:rotate-180 transition-transform duration-700" />
                       {t.editor.resetCamera}
                     </Button>
                   </div>
@@ -288,44 +320,82 @@ export const DesignPanel = memo(function DesignPanel({
                 exit={{ opacity: 0, y: -4 }}
                 className="space-y-8"
               >
-                {/* 1. 鼠标外观 */}
+                {/* 1. 鼠标外观类型 */}
                 <section className="space-y-5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
                       {t.editor.cursorStyle}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(["macOS", "Circle"] as const).map((style) => (
-                      <button
-                        key={style}
-                        onClick={() => onUpdateMouseTheme({ style })}
-                        className={cn(
-                          "flex flex-col items-center justify-center gap-2 h-20 rounded-xl border transition-all duration-300",
-                          mouseTheme.style === style
-                            ? "bg-white/10 border-white/10 text-white shadow-lg"
-                            : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:bg-white/[0.04] hover:text-white/40",
-                        )}
-                      >
-                        <div
-                          className={cn(
-                            "w-6 h-6 flex items-center justify-center",
-                            style === "Circle"
-                              ? "rounded-full bg-current opacity-80"
-                              : "",
-                          )}
-                        >
-                          {style === "macOS" && <MousePointer2 size={14} />}
-                        </div>
-                        <span className="text-[10px] font-medium tracking-tight">
-                          {style === "macOS"
-                            ? t.editor.macOSCursor
-                            : t.editor.circleCursor}
+
+                  {/* 箭头样式选择 */}
+                  {mouseTheme.style === "macOS" && (
+                    <div className="space-y-4 pt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                          {t.editor.arrowStyle}
                         </span>
-                      </button>
-                    ))}
-                  </div>
+                        <div className="h-px flex-1 bg-white/[0.03]" />
+                      </div>
+                      <div className="grid grid-cols-6 gap-2">
+                        {AVAILABLE_CURSORS.map((file) => (
+                          <button
+                            key={file}
+                            onClick={() =>
+                              onUpdateMouseTheme({ cursorFile: file })
+                            }
+                            className={cn(
+                              "aspect-square rounded-lg border transition-all duration-300 flex items-center justify-center bg-white/[0.02] p-1",
+                              mouseTheme.cursorFile === file
+                                ? "border-emerald-500 bg-emerald-500/10 shadow-lg"
+                                : "border-white/[0.04] hover:border-white/20 hover:bg-white/[0.05]",
+                            )}
+                          >
+                            <img
+                              src={`/cursors/${file}`}
+                              className="w-full h-full object-contain filter drop-shadow-sm"
+                              alt="cursor"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 手型样式选择 (仅在 macOS 指针模式下显示) */}
+                  {mouseTheme.style === "macOS" && (
+                    <div className="space-y-4 pt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                          {t.editor.pointerStyle}
+                        </span>
+                        <div className="h-px flex-1 bg-white/[0.03]" />
+                      </div>
+                      <div className="grid grid-cols-6 gap-2">
+                        {AVAILABLE_POINTERS.map((file) => (
+                          <button
+                            key={file}
+                            onClick={() =>
+                              onUpdateMouseTheme({ pointerFile: file })
+                            }
+                            className={cn(
+                              "aspect-square rounded-lg border transition-all duration-300 flex items-center justify-center bg-white/[0.02] p-1",
+                              mouseTheme.pointerFile === file
+                                ? "border-emerald-500 bg-emerald-500/10 shadow-lg"
+                                : "border-white/[0.04] hover:border-white/20 hover:bg-white/[0.05]",
+                            )}
+                          >
+                            <img
+                              src={`/pointer/${file}`}
+                              className="w-full h-full object-contain filter drop-shadow-sm"
+                              alt="pointer"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between">
@@ -349,21 +419,126 @@ export const DesignPanel = memo(function DesignPanel({
                     />
                   </div>
 
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-[11px] font-medium text-white/60 tracking-tight">
-                      {t.editor.rippleEffect}
-                    </span>
-                    <Switch
-                      checked={mouseTheme.showRipple}
-                      onCheckedChange={(checked) =>
-                        onUpdateMouseTheme({ showRipple: checked })
-                      }
-                      className="scale-[0.8] origin-right"
-                    />
+                  <div className="space-y-4 pt-2">
+                    <div className="flex items-center gap-2 px-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
+                        {t.editor.clickEffect || '点击特效 (Click Effect)'}
+                      </span>
+                      <div className="h-px flex-1 bg-white/[0.03]" />
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { id: 'none', label: '无', icon: X },
+                        { id: 'ripple', label: '波纹', icon: Circle },
+                        { id: 'ring', label: '圆环', icon: Target },
+                        { id: 'spark', label: '星火', icon: Sparkles },
+                      ].map(effect => {
+                        const isActive = (mouseTheme.clickEffect || (mouseTheme.showRipple ? 'ripple' : 'none')) === effect.id;
+                        return (
+                          <button
+                            key={effect.id}
+                            onClick={() => onUpdateMouseTheme({ clickEffect: effect.id as any, showRipple: effect.id !== 'none' })}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-2 py-3 rounded-xl border transition-all duration-300",
+                              isActive
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:border-white/20 hover:text-white/40"
+                            )}
+                          >
+                            <effect.icon size={12} strokeWidth={isActive ? 2.5 : 2} />
+                            <span className="text-[10px] font-bold">{effect.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[9px] text-white/20 px-1 leading-relaxed">
+                      选择点击时的视觉反馈样式，让操作指引更清晰。
+                    </p>
                   </div>
+                </section>
+
+                {/* 2. 鼠标运动物理 */}
+                <section className="space-y-6 pt-4">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
+                      运动物理 (Physics)
+                    </span>
+                    <div className="h-px flex-1 bg-white/[0.03]" />
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] space-y-5">
+                    {/* 预设选择 */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'snappy', label: '干脆', icon: Zap, smoothing: 0.30, speedLimit: 9000 },
+                        { id: 'balanced', label: '均衡', icon: Target, smoothing: 0.60, speedLimit: 6500 },
+                        { id: 'cinematic', label: '电影感', icon: Film, smoothing: 0.88, speedLimit: 2400 },
+                      ].map(preset => {
+                        const isActive = Math.abs(mousePhysics.smoothing - preset.smoothing) < 0.05;
+                        return (
+                          <button
+                            key={preset.id}
+                            onClick={() => onUpdateMousePhysics({ smoothing: preset.smoothing, speedLimit: preset.speedLimit })}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-2 py-3 rounded-xl border transition-all duration-500",
+                              isActive
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+                                : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:border-white/20 hover:text-white/40"
+                            )}
+                          >
+                            <preset.icon 
+                              size={14} 
+                              strokeWidth={isActive ? 2.5 : 2}
+                              className={cn("transition-transform duration-500", isActive ? "scale-110" : "scale-100")}
+                            />
+                            <span className="text-[10px] font-bold tracking-tight">{preset.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* 平滑度调节 */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="text-[11px] font-medium text-white/60">跟随平滑度</span>
+                        <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.smoothing * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.99"
+                        step="0.01"
+                        value={mousePhysics.smoothing}
+                        onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
+                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 速度限制调节 */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="text-[11px] font-medium text-white/60">最大速度限制</span>
+                        <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.speedLimit)}px/s</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1000"
+                        max="12000"
+                        step="100"
+                        value={mousePhysics.speedLimit}
+                        onChange={(e) => onUpdateMousePhysics({ speedLimit: parseInt(e.target.value) })}
+                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                  
+                  <p className="text-[10px] text-white/20 italic text-center px-4 leading-relaxed">
+                    开启“电影感”预设可显著减缓鼠标在缩放时的大幅突跳感。
+                  </p>
                 </section>
               </motion.div>
             )}
+
 
             {activeTab === "appearance" && (
               <motion.div
@@ -375,13 +550,13 @@ export const DesignPanel = memo(function DesignPanel({
               >
                 {/* 背景分类 */}
                 <section className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
                       {t.editor.canvas}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  <div className="flex flex-wrap gap-3">
+                  <div className="flex flex-wrap gap-2">
                     {AVAILABLE_BG_CATEGORIES.map((cat) => (
                       <button
                         key={cat.id}
@@ -390,10 +565,10 @@ export const DesignPanel = memo(function DesignPanel({
                         }}
                         onMouseEnter={() => preloadCategoryImages(cat.id)}
                         className={cn(
-                          "px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border whitespace-nowrap",
+                          "px-4 py-2 rounded-xl text-[11px] font-medium transition-all duration-500 border",
                           bgCategory === cat.id
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
-                            : "border-white/[0.05] bg-white/[0.03] text-white/40 hover:border-white/20 hover:text-white/70",
+                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)]"
+                            : "border-white/[0.04] bg-white/[0.02] text-white/30 hover:border-white/20 hover:text-white/60",
                         )}
                       >
                         {cat.label}
@@ -404,13 +579,13 @@ export const DesignPanel = memo(function DesignPanel({
 
                 {/* 壁纸选择 */}
                 <section className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
                       {t.editor.wallpaper}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  <div className="grid grid-cols-6 gap-1.5">
+                  <div className="grid grid-cols-5 gap-2">
                     {(
                       AVAILABLE_BG_CATEGORIES.find((c) => c.id === bgCategory)
                         ?.items || []
@@ -419,10 +594,10 @@ export const DesignPanel = memo(function DesignPanel({
                         key={file}
                         onClick={() => setBgFile(file)}
                         className={cn(
-                          "group relative aspect-square overflow-hidden rounded-lg border transition-all duration-300 bg-white/[0.02]",
+                          "group relative aspect-[4/3] overflow-hidden rounded-xl border transition-all duration-500 bg-white/[0.03] shadow-lg",
                           bgFile === file
-                            ? "border-emerald-500 ring-2 ring-emerald-500/20 z-10 scale-[1.05]"
-                            : "border-white/[0.05] opacity-50 hover:opacity-100 hover:border-white/20",
+                            ? "border-emerald-500 ring-2 ring-emerald-500/30 z-10 scale-[1.08] shadow-emerald-500/20"
+                            : "border-white/[0.06] opacity-60 hover:opacity-100 hover:border-white/30 hover:scale-[1.02]",
                         )}
                       >
                         <img
@@ -431,6 +606,9 @@ export const DesignPanel = memo(function DesignPanel({
                           alt="bg"
                           loading="lazy"
                         />
+                        {bgFile === file && (
+                          <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                        )}
                       </button>
                     ))}
                   </div>
@@ -446,105 +624,87 @@ export const DesignPanel = memo(function DesignPanel({
                 exit={{ opacity: 0, y: -4 }}
                 className="space-y-8"
               >
-                <section className="space-y-5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                <section className="space-y-6">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
                       {t.editor.audio}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  <div className="space-y-6">
-                    <div className="space-y-2">
+                  
+                  <div className="space-y-4">
+                    {/* System Audio Tooltip style Card */}
+                    <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] space-y-4 shadow-xl">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-medium text-white/80">
-                          {t.editor.systemAudio}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-[12px] font-medium text-white/90">
+                            {t.editor.systemAudio}
+                          </span>
+                          <span className="text-[10px] text-white/30">录制应用与系统发出的声音</span>
+                        </div>
                         <Switch
-                          checked={
-                            !!audioTracks?.tracks?.some(
-                              (tr) => tr.source === "system",
-                            )
-                          }
-                          onCheckedChange={(checked) =>
-                            onToggleSystemAudio?.(checked)
-                          }
-                          className="scale-[0.8] origin-right"
+                          checked={!!audioTracks?.tracks?.some((tr) => tr.source === "system")}
+                          onCheckedChange={(checked) => onToggleSystemAudio?.(checked)}
+                          className="scale-[0.85] origin-right"
                         />
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-medium text-white/40">
-                          {t.editor.audioVolume}
-                        </span>
-                        <span className="text-[10px] font-mono text-white/20 px-1.5 py-0.5 bg-white/[0.03] rounded border border-white/[0.05]">
-                          {Math.round(
-                            (audioTracks?.tracks?.find(
-                              (tr) => tr.source === "system",
-                            )?.volume ?? 1) * 100,
-                          )}
-                          %
-                        </span>
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
+                            音量增益
+                          </span>
+                          <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                            {Math.round((audioTracks?.tracks?.find((tr) => tr.source === "system")?.volume ?? 1) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={audioTracks?.tracks?.find((tr) => tr.source === "system")?.volume ?? 1}
+                          onChange={(e) => onSetSystemVolume?.(parseFloat(e.target.value))}
+                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                        />
                       </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={
-                          audioTracks?.tracks?.find(
-                            (tr) => tr.source === "system",
-                          )?.volume ?? 1
-                        }
-                        onChange={(e) =>
-                          onSetSystemVolume?.(parseFloat(e.target.value))
-                        }
-                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                      />
                     </div>
-                    <div className="space-y-2">
+
+                    {/* Microphone Card */}
+                    <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] space-y-4 shadow-xl">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-medium text-white/80">
-                          {t.editor.micAudio}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-[12px] font-medium text-white/90">
+                            {t.editor.micAudio}
+                          </span>
+                          <span className="text-[10px] text-white/30">录制你的解说声音</span>
+                        </div>
                         <Switch
-                          checked={
-                            !!audioTracks?.tracks?.some(
-                              (tr) => tr.source === "microphone",
-                            )
-                          }
-                          onCheckedChange={(checked) =>
-                            onToggleMicrophoneAudio?.(checked)
-                          }
-                          className="scale-[0.8] origin-right"
+                          checked={!!audioTracks?.tracks?.some((tr) => tr.source === "microphone")}
+                          onCheckedChange={(checked) => onToggleMicrophoneAudio?.(checked)}
+                          className="scale-[0.85] origin-right"
                         />
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-medium text-white/50">
-                          {t.editor.audioVolume}
-                        </span>
-                        <span className="text-[10px] font-mono text-white/40 px-1.5 py-0.5 bg-white/[0.06] rounded border border-white/[0.1]">
-                          {Math.round(
-                            (audioTracks?.tracks?.find(
-                              (tr) => tr.source === "microphone",
-                            )?.volume ?? 1) * 100,
-                          )}
-                          %
-                        </span>
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
+                            音量增益
+                          </span>
+                          <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                            {Math.round((audioTracks?.tracks?.find((tr) => tr.source === "microphone")?.volume ?? 1) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={audioTracks?.tracks?.find((tr) => tr.source === "microphone")?.volume ?? 1}
+                          onChange={(e) => onSetMicrophoneVolume?.(parseFloat(e.target.value))}
+                          className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                        />
                       </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={
-                          audioTracks?.tracks?.find(
-                            (tr) => tr.source === "microphone",
-                          )?.volume ?? 1
-                        }
-                        onChange={(e) =>
-                          onSetMicrophoneVolume?.(parseFloat(e.target.value))
-                        }
-                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                      />
                     </div>
                   </div>
                 </section>

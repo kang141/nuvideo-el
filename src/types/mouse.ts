@@ -23,6 +23,8 @@ export interface MouseEvent {
   type: MouseEventType;
   /** 按键（可选） */
   button?: 'left' | 'right' | 'middle';
+  /** 鼠标形态 (default, pointer, text, etc.) */
+  shape?: string;
 }
 
 /**

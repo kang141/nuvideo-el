@@ -8,10 +8,13 @@ import {
   Video,
   Image as ImageIcon,
   Minus,
+  Square,
+  Copy,
   X,
   Zap,
   Sparkles,
   Camera,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { QUALITY_OPTIONS, QualityConfig } from "@/constants/quality";
@@ -47,9 +50,9 @@ interface HomePageProps {
   language: Language;
   setLanguage: (lang: Language) => void;
   onRegisterStart?: (fn: () => void) => void;
+  isMaximized?: boolean;
 }
 
-const QUALITY_KEY = "nuvideo_last_quality";
 const FORMAT_KEY = "nuvideo_last_format";
 
 // 摄像头悬浮预览
@@ -190,6 +193,7 @@ export function HomePage({
   language,
   setLanguage,
   onRegisterStart,
+  isMaximized,
 }: HomePageProps) {
   const {
     microphones,
@@ -214,13 +218,11 @@ export function HomePage({
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [sourceType, setSourceType] = useState<"screen" | "window">("screen");
   const [showSourceSelect, setShowSourceSelect] = useState(false);
-  const [selectedQualityId, setSelectedQualityId] = useState<string>(
-    () => localStorage.getItem(QUALITY_KEY) || "balanced",
-  );
   const [recordFormat, setRecordFormat] = useState<"video" | "gif">(
     () => (localStorage.getItem(FORMAT_KEY) as any) || "video",
   );
   const [isStarting, setIsStarting] = useState(false);
+  const [startStatus, setStartStatus] = useState("");
 
   // 当切换到GIF模式时，自动禁用音频和摄像头；切换回视频模式时，恢复之前的设置
   useEffect(() => {
@@ -248,9 +250,7 @@ export function HomePage({
 
   const t = translations[language];
 
-  const selectedQuality =
-    QUALITY_OPTIONS.find((q) => q.id === selectedQualityId) ||
-    QUALITY_OPTIONS[1];
+  const selectedQuality = QUALITY_OPTIONS[1];
 
   const fetchSources = useCallback(async () => {
     if (isStarting) return;
@@ -301,19 +301,41 @@ export function HomePage({
   const selectedSource = sources.find((s) => s.id === selectedSourceId);
   const activeSources = sourceType === "screen" ? screenSources : windowSources;
 
-  const handleWindowControl = (action: "minimize" | "close") => {
-    (window as any).ipcRenderer.send("window-control", action);
-  };
+  const handleWindowControl = useCallback((action: 'minimize' | 'toggle-maximize' | 'close') => {
+    const ipc = (window as any)?.ipcRenderer;
+    if (!ipc) return;
+    ipc.send('window-control', action);
+  }, []);
 
   const handleStartRecording = useCallback(async () => {
     if (!selectedSourceId || isStarting) return;
 
     setIsStarting(true);
     setShowSourceSelect(false);
+    
+    // 阶段化提示文案
+    const steps = [
+      "正在初始化硬件设备...",
+      "准备显卡采集引擎...",
+      "同步音频采样流...",
+      "配置视频编码环境..."
+    ];
+    
+    let stepIdx = 0;
+    const stepInterval = setInterval(() => {
+      if (stepIdx < steps.length) {
+        setStartStatus(steps[stepIdx]);
+        stepIdx++;
+      }
+    }, 600);
 
     try {
       const mic = microphones.find((m) => m.deviceId === selectedMicrophone);
-      await onStartRecording(
+      
+      // 在真正调用录制前，先等待至少一些步骤完成（体感更好）
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      const recordingPromise = onStartRecording(
         selectedSourceId,
         selectedQuality,
         recordFormat,
@@ -328,10 +350,21 @@ export function HomePage({
           deviceId: selectedWebcam,
         },
       );
-    } catch (e) {
+
+      // 当录制器准备就绪后，清理间隔并释放启动状态
+      await recordingPromise;
+      clearInterval(stepInterval);
+      
       setIsStarting(false);
+      setStartStatus("");
+    } catch (e) {
+      clearInterval(stepInterval);
+      setIsStarting(false);
+      setStartStatus("");
     }
   }, [selectedSourceId, isStarting, selectedQuality, recordFormat, autoZoomEnabled, selectedMicrophone, microphones, systemAudioEnabled, webcamEnabled, selectedWebcam, onStartRecording]);
+
+  // 处理倒计时逻辑已移除
 
 
   // 将开始录制函数注册到父组件
@@ -401,6 +434,13 @@ export function HomePage({
             onClick={() => handleWindowControl("minimize")}
           >
             <Minus size={13} />
+          </button>
+          <button
+            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/[0.04] text-white/40 hover:text-white/70 transition-all"
+            onClick={() => handleWindowControl("toggle-maximize")}
+            title={isMaximized ? "Restore" : "Maximize"}
+          >
+            {isMaximized ? <Copy size={11} className="rotate-180" /> : <Square size={11} />}
           </button>
           <button
             className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500/10 text-white/40 hover:text-red-400/80 transition-all"
@@ -554,61 +594,73 @@ export function HomePage({
               </AnimatePresence>
             </div>
           </div>
-
-          {/* Output Options */}
-          <section className="flex items-center gap-2 p-1 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-            <div className="flex gap-1 pl-1">
-              {QUALITY_OPTIONS.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => {
-                    setSelectedQualityId(q.id);
-                    localStorage.setItem(QUALITY_KEY, q.id);
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[12px] transition-all whitespace-nowrap",
-                    selectedQualityId === q.id
-                      ? "bg-white/[0.08] text-white shadow-sm font-medium"
-                      : "text-white/30 hover:text-white/50 hover:bg-white/[0.03]",
-                  )}
-                >
-                  {q.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="h-3.5 w-[1px] bg-white/[0.06] mx-1 shrink-0" />
-
-            <div className="flex gap-1 pr-1">
+          {/* 录制格式切换 (Apple 风格分段选择器) */}
+          <section className="flex items-center justify-center pt-2">
+            <div className="flex p-1.5 bg-white/[0.03] rounded-[22px] border border-white/[0.06] backdrop-blur-3xl shadow-2xl relative overflow-hidden group/format">
               {[
-                { id: "video", label: "MP4", icon: Video },
-                { id: "gif", label: "GIF", icon: ImageIcon },
-              ].map((fmt) => (
-                <button
-                  key={fmt.id}
-                  onClick={() => {
-                    setRecordFormat(fmt.id as any);
-                    localStorage.setItem(FORMAT_KEY, fmt.id);
-                  }}
-                  className={cn(
-                    "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] transition-all whitespace-nowrap",
-                    recordFormat === fmt.id
-                      ? "bg-white/[0.1] text-white shadow-sm font-medium"
-                      : "text-white/30 hover:text-white/50 hover:bg-white/[0.03]",
-                  )}
-                >
-                  <fmt.icon size={11} />
-                  {fmt.id === "video" ? t.home.video : t.home.gif}
-                </button>
-              ))}
+                { id: "video", label: t.home.video, icon: Video },
+                { id: "gif", label: t.home.gif, icon: ImageIcon },
+              ].map((fmt) => {
+                const isActive = recordFormat === fmt.id;
+                return (
+                  <button
+                    key={fmt.id}
+                    onClick={() => {
+                      setRecordFormat(fmt.id as any);
+                      localStorage.setItem(FORMAT_KEY, fmt.id);
+                    }}
+                    className={cn(
+                      "relative flex items-center justify-center gap-2 px-6 py-2.5 rounded-[16px] text-[13px] font-medium transition-all duration-500 z-10",
+                      isActive 
+                        ? "text-white" 
+                        : "text-white/25 hover:text-white/50"
+                    )}
+                  >
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeFormatTab"
+                        className="absolute inset-0 bg-white/[0.07] border border-white/[0.1] rounded-[16px] shadow-[0_4px_16px_rgba(255,255,255,0.02)]"
+                        transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                      />
+                    )}
+                    <fmt.icon 
+                      size={14} 
+                      className={cn(
+                        "relative z-20 transition-transform duration-500",
+                        isActive ? "scale-110" : "scale-100 opacity-60"
+                      )} 
+                    />
+                    <span className="relative z-20 tracking-tight">{fmt.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </section>
         </div>
 
         {/* Right Column: Settings & CTA */}
-        <div className="w-[280px] flex flex-col shrink-0 pt-0.5 h-full">
+        <div className="w-[280px] flex flex-col shrink-0 pt-0.5 h-full relative">
           {/* Settings Area */}
           <div className="flex-1 space-y-4">
+            {/* GIF 模式占位提示 */}
+            {recordFormat === "gif" && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-4 text-white/20">
+                  <Zap size={20} />
+                </div>
+                <h3 className="text-[13px] font-medium text-white/60 mb-2">
+                  GIF 专属模式
+                </h3>
+                <p className="text-[11px] text-white/30 leading-relaxed">
+                  为了保证动态图片的轻量与兼容性，GIF 录制暂时不支持开启摄像头与录音功能。
+                </p>
+              </motion.div>
+            )}
+
             {/* Audio Container */}
             <section className="space-y-2.5">
               <h3 className="text-[11px] text-white/35 uppercase tracking-wider px-0.5">
@@ -815,11 +867,22 @@ export function HomePage({
               )}
             >
               {isStarting ? (
-                <div className="flex items-center gap-2.5">
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-                  <span className="font-medium tracking-wide">
-                    {t.home.starting}
-                  </span>
+                <div className="flex flex-col items-center justify-center py-1">
+                  <div className="flex items-center gap-2.5">
+                    <Loader2 className="w-4 h-4 text-white/60 animate-spin" />
+                    <span className="font-medium tracking-wide">
+                      {t.home.starting}
+                    </span>
+                  </div>
+                  {startStatus && (
+                    <motion.span 
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-[9px] text-white/30 font-mono mt-0.5"
+                    >
+                      {startStatus}
+                    </motion.span>
+                  )}
                 </div>
               ) : (
                 <>
@@ -837,6 +900,8 @@ export function HomePage({
           </div>
         </div>
       </main>
+
+      {/* 沉浸式启动倒计时遮罩已移除 */}
     </div>
   );
 }

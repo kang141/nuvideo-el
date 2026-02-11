@@ -31,6 +31,7 @@ interface EditorHeaderProps {
   setLanguage: (lang: Language) => void;
   autoZoomEnabled: boolean;
   onToggleAutoZoom: (enabled: boolean) => void;
+  isMaximized?: boolean;
 }
 
 export function EditorHeader({ 
@@ -43,7 +44,8 @@ export function EditorHeader({
   language,
   setLanguage,
   autoZoomEnabled,
-  onToggleAutoZoom
+  onToggleAutoZoom,
+  isMaximized
 }: EditorHeaderProps) {
   const [qualityId, setQualityId] = useState(QUALITY_OPTIONS[0].id);
   const selectedQuality = QUALITY_OPTIONS.find(q => q.id === qualityId) || QUALITY_OPTIONS[0];
@@ -128,7 +130,7 @@ export function EditorHeader({
 
         <div className="w-px h-5 bg-white/[0.06] ml-1" />
         
-        <WindowControls />
+        <WindowControls isMaximized={isMaximized} />
       </div>
     </header>
   );

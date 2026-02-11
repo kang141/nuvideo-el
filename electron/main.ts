@@ -5,6 +5,10 @@ import fs from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import crypto from 'node:crypto'
 import './audio-handler'
+import { initCursorUtils, getCursorShape } from './cursor-utils'
+
+// 初始化鼠标形态工具 (Win32)
+initCursorUtils();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -354,12 +358,15 @@ class SessionRecorder {
           if (!win) return;
           const point = screen.getCursorScreenPoint();
           const t = performance.now() - this.startTime;
+          
+          // 获取当前的鼠标形态 (arrow, hand, text 等)
+          const shape = getCursorShape();
 
           const x = (point.x - this.bounds.x) / this.bounds.width;
           const y = (point.y - this.bounds.y) / this.bounds.height;
 
-          this.logMouseEvent({ type: 'move', x, y });
-          win.webContents.send('mouse-update', { x, y, t });
+          this.logMouseEvent({ type: 'move', x, y, shape });
+          win.webContents.send('mouse-update', { x, y, t, shape });
         }, 8); // 从 20ms 降低到 8ms (120Hz)
 
         // 如果 3 秒后还没看到帧，视为启动失败

@@ -10,7 +10,6 @@ import { webcamRecorder } from "./recorder/webcam-capture";
 import { cn } from "@/lib/utils";
 import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
-import { motion, AnimatePresence } from "framer-motion";
 
 function App() {
   const [appState, setAppState] = useState<AppState>("home");
@@ -60,6 +59,22 @@ function App() {
 
   const transitionTo = useCallback((nextState: AppState) => {
     setAppState(nextState);
+  }, []);
+
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    const ipc = (window as any).ipcRenderer;
+    if (!ipc) return;
+
+    const handleStatus = (_: any, status: boolean) => {
+      setIsMaximized(status);
+    };
+
+    ipc.on('window-is-maximized', handleStatus);
+    return () => {
+      ipc.off('window-is-maximized', handleStatus);
+    };
   }, []);
 
   useEffect(() => {
@@ -202,6 +217,7 @@ function App() {
           x,
           y,
           type: raw.type,
+          shape: raw.shape,
         });
       }
 
@@ -303,10 +319,13 @@ function App() {
         mouseTheme: {
           style: "macOS",
           size: 48,
+          clickEffect: "ripple",
           showRipple: true,
           rippleColor: "#ffffff",
           showHighlight: false,
           highlightColor: "rgba(255,255,255,0.2)",
+          cursorFile: "arrow-1.svg",
+          pointerFile: "pointer-1.svg",
         },
         mousePhysics: {
           smoothing: 0.88,
@@ -369,7 +388,7 @@ function App() {
       } else if (appState === "recording") {
         ipc.send("resize-window", {
           width: 520,
-          height: 84,
+          height: 120,
           resizable: false,
           position: "bottom",
           mode: "recording",
@@ -445,23 +464,22 @@ function App() {
         appState === "home" ? "mesh-gradient" : "",
         appState === "recording"
           ? "bg-transparent border-0 shadow-none"
-          : "bg-neutral-950 rounded-[24px] border border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)]"
+          : cn(
+              "bg-neutral-950 border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)] transition-all duration-300",
+              isMaximized ? "rounded-0 border-0" : "rounded-[24px] border"
+            )
       )}
     >
       <div 
-        style={{ willChange: 'transform, filter' }}
-        className="flex h-full w-full flex-col relative z-10"
+        className={cn(
+          "flex h-full w-full flex-col relative z-10",
+          appState !== "recording" && "will-change-[transform,filter]"
+        )}
         key={language}
       >
-        <AnimatePresence mode="wait">
+        <>
           {appState === "recording" && (
-            <motion.div 
-              key="recording"
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="flex h-full w-full items-center justify-center"
-            >
+            <div className="flex h-full w-full items-center justify-center">
               <RecordingStatusBar
                 duration={recordingState.duration}
                 isPaused={recordingState.isPaused}
@@ -470,18 +488,11 @@ function App() {
                 onResume={handleResumeRecording}
                 language={language}
               />
-            </motion.div>
+            </div>
           )}
 
           {appState === "home" && (
-            <motion.div 
-              key="home"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, filter: 'blur(10px)' }}
-              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-              className="h-full w-full"
-            >
+            <div className="h-full w-full">
               <HomePage
                 onStartRecording={handleStartRecording}
                 onRegisterStart={(fn) => { homeStartRef.current = fn; }}
@@ -489,18 +500,13 @@ function App() {
                 onToggleAutoZoom={handleUpdateAutoZoom}
                 language={language}
                 setLanguage={handleUpdateLanguage}
+                isMaximized={isMaximized}
               />
-            </motion.div>
+            </div>
           )}
 
           {appState === "editor" && (
-            <motion.div 
-              key="editor"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="h-full w-full"
-            >
+            <div className="h-full w-full">
               <EditorPage
                 renderGraph={renderGraph}
                 onBack={handleBackToHome}
@@ -510,11 +516,12 @@ function App() {
                 setLanguage={handleUpdateLanguage}
                 autoZoomEnabled={autoZoomEnabled}
                 onToggleAutoZoom={handleUpdateAutoZoom}
+                isMaximized={isMaximized}
               />
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+        </>
+     </div>
     </div>
   );
 }

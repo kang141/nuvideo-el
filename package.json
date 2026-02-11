@@ -24,6 +24,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.27.1",
+    "koffi": "^2.15.1",
     "lucide-react": "^0.562.0",
     "mp4-muxer": "^5.2.2",
     "mp4box": "^2.3.0",

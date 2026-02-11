@@ -60,10 +60,15 @@ export interface RenderGraph {
   mouseTheme: {
     style: 'macOS' | 'Circle';
     size: number;
-    showRipple: boolean;
+    clickEffect: 'ripple' | 'ring' | 'spark' | 'none';
+    showRipple: boolean; // 保持向后兼容
     rippleColor: string;
     showHighlight: boolean;
     highlightColor: string;
+    /** 自定义光标文件 (可选) */
+    cursorFile?: string;
+    /** 自定义指针文件 (可选) */
+    pointerFile?: string;
   };
   /** 鼠标物理仿真配置 */
   mousePhysics: {

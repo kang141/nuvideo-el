@@ -63,12 +63,11 @@ export function RecordingStatusBar({
 
   return (
     <div className="flex items-center justify-center w-full h-full pointer-events-none">
-      <motion.div
-        initial={{ y: 10, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
+      <div
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="flex items-center gap-2 rounded-[2.5rem] bg-black/95 px-2 py-2 shadow-[0_25px_60px_rgba(0,0,0,0.8)] border border-white/[0.12] backdrop-blur-3xl pointer-events-auto cursor-default"
+        className="flex items-center gap-2 rounded-[2.5rem] bg-[#1a1a1a] px-2 py-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/20 pointer-events-auto cursor-default flex-shrink-0"
+        style={{ opacity: 1, visibility: 'visible' }}
       >
         {/* 指示灯与计时器 */}
         <div className="flex items-center gap-3 pl-4 pr-4 border-r border-white/10 h-10">
@@ -113,7 +112,7 @@ export function RecordingStatusBar({
             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent group-hover:translate-x-full duration-500 transition-transform" />
           </button>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

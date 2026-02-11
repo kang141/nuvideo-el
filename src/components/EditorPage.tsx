@@ -28,6 +28,7 @@ interface EditorPageProps {
   onToggleAutoZoom: (enabled: boolean) => void;
   isExporting: boolean;
   setIsExporting: (v: boolean) => void;
+  isMaximized?: boolean;
 }
 
 export function EditorPage({
@@ -39,6 +40,7 @@ export function EditorPage({
   onToggleAutoZoom,
   isExporting,
   setIsExporting,
+  isMaximized,
 }: EditorPageProps) {
   // 1. 数据状态 (Single Source of Truth)
   const [graph, setGraph] = useState<RenderGraph | null>(initialGraph);
@@ -47,7 +49,7 @@ export function EditorPage({
   const [browsingCategory, setBrowsingCategory] = useState("macOS");
   const [activeWallpaper, setActiveWallpaper] = useState({
     category: "macOS",
-    file: "sequoia-dark.jpg",
+    file: "sonoma-light.jpg",
   });
   const [activeTab, setActiveTab] = useState("appearance");
   const [hideIdle, setHideIdle] = useState(false);
@@ -545,20 +547,14 @@ export function EditorPage({
   if (!graph) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: isReady ? 1 : 0.6 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
+    <div
       className={cn(
         "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans",
       )}
     >
       {/* 加载指示器 */}
       {!isReady && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+        <div
           className="absolute inset-0 z-[200] flex items-center justify-center bg-[#0e0e0e]/80 backdrop-blur-sm"
         >
           <div className="flex flex-col items-center gap-4">
@@ -569,7 +565,7 @@ export function EditorPage({
             />
             <p className="text-sm text-white/60">正在加载编辑器...</p>
           </div>
-        </motion.div>
+        </div>
       )}
       <ExportOverlay
         isExporting={isExporting}
@@ -582,14 +578,7 @@ export function EditorPage({
       />
 
       {!isFullscreenPreview && (
-        <motion.div
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{
-            duration: 0.4,
-            delay: 0.1,
-            ease: [0.25, 0.46, 0.45, 0.94],
-          }}
+        <div
           className="relative z-50"
         >
           <EditorHeader
@@ -603,8 +592,9 @@ export function EditorPage({
             setLanguage={setLanguage}
             autoZoomEnabled={autoZoomEnabled}
             onToggleAutoZoom={onToggleAutoZoom}
+            isMaximized={isMaximized}
           />
-        </motion.div>
+        </div>
       )}
 
       <div
@@ -645,15 +635,7 @@ export function EditorPage({
         </div>
 
         {!isFullscreenPreview && (
-          <motion.div
-            initial={{ x: 20, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{
-              duration: 0.4,
-              delay: 0.15,
-              ease: [0.25, 0.46, 0.45, 0.94],
-            }}
-          >
+          <div>
             <DesignPanel
               activeTab={activeTab}
               setActiveTab={setActiveTab}
@@ -683,20 +665,12 @@ export function EditorPage({
               onUpdateWebcam={handleUpdateWebcam}
               exportFormat={graph.config?.targetFormat || 'mp4'}
             />
-          </motion.div>
+          </div>
         )}
       </div>
 
       {!isFullscreenPreview && (
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{
-            duration: 0.4,
-            delay: 0.2,
-            ease: [0.25, 0.46, 0.45, 0.94],
-          }}
-        >
+        <div>
           <TimelineSectionMemo
             duration={maxDuration}
             currentTime={currentTime}
@@ -706,8 +680,8 @@ export function EditorPage({
             onUpdateIntents={handleUpdateIntents}
             language={language}
           />
-        </motion.div>
+        </div>
       )}
-    </motion.div>
+    </div>
   );
 }

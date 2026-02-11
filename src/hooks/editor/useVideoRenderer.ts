@@ -1,5 +1,5 @@
 import { useEffect, useRef, RefObject, useState } from 'react';
-import { EDITOR_CANVAS_SIZE } from '../../constants/editor';
+import { EDITOR_CANVAS_SIZE, AVAILABLE_CURSORS, AVAILABLE_POINTERS } from '../../constants/editor';
 import { RenderGraph } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
 import { ModernVideoRenderer } from '../../core/modern-video-renderer';
@@ -42,6 +42,29 @@ export function useVideoRenderer({
   // 🎯 使用 Ref 跟踪导出状态，确保 renderFrame 闭包始终能获取最新值
   const isExportingRef = useRef(isExporting);
   useEffect(() => { isExportingRef.current = isExporting; }, [isExporting]);
+
+  // 预加载光标资源
+  const cursorImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  useEffect(() => {
+    // 预加载所有箭头样式的光标
+    AVAILABLE_CURSORS.forEach(file => {
+      const img = new Image();
+      img.src = `/cursors/${file}`;
+      img.onload = () => { cursorImagesRef.current[`cursor:${file}`] = img; };
+    });
+
+    // 预加载所有手型样式的指针
+    AVAILABLE_POINTERS.forEach(file => {
+      const img = new Image();
+      img.src = `/pointer/${file}`;
+      img.onload = () => { cursorImagesRef.current[`pointer:${file}`] = img; };
+    });
+
+    // 固定加载 text 类型
+    const textImg = new Image();
+    textImg.src = '/cursors/text.svg';
+    textImg.onload = () => { cursorImagesRef.current['text'] = textImg; };
+  }, []);
 
   // 绘制/刷新离屏静态层
   const updateOffscreen = (vw: number, vh: number) => {
@@ -581,9 +604,7 @@ export function useVideoRenderer({
   const renderGraphRef = useRef(renderGraph);
   useEffect(() => { renderGraphRef.current = renderGraph; }, [renderGraph]);
 
-  // --- 光标路径 ---
-  const CURSORS = { macOS: new Path2D('M0,0 L0,18.5 L5,14 L9,22 L11.5,21 L7.5,13.5 L13,13.5 Z') };
-
+  // --- 光标路径定义 (Path2D) ---
   // 二分查找当前时刻对应的最后一个鼠标事件索引
   function findLastEventIndex(events: any[], t: number) {
     let low = 0, high = events.length - 1;
@@ -605,33 +626,18 @@ export function useVideoRenderer({
     if (!events || events.length === 0) return;
     const { style, showRipple, size } = graph.mouseTheme;
     
-    const mx = camera.mx * dw;
-    const my = camera.my * dh;
-
-    // --- 动态运动残影 ---
-    const speedX = camera.mvx * dw * 0.01; 
-    const speedY = camera.mvy * dh * 0.01;
-    const speed = Math.sqrt(speedX * speedX + speedY * speedY);
-
-    if (speed > 2.0) {
-      const trailCount = 3;
-      ctx.save();
-      for (let i = 1; i <= trailCount; i++) {
-        const tax = mx - speedX * i * 3.0;
-        const tay = my - speedY * i * 3.0;
-        const opacity = 0.25 * (1 - i / (trailCount + 1));
-        ctx.beginPath();
-        ctx.arc(tax, tay, size * 0.52, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-    
     // --- 性能优化核心：定位当前时刻的事件 ---
     const lastIdx = findLastEventIndex(events, t);
     if (lastIdx === -1) return;
 
+    // 获取当前的数据点（用于位置插值）和形态
+    const ev = events[lastIdx];
+    const currentShape = ev.shape || 'default';
+
+    const mx = camera.mx * dw;
+    const my = camera.my * dh;
+
+    
     let isDown = false;
     // 往前搜索找到最近的 down/up 决定状态
     for (let i = lastIdx; i >= 0; i--) {
@@ -639,20 +645,65 @@ export function useVideoRenderer({
       if (events[i].type === 'up') { isDown = false; break; }
     }
 
-    // 涟漪效果：仅处理最近 600ms 的事件
-    if (showRipple) {
+    // 点击特效引擎
+    const clickEffect = graph.mouseTheme.clickEffect || (showRipple ? 'ripple' : 'none');
+    if (clickEffect !== 'none') {
       ctx.save();
       for (let i = lastIdx; i >= 0; i--) {
-        const ev = events[i];
-        if (t - ev.t > 600) break; // 超出涟漪寿命，停止遍历
-        if (ev.type === 'down') {
-          const age = t - ev.t;
+        const evIter = events[i];
+        if (t - evIter.t > 600) break; // 超出特效寿命，停止遍历
+        if (evIter.type === 'down') {
+          const age = t - evIter.t;
           const progress = age / 600;
-          ctx.beginPath();
-          ctx.arc(ev.x * dw, ev.y * dh, progress * size * 1.5, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 2) * 0.4})`;
-          ctx.lineWidth = 2 * (1 - progress);
-          ctx.stroke();
+          const ex = evIter.x * dw;
+          const ey = evIter.y * dh;
+
+          if (clickEffect === 'ripple') {
+            // --- Pulse (灵动光晕) ---
+            // 放弃描边，使用填充色块，模拟光晕感
+            ctx.beginPath();
+            ctx.arc(ex, ey, progress * size * 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 2) * 0.15})`;
+            ctx.fill();
+          } else if (clickEffect === 'ring') {
+            // --- Orbit (精细圆环) ---
+            // 使用极细线条，配合高弹性扩张感知
+            const ringProgress = 1 - Math.pow(1 - progress, 3); // 快速起步慢速结束
+            ctx.beginPath();
+            ctx.arc(ex, ey, ringProgress * size * 2.0, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 1.2) * 0.6})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            
+            // 核心微点
+            if (progress < 0.5) {
+              ctx.beginPath();
+              ctx.arc(ex, ey, (1 - progress * 2) * 3, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * (1 - progress * 2)})`;
+              ctx.fill();
+            }
+          } else if (clickEffect === 'spark') {
+            // --- Nano (纳米火花) ---
+            // 增加线条数量但极度缩减宽度，追求颗粒感
+            const count = 8;
+            const dist = (1 - Math.pow(1 - progress, 2)) * size * 1.5;
+            const len = size * 0.3 * (1 - progress);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 1.5) * 0.8})`;
+            ctx.lineWidth = 1;
+            
+            for (let j = 0; j < count; j++) {
+              const angle = (j * Math.PI * 2) / count;
+              const sx = ex + Math.cos(angle) * dist;
+              const sy = ey + Math.sin(angle) * dist;
+              const tx = ex + Math.cos(angle) * (dist + len);
+              const ty = ey + Math.sin(angle) * (dist + len);
+              
+              ctx.beginPath();
+              ctx.moveTo(sx, sy);
+              ctx.lineTo(tx, ty);
+              ctx.stroke();
+            }
+          }
         }
       }
       ctx.restore();
@@ -660,19 +711,45 @@ export function useVideoRenderer({
 
     ctx.save();
     const visualSize = size * (isDown ? 0.85 : 1.0);
-    ctx.translate(mx, my);
-    if (style === 'Circle') {
+    
+    // 动态决定使用的图片资源
+    let cursorImg: HTMLImageElement | undefined;
+    if (currentShape === 'text') {
+      cursorImg = cursorImagesRef.current['text'];
+    } else if (currentShape === 'pointer') {
+      const file = graph.mouseTheme.pointerFile || 'pointer-1.svg';
+      cursorImg = cursorImagesRef.current[`pointer:${file}`];
+    } else {
+      const file = graph.mouseTheme.cursorFile || 'arrow-1.svg';
+      cursorImg = cursorImagesRef.current[`cursor:${file}`];
+    }
+
+    if (cursorImg) {
+      ctx.translate(mx, my);
+      
+      // 根据光标类型动态校准热点偏移
+      let ox = 0, oy = 0;
+      if (currentShape === 'text') {
+        ox = -16; oy = -16;
+      } else if (currentShape === 'pointer') {
+        // 由于用户下载的 SVG 格式不一，这里尝试一个通用的手型热点偏移（食指大概在中间靠上）
+        ox = -12; oy = -2; 
+      } else {
+        // 默认箭头热点在左上角稍微偏一点
+        ox = -4; oy = -2;
+      }
+
+      const scale = visualSize / 32;
+      ctx.scale(scale, scale);
+      
+      // 核心修复：强制指定绘制宽高为 32x32
+      // 这样无论原始 SVG 是 512 还是 1024，都会被缩放到我们定义的逻辑网格内
+      ctx.drawImage(cursorImg, ox, oy, 32, 32);
+    } else if (style === 'Circle') {
+      ctx.translate(mx, my);
       ctx.beginPath(); ctx.arc(0, 0, visualSize / 2, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.95)';
       ctx.fill();
-    } else {
-      ctx.scale(visualSize / 22, visualSize / 22);
-      ctx.rotate(-Math.PI / 180 * 2);
-      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke(CURSORS.macOS);
-      ctx.fillStyle = isDown ? '#e0e0e0' : 'white';
-      ctx.fill(CURSORS.macOS);
     }
     ctx.restore();
   }

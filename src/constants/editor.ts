@@ -3,8 +3,8 @@ export const AVAILABLE_BG_CATEGORIES = [
     id: 'macOS', 
     label: 'macOS', 
     items: [
-      'sequoia-dark.jpg', 'sequoia-light.jpg', 'sonoma-clouds.jpg', 'sonoma-dark.jpg', 
-      'sonoma-evening.jpg', 'sonoma-fromabove.jpg', 'sonoma-horizon.jpg', 'sonoma-light.jpg', 
+      'sonoma-light.jpg',  'sequoia-light.jpg', 'sonoma-clouds.jpg', 'sonoma-dark.jpg', 
+      'sonoma-evening.jpg', 'sonoma-fromabove.jpg', 'sonoma-horizon.jpg','sequoia-dark.jpg',
       'sonoma-river.jpg', 'tahoe-dark.jpg', 'tahoe-dawn-min.jpg', 'tahoe-day-min.jpg', 
       'tahoe-dusk-min.jpg', 'tahoe-light.jpg', 'tahoe-night-min.jpg', 'ventura-dark.jpg', 
       'ventura-semi-dark.jpg', 'ventura.jpg'
@@ -21,3 +21,19 @@ export const EDITOR_CANVAS_SIZE = {
   width: 2560,
   height: 1440
 };
+
+export const AVAILABLE_CURSORS = [
+  'arrow-1.svg',
+  'arrow-2.svg',
+  'arrow-3.svg',
+  'arrow-4.svg',
+  'arrow-5.svg',
+  'arrow-6.svg',
+  'arrow-7.svg',
+  'text.svg'
+];
+
+export const AVAILABLE_POINTERS = [
+  'pointer-1.svg',
+  'pointer-2.svg'
+];

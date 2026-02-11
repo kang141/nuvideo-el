@@ -5,7 +5,7 @@ type WindowAction = 'minimize' | 'toggle-maximize' | 'close';
 const buttonBase =
   'flex h-8 w-10 items-center justify-center rounded-lg text-white/40 transition-all hover:bg-white/5 hover:text-white';
 
-export function WindowControls() {
+export function WindowControls({ isMaximized }: { isMaximized?: boolean }) {
   const ipc = (window as any)?.ipcRenderer;
 
   const actions = useMemo(
@@ -21,8 +21,12 @@ export function WindowControls() {
       },
       {
         id: 'toggle-maximize' as WindowAction,
-        label: 'Maximize',
-        icon: (
+        label: isMaximized ? 'Restore' : 'Maximize',
+        icon: isMaximized ? (
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3,1 L9,1 L9,7 L8,7 L8,8 L2,8 L2,2 L3,2 Z M4,2 L8,2 L8,6 L4,6 Z" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        ) : (
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
             <rect x="1.5" y="1.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1" />
           </svg>
