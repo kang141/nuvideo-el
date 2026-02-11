@@ -48,7 +48,7 @@ export function WindowControls({ isMaximized }: { isMaximized?: boolean }) {
         danger: true,
       },
     ],
-    []
+    [isMaximized]
   );
 
   const handleAction = (action: WindowAction) => {

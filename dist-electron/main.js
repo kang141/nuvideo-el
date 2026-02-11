@@ -145,11 +145,13 @@ function createWindow() {
   win = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
-    minWidth: 400,
-    minHeight: 300,
+    minWidth: WINDOW_WIDTH,
+    minHeight: WINDOW_HEIGHT,
     resizable: true,
+    maximizable: true,
     frame: false,
     transparent: true,
+    // 恢复透明以消除录制条黑框
     backgroundColor: "#00000000",
     hasShadow: true,
     show: false,
@@ -184,22 +186,21 @@ function createWindow() {
 ipcMain.on("resize-window", (_event, { width, height, resizable, position, mode }) => {
   if (win) {
     if (mode === "recording") {
+      win.setBackgroundColor("#00000000");
       win.setResizable(true);
       win.setSize(width, height);
       win.setResizable(false);
       const primaryDisplay = screen.getPrimaryDisplay();
       const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
       const x = Math.floor((screenWidth - width) / 2);
-      const y = Math.floor(screenHeight - height - 40);
+      const y = Math.floor(screenHeight - height - 80);
       win.setPosition(x, y);
       win.setAlwaysOnTop(true, "screen-saver");
       win.setIgnoreMouseEvents(false);
       return;
     }
     win.setResizable(true);
-    win.setMaximizable(true);
     win.setMinimumSize(400, 300);
-    win.setMaximumSize(1e4, 1e4);
     win.setSize(width, height);
     win.setResizable(resizable ?? true);
     if (position === "bottom") {
@@ -935,13 +936,17 @@ ipcMain.on("window-control", (_event, action, value) => {
       win.minimize();
       break;
     case "toggle-maximize":
-      if (win.isMaximized()) {
-        win.unmaximize();
-      } else {
-        const wasResizable = win.isResizable();
-        if (!wasResizable) win.setResizable(true);
-        win.maximize();
-        if (!wasResizable) win.setResizable(false);
+      {
+        const bounds = win.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        const workArea = display.workArea;
+        const isCurrentlyMaximized = Math.abs(bounds.width - workArea.width) < 10 && Math.abs(bounds.height - workArea.height) < 10;
+        if (isCurrentlyMaximized) {
+          win.unmaximize();
+        } else {
+          if (!win.resizable) win.setResizable(true);
+          win.maximize();
+        }
       }
       break;
     case "toggle-fullscreen":

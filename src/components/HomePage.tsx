@@ -7,9 +7,6 @@ import {
   Volume2,
   Video,
   Image as ImageIcon,
-  Minus,
-  Square,
-  Copy,
   X,
   Zap,
   Sparkles,
@@ -22,6 +19,7 @@ import { Language, translations } from "@/i18n/translations";
 import { useAudioDevices } from "@/hooks/useAudioDevices";
 import { useWebcam } from "@/hooks/useWebcam";
 import { AppSettingsMenu } from "./Common/AppSettingsMenu";
+import { WindowControls } from "./Common/WindowControls";
 
 interface Source {
   id: string;
@@ -301,11 +299,7 @@ export function HomePage({
   const selectedSource = sources.find((s) => s.id === selectedSourceId);
   const activeSources = sourceType === "screen" ? screenSources : windowSources;
 
-  const handleWindowControl = useCallback((action: 'minimize' | 'toggle-maximize' | 'close') => {
-    const ipc = (window as any)?.ipcRenderer;
-    if (!ipc) return;
-    ipc.send('window-control', action);
-  }, []);
+
 
   const handleStartRecording = useCallback(async () => {
     if (!selectedSourceId || isStarting) return;
@@ -400,54 +394,39 @@ export function HomePage({
 
       {/* App Header */}
       <div
-        className="flex items-center justify-between px-5 h-11 shrink-0 relative z-50 border-b border-white/[0.04]"
-        style={{ WebkitAppRegion: "drag" } as any}
+        className="flex items-center justify-between px-5 h-11 shrink-0 relative z-50 border-b border-white/[0.04] overflow-hidden"
       >
-        <div className="flex items-center gap-2.5">
-          <div className="w-5 h-5 rounded-md bg-white/[0.06] flex items-center justify-center overflow-hidden ring-1 ring-white/[0.08]">
-            <img
-              src="/logo.png"
-              alt="Logo"
-              className="w-full h-full object-cover"
-            />
+        <div 
+          className="absolute inset-0 z-0" 
+          style={{ WebkitAppRegion: "drag" } as any} 
+        />
+        
+        <div className="relative z-10 w-full h-full flex items-center justify-between" style={{ WebkitAppRegion: "no-drag" } as any}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-5 h-5 rounded-md bg-white/[0.06] flex items-center justify-center overflow-hidden ring-1 ring-white/[0.08]">
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <span className="text-[12px] font-medium tracking-tight text-white/80">
+              NuVideo
+            </span>
           </div>
-          <span className="text-[12px] font-medium tracking-tight text-white/80">
-            NuVideo
-          </span>
-        </div>
 
-        <div
-          className="flex items-center gap-1"
-          style={{ WebkitAppRegion: "no-drag" } as any}
-        >
-          <AppSettingsMenu
-            autoZoomEnabled={autoZoomEnabled}
-            onToggleAutoZoom={onToggleAutoZoom}
-            language={language}
-            setLanguage={setLanguage}
-            align="right"
-          />
+          <div className="flex items-center gap-1">
+            <AppSettingsMenu
+              autoZoomEnabled={autoZoomEnabled}
+              onToggleAutoZoom={onToggleAutoZoom}
+              language={language}
+              setLanguage={setLanguage}
+              align="right"
+            />
 
-          <div className="w-px h-3.5 bg-white/[0.06] mx-1.5" />
-          <button
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/[0.04] text-white/40 hover:text-white/70 transition-all"
-            onClick={() => handleWindowControl("minimize")}
-          >
-            <Minus size={13} />
-          </button>
-          <button
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/[0.04] text-white/40 hover:text-white/70 transition-all"
-            onClick={() => handleWindowControl("toggle-maximize")}
-            title={isMaximized ? "Restore" : "Maximize"}
-          >
-            {isMaximized ? <Copy size={11} className="rotate-180" /> : <Square size={11} />}
-          </button>
-          <button
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500/10 text-white/40 hover:text-red-400/80 transition-all"
-            onClick={() => handleWindowControl("close")}
-          >
-            <X size={13} />
-          </button>
+            <div className="w-px h-3.5 bg-white/[0.06] mx-1.5" />
+            <WindowControls isMaximized={isMaximized} />
+          </div>
         </div>
       </div>
 

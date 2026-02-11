@@ -55,11 +55,10 @@ function createWindow() {
     height: WINDOW_HEIGHT,
     minWidth: WINDOW_WIDTH,
     minHeight: WINDOW_HEIGHT,
-    maxWidth: WINDOW_WIDTH,
-    maxHeight: WINDOW_HEIGHT,
-    resizable: false,
+    resizable: true,
+    maximizable: true,
     frame: false,
-    transparent: true,
+    transparent: true, // 恢复透明以消除录制条黑框
     backgroundColor: '#00000000',
     hasShadow: true,
     show: false,
@@ -77,6 +76,14 @@ function createWindow() {
   win.once('ready-to-show', () => {
     win?.show()
   })
+
+  win.on('maximize', () => {
+    win?.webContents.send('window-is-maximized', true);
+  });
+
+  win.on('unmaximize', () => {
+    win?.webContents.send('window-is-maximized', false);
+  });
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -96,7 +103,12 @@ function createWindow() {
 ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode }) => {
   if (win) {
     if (mode === 'recording') {
-      // 录制模式：不再强制全屏，直接使用传入的尺寸并停靠底端
+      // 录制模式：需要开启透明度以消除控制条周围的黑框
+      win.setBackgroundColor('#00000000')
+      // 注意：Electron 不支持动态切换构造函数中的 transparent 属性，
+      // 但在 Windows 上，我们可以通过 setOpacity 或确保背景透明来模拟。
+      // 为了彻底修复黑框，我们需要在创建窗口时保持 transparent: true，或在这里尝试兼容性处理。
+      
       win.setResizable(true)
       win.setSize(width, height)
       win.setResizable(false)
@@ -104,7 +116,7 @@ ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode 
       const primaryDisplay = screen.getPrimaryDisplay()
       const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
       const x = Math.floor((screenWidth - width) / 2)
-      const y = Math.floor(screenHeight - height - 40)
+      const y = Math.floor(screenHeight - height - 80) // 向上移动约 40px
       
       win.setPosition(x, y)
       win.setAlwaysOnTop(true, 'screen-saver')
@@ -113,6 +125,7 @@ ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode 
     }
 
     win.setResizable(true)
+    win.setMinimumSize(400, 300) // 设置一个合理的最小尺寸
     win.setSize(width, height)
     win.setResizable(resizable ?? true)
 
@@ -981,6 +994,7 @@ app.on('will-quit', () => {
 
 ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | 'close' | 'toggle-fullscreen' | 'set-content-protection', value?: any) => {
   if (!win) return
+  
   switch (action) {
     case 'set-content-protection':
       win.setContentProtection(!!value)
@@ -989,12 +1003,25 @@ ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | '
       win.minimize()
       break
     case 'toggle-maximize':
-      if (win.isMaximized()) {
-        win.unmaximize()
-      } else {
-        win.maximize()
+      {
+        // 终极修复：透明窗口模式下，win.isMaximized() 在 Windows 上极度不稳定。
+        // 我们通过对比窗口实际尺寸与当前显示器工作区尺寸来手动判定。
+        const bounds = win.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        const workArea = display.workArea;
+        
+        // 允许 10 像素的误差以兼容任务栏偏移
+        const isCurrentlyMaximized = Math.abs(bounds.width - workArea.width) < 10 && 
+                                   Math.abs(bounds.height - workArea.height) < 10;
+        
+        if (isCurrentlyMaximized) {
+          win.unmaximize();
+        } else {
+          if (!win.resizable) win.setResizable(true);
+          win.maximize();
+        }
       }
-      break
+      break;
     case 'toggle-fullscreen':
       win.setFullScreen(!win.isFullScreen())
       break

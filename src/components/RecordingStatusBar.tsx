@@ -3,7 +3,6 @@ import {
   Play,
 } from 'lucide-react';
 import { Language, translations } from '@/i18n/translations';
-import { motion } from 'framer-motion';
 import { useRef, useEffect } from 'react';
 
 interface RecordingStatusBarProps {

@@ -466,7 +466,7 @@ function App() {
           ? "bg-transparent border-0 shadow-none"
           : cn(
               "bg-neutral-950 border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)] transition-all duration-300",
-              isMaximized ? "rounded-0 border-0" : "rounded-[24px] border"
+              isMaximized ? "rounded-none border-none" : "rounded-[24px] border"
             )
       )}
     >

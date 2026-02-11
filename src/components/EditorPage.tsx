@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
 import type { RenderGraph, CameraIntent } from "../types";
 import { Language } from "../i18n/translations";
 import { cn } from "@/lib/utils";
@@ -558,9 +557,7 @@ export function EditorPage({
           className="absolute inset-0 z-[200] flex items-center justify-center bg-[#0e0e0e]/80 backdrop-blur-sm"
         >
           <div className="flex flex-col items-center gap-4">
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            <div
               className="h-12 w-12 rounded-full border-4 border-white/10 border-t-white/60"
             />
             <p className="text-sm text-white/60">正在加载编辑器...</p>
