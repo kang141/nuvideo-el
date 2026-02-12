@@ -214,12 +214,15 @@ export function HomePage({
 
   const [sources, setSources] = useState<Source[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const selectedSourceIdRef = useRef(selectedSourceId);
+  useEffect(() => { selectedSourceIdRef.current = selectedSourceId; }, [selectedSourceId]);
+
   const [sourceType, setSourceType] = useState<"screen" | "window">("screen");
   const [showSourceSelect, setShowSourceSelect] = useState(false);
   const [recordFormat, setRecordFormat] = useState<"video" | "gif">(
     () => (localStorage.getItem(FORMAT_KEY) as any) || "video",
   );
-  const [isStarting, setIsStarting] = useState(false);
+  const [isStarting, setIsStarting] = useState(false); 
   const [startStatus, setStartStatus] = useState("");
 
   // 当切换到GIF模式时，自动禁用音频和摄像头；切换回视频模式时，恢复之前的设置
@@ -255,9 +258,12 @@ export function HomePage({
     try {
       const result = await (window as any).ipcRenderer.getSources();
       setSources(result);
+      
+      // 使用 Ref 获取最新的选中 ID，避免闭包问题
+      const currentSelectedId = selectedSourceIdRef.current;
       if (
-        !selectedSourceId ||
-        !result.find((s: Source) => s.id === selectedSourceId)
+        !currentSelectedId ||
+        !result.find((s: Source) => s.id === currentSelectedId)
       ) {
         const preferred =
           sourceType === "screen"
@@ -284,14 +290,21 @@ export function HomePage({
     } catch (err) {
       console.error("Failed to get sources:", err);
     }
-  }, [selectedSourceId, sourceType, isStarting]);
+  }, [sourceType, isStarting]);
 
+  // 初始化加载一次
   useEffect(() => {
-    if (isStarting) return;
-    fetchSources();
-    const interval = setInterval(fetchSources, 3000);
-    return () => clearInterval(interval);
-  }, [fetchSources, isStarting]);
+    if (!isStarting) {
+      fetchSources();
+    }
+  }, []);
+
+  // 当打开选择菜单时，刷新一次列表
+  useEffect(() => {
+    if (showSourceSelect && !isStarting) {
+      fetchSources();
+    }
+  }, [showSourceSelect, isStarting, fetchSources]);
 
 
   const screenSources = sources.filter((s) => s.id.startsWith("screen:"));
