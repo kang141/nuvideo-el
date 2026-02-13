@@ -38,7 +38,7 @@ export const EXPORT_CONFIG: RenderConfig = {
   dpr: 1.0, // 导出使用完整分辨率
   alpha: false, // 禁用 alpha 确保不透明背景
   imageSmoothingEnabled: true,
-  imageSmoothingQuality: 'high',
+  imageSmoothingQuality: 'medium',
 };
 
 /**

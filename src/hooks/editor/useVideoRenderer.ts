@@ -336,10 +336,6 @@ export function useVideoRenderer({
     
 
     
-    // 关键修正：必须每一帧手动清空画布，否则由于开启了 alpha 模式且背景由 CSS 提供，
-    // 每一帧的绘制都会在上一帧的基础上叠加，导致画面“糊掉”或出现重影。
-    ctx.clearRect(0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
-
     const renderGraph = renderGraphRef.current;
     if (!renderGraph) {
       if (isExporting) console.warn('[渲染] renderGraph 为空！');
@@ -349,11 +345,8 @@ export function useVideoRenderer({
     const camera = computeCameraState(renderGraph, timestampMs);
     const s = camera.scale;
 
-    // --- A. 绘制预渲染的背景/窗口层 ---
-    // 🎯 核心补丁：即使在 alpha: false 模式下，也要显式填充背景颜色
-    // 确保 Canvas 生成的每一帧都对应有底色，不让 VideoFrame 抓到“空洞”
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
+    // 🎯 性能优化：移除冗余的 clearRect 与黑色填充。
+    // 背景由 offscreenRef 完整覆盖，且 canvas 开启了 alpha: false。
     ctx.drawImage(offscreenRef.current, 0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
 
     // --- B. 布局参数 ---

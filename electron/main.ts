@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell, globalShortcut, Notification } from 'electron'
+app.setName('NuVideo');
+app.setAppUserModelId('com.nuvideo.app');
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -761,26 +763,39 @@ ipcMain.handle('open-export-stream', async (_event, { targetPath }) => {
 ipcMain.handle('write-export-chunk', async (_event, { streamId, chunk, position }) => {
   try {
     const handle = activeExportStreams.get(streamId);
-    if (!handle) {
-      throw new Error(`Stream ${streamId} not found`);
-    }
-
+    if (!handle) throw new Error(`Stream ${streamId} not found`);
     const buffer = Buffer.from(chunk);
-
     if (typeof position === 'number') {
-      // 随机写入 (用于回填 Header)
       fs.writeSync(handle.fd, buffer, 0, buffer.length, position);
-      // 注意：随机写入不更新 bytesWritten 统计，因为它不是 append
-      // 但对于 moov 更新，我们通常不需要关心总大小的变化，因为它只是覆盖占位符
     } else {
-      // 追加写入
-      fs.writeSync(handle.fd, buffer, 0, buffer.length, null); // null means current position
+      fs.writeSync(handle.fd, buffer, 0, buffer.length, null);
       handle.bytesWritten += buffer.length;
     }
-
     return { success: true, bytesWritten: handle.bytesWritten };
   } catch (err) {
     console.error('[Main] write-export-chunk failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 🎯 极致优化：批量写入支持
+ipcMain.handle('write-export-chunks-batch', async (_event, { streamId, chunks }) => {
+  try {
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) throw new Error(`Stream ${streamId} not found`);
+
+    for (const item of chunks) {
+      const buffer = Buffer.from(item.chunk);
+      if (typeof item.position === 'number') {
+        fs.writeSync(handle.fd, buffer, 0, buffer.length, item.position);
+      } else {
+        fs.writeSync(handle.fd, buffer, 0, buffer.length, null);
+        handle.bytesWritten += buffer.length;
+      }
+    }
+    return { success: true, bytesWritten: handle.bytesWritten };
+  } catch (err) {
+    console.error('[Main] write-export-chunks-batch failed:', err);
     return { success: false, error: (err as Error).message };
   }
 });

@@ -116,6 +116,8 @@ function getCursorShape() {
   }
   return "default";
 }
+app.setName("NuVideo");
+app.setAppUserModelId("com.nuvideo.app");
 initCursorUtils();
 const __dirname$1 = path$1.dirname(fileURLToPath(import.meta.url));
 process.env.APP_ROOT = path$1.join(__dirname$1, "..");
@@ -767,9 +769,7 @@ ipcMain.handle("open-export-stream", async (_event, { targetPath }) => {
 ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk, position }) => {
   try {
     const handle = activeExportStreams.get(streamId);
-    if (!handle) {
-      throw new Error(`Stream ${streamId} not found`);
-    }
+    if (!handle) throw new Error(`Stream ${streamId} not found`);
     const buffer = Buffer.from(chunk);
     if (typeof position === "number") {
       fs$1.writeSync(handle.fd, buffer, 0, buffer.length, position);
@@ -780,6 +780,25 @@ ipcMain.handle("write-export-chunk", async (_event, { streamId, chunk, position 
     return { success: true, bytesWritten: handle.bytesWritten };
   } catch (err) {
     console.error("[Main] write-export-chunk failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+ipcMain.handle("write-export-chunks-batch", async (_event, { streamId, chunks }) => {
+  try {
+    const handle = activeExportStreams.get(streamId);
+    if (!handle) throw new Error(`Stream ${streamId} not found`);
+    for (const item of chunks) {
+      const buffer = Buffer.from(item.chunk);
+      if (typeof item.position === "number") {
+        fs$1.writeSync(handle.fd, buffer, 0, buffer.length, item.position);
+      } else {
+        fs$1.writeSync(handle.fd, buffer, 0, buffer.length, null);
+        handle.bytesWritten += buffer.length;
+      }
+    }
+    return { success: true, bytesWritten: handle.bytesWritten };
+  } catch (err) {
+    console.error("[Main] write-export-chunks-batch failed:", err);
     return { success: false, error: err.message };
   }
 });

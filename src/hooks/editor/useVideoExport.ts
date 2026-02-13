@@ -1,6 +1,6 @@
 import { useState, RefObject, useRef } from 'react';
 import { Muxer, StreamTarget } from 'mp4-muxer';
-import { QualityConfig } from '../../constants/quality';
+import { QualityConfig, DEFAULT_QUALITY } from '../../constants/quality';
 import { RenderGraph } from '../../types/render-graph';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
 import { applyRenderConfig, EXPORT_CONFIG, PREVIEW_CONFIG } from '../../core/render-config';
@@ -19,8 +19,9 @@ interface UseVideoExportOptions {
   renderFrame: (t: number) => Promise<void>;
 }
 
-const ENCODER_QUEUE_THRESHOLD = 12;
+const ENCODER_QUEUE_THRESHOLD = 128; // 进一步增大队列，允许渲染跑得更超前
 const PROGRESS_THROTTLE_MS = 100;
+const IPC_WRITE_BATCH_SIZE = 32; // 批量写入阈值
 
 export function useVideoExport({
   videoRef,
@@ -42,10 +43,12 @@ export function useVideoExport({
   type RendererIPC = { invoke: (channel: string, payload?: unknown) => Promise<unknown> };
   const ipc = ((window as unknown) as { ipcRenderer?: RendererIPC }).ipcRenderer!;
 
-  const cancelExport = () => {
+    const cancelExport = () => {
     isExportingRef.current = false;
     setIsExporting(false);
     resetCameraCache();
+    // 重置播放速率
+    if (videoRef.current) videoRef.current.playbackRate = 1.0;
     // 重置任务栏进度
     (window as any).ipcRenderer.send('set-progress-bar', -1);
   };
@@ -60,16 +63,29 @@ export function useVideoExport({
     }
     
     
-    applyRenderConfig(canvas, EXPORT_CONFIG);
+    // 4. 2026 极致速度优化：根据质量动态调整画布物理分辨率
+    const targetQuality = quality || DEFAULT_QUALITY;
+    const baseWidth = EXPORT_CONFIG.canvasWidth;
+    const baseHeight = EXPORT_CONFIG.canvasHeight;
+    
+    // 计算缩放比（DPR），确保导出分辨率不超过选定质量
+    const scale = Math.min(1, targetQuality.maxWidth / baseWidth, targetQuality.maxHeight / baseHeight);
+    
+    // 动态应用渲染配置
+    applyRenderConfig(canvas, {
+      ...EXPORT_CONFIG,
+      dpr: scale
+    });
    
     let streamId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
-    const bitrate = isGif ? 150 * 1024 * 1024 : (quality?.bitrate || 50 * 1024 * 1024);
+    const bitrate = isGif ? 150 * 1024 * 1024 : (targetQuality.bitrate || 50 * 1024 * 1024);
     const fps = 60;
     const durationSeconds = exportDuration ?? maxDuration;
-    // 稳定性加固：强制分辨率为偶数以适配硬件编码器
-    const width = EXPORT_CONFIG.canvasWidth % 2 === 0 ? EXPORT_CONFIG.canvasWidth : EXPORT_CONFIG.canvasWidth - 1;
-    const height = EXPORT_CONFIG.canvasHeight % 2 === 0 ? EXPORT_CONFIG.canvasHeight : EXPORT_CONFIG.canvasHeight - 1;
+    
+    // 🎯 物理编码分辨率：必须基于 base * scale 且为偶数
+    const width = Math.floor(baseWidth * scale / 2) * 2;
+    const height = Math.floor(baseHeight * scale / 2) * 2;
 
     // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
@@ -116,24 +132,19 @@ export function useVideoExport({
             console.warn('[useVideoExport] No enabled audio tracks.');
           }
 
-          for (const track of enabledTracks) {
+          // 🎯 并行化音频轨道获取与解码
+          await Promise.all(enabledTracks.map(async (track) => {
             const trackPath = track.path || track.filePath;
-            if (!trackPath) {
-              console.warn('[useVideoExport] Track missing path:', track);
-              continue;
-            }
+            if (!trackPath) return;
 
             try {
-              const targetUrl = trackPath;
-              const resp = await fetch(targetUrl);
-              if (!resp.ok) {
-                console.error(`[useVideoExport] Fetch failed for ${track.source}: ${resp.status} ${resp.statusText}`);
-                continue;
-              }
+              const resp = await fetch(trackPath);
+              if (!resp.ok) return;
+              
               const arrayBuffer = await resp.arrayBuffer();
               const trackBuffer = await audioCtx.decodeAudioData(arrayBuffer);
               
-              // 混合到 mixedBuffer
+              // 混合到 mixedBuffer（JS单线程环境下，只要代码段内没有 await，此处累加是安全的）
               const startOffset = Math.max(0, Math.floor(((track.startTime || 0) + (renderGraph.audioDelay || 0)) / 1000 * 48000));
               const vol = track.volume ?? 1.0;
               
@@ -142,7 +153,6 @@ export function useVideoExport({
                 const sourceData = trackBuffer.getChannelData(channel);
                 const copyLen = Math.min(sourceData.length, targetData.length - startOffset);
                 
-                // 添加边界检查，防止数组越界
                 for (let i = 0; i < copyLen; i++) {
                   const targetIdx = startOffset + i;
                   if (targetIdx >= 0 && targetIdx < targetData.length) {
@@ -152,9 +162,9 @@ export function useVideoExport({
               }
               hasAnyAudio = true;
             } catch (trackErr) {
-              console.error(`[useVideoExport] Critical error mixing track ${track.source}:`, trackErr);
+              console.error(`[useVideoExport] Error mixing track:`, trackErr);
             }
-          }
+          }));
           
           if (hasAnyAudio) {
             decodedAudio = mixedBuffer;
@@ -168,32 +178,46 @@ export function useVideoExport({
         console.warn('[useVideoExport] renderGraph.audio or .tracks is missing!');
       }
 
-      // 3. 2026 极致精简：仅保留通用 H.264 (AVC)
-      const codecCandidates = [
-        'avc1.640033', // High Profile (推荐)
-        'avc1.4d0033', // Main Profile
-        'avc1.42E01E', // Baseline Profile (终极兼容)
-      ];
+      // 3. 2026 极致精简：优先尝试硬件加速的常用编码器
       
       let videoConfig: VideoEncoderConfig | null = null;
-      for (const codec of codecCandidates) {
-        const testConfig: VideoEncoderConfig = { 
-          codec, width, height, bitrate, framerate: fps, 
-          hardwareAcceleration: 'no-preference' // 让系统自动选择硬件或软件
-        };
-        try {
-          const support = await VideoEncoder.isConfigSupported(testConfig);
-          if (support.supported) {
-            videoConfig = testConfig;
-            break;
+      const accelModes: HardwareAcceleration[] = ['prefer-hardware', 'no-preference'];
+      
+      const allCandidates = [
+        // H.264 候选
+        { codec: 'avc1.640033', name: 'H.264 High' },
+        { codec: 'avc1.4d0033', name: 'H.264 Main' },
+        { codec: 'avc1.42e033', name: 'H.264 Baseline' },
+        // HEVC 候选 (3060 支持非常棒)
+        { codec: 'hvc1.1.6.L120.B0', name: 'HEVC Main' },
+        { codec: 'hev1.1.6.L120.B0', name: 'HEVC Main (alt)' },
+      ];
+
+      findConfig: for (const accel of accelModes) {
+        for (const item of allCandidates) {
+          const testConfig: VideoEncoderConfig = { 
+            codec: item.codec, width, height, bitrate, framerate: fps, 
+            hardwareAcceleration: accel
+          };
+          try {
+            const support = await VideoEncoder.isConfigSupported(testConfig);
+            if (support.supported) {
+              videoConfig = { ...testConfig, ...support.config };
+              console.log(`[useVideoExport] ✅ Selected: ${item.name} (${item.codec}) with ${accel}`);
+              break findConfig;
+            }
+          } catch (err) {
+            console.warn(`[useVideoExport] ❌ ${item.name} with ${accel} failed:`, err);
           }
-        } catch (err) {
-          console.warn(`[useVideoExport] AVC ${codec} not supported:`, err);
         }
       }
       
       if (!videoConfig) {
-        throw new Error('H.264 (AVC) encoding is not supported on this system.');
+        console.error('[useVideoExport] All codec candidates failed. System info:', {
+          gpu: (window.navigator as any).gpu ? 'WebGPU avail' : 'No WebGPU',
+          userAgent: navigator.userAgent
+        });
+        throw new Error('H.264/HEVC encoding is not supported on this system. Please check your GPU drivers.');
       }
 
       // 4. 打开流与 Muxer
@@ -203,13 +227,28 @@ export function useVideoExport({
 
       let writeChain = Promise.resolve();
       let chunksReceived = 0;
+      let chunkBuffer: { chunk: any; position: number | undefined }[] = [];
+
+      const flushChunks = async () => {
+        if (chunkBuffer.length === 0) return;
+        const currentBatch = [...chunkBuffer];
+        chunkBuffer = [];
+        
+        writeChain = writeChain.then(async () => {
+          // 只有连续的 append 操作才合并，带 position 的（如 moov）必须单独发以防乱序
+          // 但由于 WebCodecs 主要是顺序 append，这里做简单的批处理
+          await ipc.invoke('write-export-chunks-batch', { streamId, chunks: currentBatch });
+          chunksReceived += currentBatch.length;
+        }).catch(err => console.error('[useVideoExport] Batch Write Error:', err));
+      };
 
       const muxerTarget = new StreamTarget({
         onData: (chunk, position) => {
-          writeChain = writeChain.then(async () => {
-            await ipc.invoke('write-export-chunk', { streamId, chunk, position });
-            chunksReceived++;
-          }).catch(err => console.error('[useVideoExport] Write Error:', err));
+          chunkBuffer.push({ chunk, position });
+          
+          if (chunkBuffer.length >= IPC_WRITE_BATCH_SIZE || typeof position === 'number') {
+            void flushChunks();
+          }
         }
       });
 
@@ -263,11 +302,6 @@ export function useVideoExport({
       let lastProgressAt = 0;
       let encodedCount = 0;
       
-      // 🎯 关键修复：使用单调递增的帧计数器生成时间戳，而不是依赖 mediaTime
-      // 这样可以确保时间戳永远是递增的，避免 muxer 报错
-      let frameTimestamp = 0;
-      const frameDuration = 1_000_000 / fps; // 微秒为单位的帧间隔
-
       if (!renderGraph) {
         throw new Error('RenderGraph is required for export');
       }
@@ -327,14 +361,15 @@ export function useVideoExport({
             await renderFrame(meta.mediaTime * 1000);
             const exportCanvas = canvas;
             
-            const vFrame = new VideoFrame(exportCanvas, { timestamp: frameTimestamp, alpha: 'discard' });
+            // 🎯 核心修复：使用视频真实的媒体时间戳（微秒），确保导出的视频速度永远正确
+            const accurateTimestamp = Math.round(meta.mediaTime * 1_000_000);
+            const vFrame = new VideoFrame(exportCanvas, { timestamp: accurateTimestamp, alpha: 'discard' });
             
             if (videoEncoder) {
               videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
             }
             vFrame.close();
             encodedCount++;
-            frameTimestamp += frameDuration; // 递增时间戳
 
             if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
               const progressRatio = meta.mediaTime / durationSeconds;
@@ -369,6 +404,8 @@ export function useVideoExport({
           vfcId = vVideo.requestVideoFrameCallback(onFrame);
           
           // 给解码器一点点启动时间（50ms）
+          // 🎯 恢复至 1.2x 略微提速。如果还是担心速度，建议保持 1.0 (最稳健)
+          video.playbackRate = 1.0;
           setTimeout(() => {
             video.play().catch((err) => {
               console.error('[useVideoExport] Video play failed during export:', err);
@@ -392,13 +429,13 @@ export function useVideoExport({
           await renderFrame(t * 1000);
           const exportCanvas = canvas;
           
-          const vFrame = new VideoFrame(exportCanvas, { timestamp: frameTimestamp, alpha: 'discard' });
+          const accurateTimestamp = Math.round(t * 1_000_000);
+          const vFrame = new VideoFrame(exportCanvas, { timestamp: accurateTimestamp, alpha: 'discard' });
           if (videoEncoder) {
             videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
           }
           vFrame.close();
           encodedCount++;
-          frameTimestamp += frameDuration; // 递增时间戳
           
           if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
             const progressRatio = t / durationSeconds;
@@ -457,18 +494,21 @@ export function useVideoExport({
       }
       console.log('[useVideoExport] VideoEncoder flushed and closed.');
       
+      // 先强制清空最后的缓冲区
+      await flushChunks();
+      
       // 关键修复：muxer.finalize() 会触发大量异步的 onData 回调
-      // 我们需要在 finalize 之后再次等待 writeChain 以确保这些回调都完成
-      console.log('[useVideoExport] Finalizing muxer (this will trigger header writes)...');
+      console.log('[useVideoExport] Finalizing muxer...');
       muxer.finalize();
       
-      // 等待 finalize 触发的所有写入完成
-      console.log('[useVideoExport] Waiting for all write operations to complete...');
-      await writeChain;
+      // finalize 后产生的少量数据也要清空
+      await flushChunks();
       
-      // 额外等待一个 tick 以确保所有 Promise 都已解决
+      // 等待所有写入完成
+      await writeChain;
       await new Promise(resolve => setTimeout(resolve, 100));
-      await writeChain; // 再次确认
+      await flushChunks(); // 终极确认
+      await writeChain;
       
       console.log(`[useVideoExport] All writes complete. Total chunks: ${chunksReceived}`);
       
@@ -526,6 +566,8 @@ export function useVideoExport({
       isExportingRef.current = false;
       setIsExporting(false);
       resetCameraCache();
+      // 🎯 核心修复：导出彻底结束（成功或失败）后，立即恢复播放速率
+      if (video) video.playbackRate = 1.0;
     }
   };
 
