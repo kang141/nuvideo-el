@@ -400,6 +400,10 @@ class SessionRecorder {
         if (code !== 0 && !this.isStopping) {
           this.manifest.status = 'error';
           this.writeManifest();
+          // 如果意外中断，通知前端
+          if (win) {
+            win.webContents.send('recording-error', '底层录制引擎(FFmpeg)意外中断，请检查系统资源。');
+          }
         }
       });
 

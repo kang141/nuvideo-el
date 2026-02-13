@@ -6,6 +6,11 @@ export class WebcamRecorder {
   private videoChunks: Blob[] = [];
   private stream: MediaStream | null = null;
 
+  /**
+   * 异常回调
+   */
+  public onError: (msg: string) => void = () => {};
+
   async start(deviceId: string) {
     this.videoChunks = [];
     try {
@@ -18,10 +23,21 @@ export class WebcamRecorder {
         }
       });
 
+      // 容错处理
+      this.stream.getTracks().forEach(track => {
+        track.onended = () => {
+          if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.onError('摄像头设备已断开或权限被撤销。');
+          }
+        };
+      });
+
       this.mediaRecorder = new MediaRecorder(this.stream, {
         mimeType: 'video/webm', // 让浏览器选择最合适的编码 (通常是 vp8/vp9)
         videoBitsPerSecond: 1500000 // 1.5 Mbps
       });
+
+      this.mediaRecorder.onerror = () => this.onError('摄像头录制器发生内部错误。');
 
       this.mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) this.videoChunks.push(e.data);

@@ -14,6 +14,11 @@ export class NativeAudioRecorder {
   private micStream: MediaStream | null = null;
   private sysStream: MediaStream | null = null;
 
+  /**
+   * 异常回调：用于通知 UI 录制中断（如硬件被移除）
+   */
+  public onError: (msg: string) => void = () => {};
+
   async start(sourceId: string, config: { microphoneId: string | null; systemAudio: boolean }) {
     this.micChunks = [];
     this.sysChunks = [];
@@ -29,11 +34,24 @@ export class NativeAudioRecorder {
             autoGainControl: true
           }
         });
+
+        // 容错处理：监听硬件断开或权限回收
+        if (this.micStream) {
+          this.micStream.getAudioTracks().forEach(track => {
+            track.onended = () => {
+              if (this.micRecorder && this.micRecorder.state !== 'inactive') {
+                this.onError('麦克风设备已断开或权限被撤销。');
+              }
+            };
+          });
+        }
         
         this.micRecorder = new MediaRecorder(this.micStream, {
           mimeType: 'audio/webm;codecs=opus',
           audioBitsPerSecond: 128000
         });
+        
+        this.micRecorder.onerror = () => this.onError('麦克风录制器发生内部错误。');
         
         this.micRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) this.micChunks.push(e.data);
@@ -68,6 +86,17 @@ export class NativeAudioRecorder {
           }
         });
         
+        // 容错处理
+        if (this.sysStream) {
+          this.sysStream.getAudioTracks().forEach(track => {
+            track.onended = () => {
+              if (this.sysRecorder && this.sysRecorder.state !== 'inactive') {
+                this.onError('系统音频采集流意外中断。');
+              }
+            };
+          });
+        }
+
         // 只取音轨，忽略那个辅助用的视频轨
         const audioTracks = this.sysStream!.getAudioTracks();
         if (audioTracks.length > 0) {
@@ -77,6 +106,8 @@ export class NativeAudioRecorder {
             audioBitsPerSecond: 128000
           });
           
+          this.sysRecorder.onerror = () => this.onError('系统音频录制器发生内部错误。');
+
           this.sysRecorder.ondataavailable = (e) => {
              if (e.data.size > 0) this.sysChunks.push(e.data);
           };

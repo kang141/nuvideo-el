@@ -3,8 +3,7 @@ import {
   Play,
 } from 'lucide-react';
 import { Language, translations } from '@/i18n/translations';
-import { useRef, useEffect, useState } from 'react';
-import { cn } from '@/lib/utils';
+import { useRef, useEffect } from 'react';
 
 interface RecordingStatusBarProps {
   duration: number;
@@ -13,65 +12,6 @@ interface RecordingStatusBarProps {
   onPause: () => void;
   onResume: () => void;
   language: Language;
-  webcamDeviceId?: string | null;
-}
-
-// 摄像头预览组件
-function WebcamPreview({ deviceId }: { deviceId: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    let mounted = true;
-    setIsLoaded(false);
-
-    navigator.mediaDevices
-      .getUserMedia({
-        video: {
-          deviceId: { exact: deviceId },
-          width: { ideal: 480 },
-          height: { ideal: 480 },
-        },
-      })
-      .then((s) => {
-        if (!mounted) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        stream = s;
-        if (videoRef.current) videoRef.current.srcObject = s;
-      })
-      .catch(console.error);
-
-    return () => {
-      mounted = false;
-      stream?.getTracks().forEach((t) => t.stop());
-    };
-  }, [deviceId]);
-
-  return (
-    <div
-      className={cn(
-        "fixed bottom-6 right-6 w-32 h-32 rounded-2xl border-2 border-white/20 overflow-hidden bg-black/60 backdrop-blur-xl shadow-2xl transition-all duration-700 pointer-events-none z-50",
-        isLoaded ? "opacity-100 scale-100" : "opacity-0 scale-95",
-      )}
-    >
-      {!isLoaded && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-white/10 border-t-white/40 rounded-full animate-spin" />
-        </div>
-      )}
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        playsInline
-        onLoadedData={() => setIsLoaded(true)}
-        className="w-full h-full object-cover -scale-x-100"
-      />
-    </div>
-  );
 }
 
 export function RecordingStatusBar({
@@ -81,7 +21,6 @@ export function RecordingStatusBar({
   onPause,
   onResume,
   language,
-  webcamDeviceId
 }: RecordingStatusBarProps) {
   const t = translations[language];
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -123,9 +62,6 @@ export function RecordingStatusBar({
 
   return (
     <div className="flex items-center justify-center w-full h-full pointer-events-none">
-      {/* 摄像头预览 */}
-      {webcamDeviceId && <WebcamPreview deviceId={webcamDeviceId} />}
-      
       <div
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
@@ -179,3 +115,4 @@ export function RecordingStatusBar({
     </div>
   );
 }
+

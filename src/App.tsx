@@ -122,6 +122,37 @@ function App() {
     return () => clearInterval(interval);
   }, [recordingState.isRecording, recordingState.isPaused]);
 
+  const handleRecordingError = useCallback((msg: string) => {
+    // 防止重复弹窗
+    if (recordingStateRef.current.isPaused) return;
+    
+    console.error("[App] Recording error detected:", msg);
+    
+    // 1. 通知用户
+    alert(`录制环境异常：${msg}\n\n录制已自动暂停，您可以尝试修复设备后继续，或直接停止保存。`);
+    
+    // 2. 自动切换到暂停状态，避免计时器继续走
+    handlePauseRecording();
+  }, [handlePauseRecording]);
+
+  useEffect(() => {
+    // 绑定渲染进程级（AUDIO/WEBCAM）捕获器的错误回调
+    nativeAudioRecorder.onError = handleRecordingError;
+    webcamRecorder.onError = handleRecordingError;
+
+    // 监听主进程级（FFMPEG）录制引擎的错误通知
+    const ipc = (window as any).ipcRenderer;
+    if (ipc) {
+      const handler = (_: any, err: string) => {
+        handleRecordingError(err);
+      };
+      ipc.on("recording-error", handler);
+      return () => {
+        ipc.off("recording-error", handler);
+      };
+    }
+  }, [handleRecordingError]);
+
   const handleStartRecording = useCallback(async (
     sourceId: string,
     quality: QualityConfig,
@@ -495,7 +526,6 @@ function App() {
                 onPause={handlePauseRecording}
                 onResume={handleResumeRecording}
                 language={language}
-                webcamDeviceId={recordingState.webcamDeviceId}
               />
             </div>
           )}
