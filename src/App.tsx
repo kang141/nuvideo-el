@@ -21,6 +21,7 @@ function App() {
     isPaused: false,
     format: "video",
     autoZoom: localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
+    webcamDeviceId: null,
   }));
   const recordingStateRef = useRef<RecordingState>(recordingState);
   useEffect(() => {
@@ -163,6 +164,7 @@ function App() {
         isPaused: false,
         format,
         autoZoom,
+        webcamDeviceId: webcamConfig.enabled ? webcamConfig.deviceId : null,
       });
 
       transitionTo("recording");
@@ -237,6 +239,7 @@ function App() {
         ...prev,
         isRecording: false,
         isPaused: false,
+        webcamDeviceId: null,
       }));
 
       mouseTracker.stop();
@@ -269,6 +272,7 @@ function App() {
               volume: 1.0,
               fadeIn: 300,
               fadeOut: 300,
+              enabled: true,
             });
           }
           if (saveResult.sysPath) {
@@ -279,6 +283,7 @@ function App() {
               volume: 1.0,
               fadeIn: 300,
               fadeOut: 300,
+              enabled: true,
             });
           }
         }
@@ -325,7 +330,7 @@ function App() {
           showHighlight: false,
           highlightColor: "rgba(255,255,255,0.2)",
           cursorFile: "arrow-1.svg",
-          pointerFile: "pointer-1.svg",
+          pointerFile: "pointer-2.svg",
         },
         mousePhysics: {
           smoothing: 0.88,
@@ -345,6 +350,7 @@ function App() {
         autoZoom: currentState.autoZoom,
         webcam: {
           isEnabled: !!finalWebcamPath,
+          shape: "rect",
         },
         audioDelay: audioDelayRef.current,
       };
@@ -354,6 +360,7 @@ function App() {
         isRecording: false,
         duration: 0,
         isPaused: false,
+        webcamDeviceId: null,
       }));
       setRenderGraph(finalGraph);
       transitionTo("editor");
@@ -364,6 +371,7 @@ function App() {
         isRecording: false,
         duration: 0,
         isPaused: false,
+        webcamDeviceId: null,
       }));
       transitionTo("home");
     }
@@ -487,6 +495,7 @@ function App() {
                 onPause={handlePauseRecording}
                 onResume={handleResumeRecording}
                 language={language}
+                webcamDeviceId={recordingState.webcamDeviceId}
               />
             </div>
           )}

@@ -112,8 +112,11 @@ export function useVideoPlayback(
     });
     audioTracksRef.current = [];
 
-    // 创建新元素
+    // 创建新元素 - 只处理启用的轨道
     allTracks.forEach(track => {
+      // 跳过未启用的轨道（enabled 为 false 时）
+      if (track.enabled === false) return;
+      
       if (track.path) {
         const el = document.createElement('audio');
         el.src = track.path;
@@ -137,6 +140,7 @@ export function useVideoPlayback(
   }, [
     renderGraph?.audio?.tracks?.length, 
     renderGraph?.audio?.tracks?.map(t => t.path).join(','),
+    renderGraph?.audio?.tracks?.map(t => t.enabled).join(','),
     renderGraph?.audioSource
   ]);
 

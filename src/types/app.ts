@@ -19,4 +19,6 @@ export interface RecordingState {
   format: 'video' | 'gif';
   /** 是否开启自动缩放 */
   autoZoom: boolean;
+  /** 摄像头设备ID（用于录制时预览） */
+  webcamDeviceId?: string | null;
 }

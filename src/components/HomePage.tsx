@@ -90,7 +90,7 @@ function WebcamCircle({ deviceId }: { deviceId: string }) {
   return (
     <div
       className={cn(
-        "absolute bottom-6 right-6 w-28 h-28 rounded-full border-2 border-white/[0.08] overflow-hidden bg-black/60 backdrop-blur-xl shadow-2xl z-30 transition-all duration-700",
+        "absolute bottom-6 right-6 w-28 h-28 rounded-2xl border-2 border-white/[0.08] overflow-hidden bg-black/60 backdrop-blur-xl shadow-2xl z-30 transition-all duration-700",
         isLoaded ? "opacity-100 scale-100" : "opacity-0 scale-95",
       )}
     >

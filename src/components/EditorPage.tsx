@@ -375,18 +375,24 @@ export function EditorPage({
     (enabled: boolean) => {
       if (!graph) return;
       const tracks = graph.audio?.tracks || [];
-      const has = tracks.some((t) => t.source === "system");
+      const existingTrack = tracks.find((t) => t.source === "system");
+      
       let nextTracks = tracks.slice();
-      if (enabled && !has) {
+      if (existingTrack) {
+        // 如果轨道已存在，只修改 enabled 状态
+        nextTracks = nextTracks.map((t) =>
+          t.source === "system" ? { ...t, enabled } : t
+        );
+      } else if (enabled) {
+        // 如果轨道不存在且要启用，创建新轨道（这种情况理论上不应该发生）
         nextTracks.push({
           source: "system",
           startTime: 0,
           volume: 1.0,
           fadeIn: 300,
           fadeOut: 300,
+          enabled: true,
         });
-      } else if (!enabled && has) {
-        nextTracks = nextTracks.filter((t) => t.source !== "system");
       }
       setGraph({ ...graph, audio: { tracks: nextTracks } });
     },
@@ -397,18 +403,24 @@ export function EditorPage({
     (enabled: boolean) => {
       if (!graph) return;
       const tracks = graph.audio?.tracks || [];
-      const has = tracks.some((t) => t.source === "microphone");
+      const existingTrack = tracks.find((t) => t.source === "microphone");
+      
       let nextTracks = tracks.slice();
-      if (enabled && !has) {
+      if (existingTrack) {
+        // 如果轨道已存在，只修改 enabled 状态
+        nextTracks = nextTracks.map((t) =>
+          t.source === "microphone" ? { ...t, enabled } : t
+        );
+      } else if (enabled) {
+        // 如果轨道不存在且要启用，创建新轨道（这种情况理论上不应该发生）
         nextTracks.push({
           source: "microphone",
           startTime: 0,
           volume: 1.0,
           fadeIn: 300,
           fadeOut: 300,
+          enabled: true,
         });
-      } else if (!enabled && has) {
-        nextTracks = nextTracks.filter((t) => t.source !== "microphone");
       }
       setGraph({ ...graph, audio: { tracks: nextTracks } });
     },

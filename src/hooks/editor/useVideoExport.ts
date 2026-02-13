@@ -119,13 +119,15 @@ export function useVideoExport({
           
           let hasAnyAudio = false;
           const tracks = renderGraph.audio.tracks;
-          console.log('[useVideoExport] Audio mixing start. Track count:', tracks.length, 'Duration:', durationSeconds);
+          // 只处理启用的音频轨道
+          const enabledTracks = tracks.filter(t => t.enabled !== false);
+          console.log('[useVideoExport] Audio mixing start. Track count:', tracks.length, 'Enabled:', enabledTracks.length, 'Duration:', durationSeconds);
 
-          if (tracks.length === 0) {
-            console.warn('[useVideoExport] Audio track list is EMPTY.');
+          if (enabledTracks.length === 0) {
+            console.warn('[useVideoExport] No enabled audio tracks.');
           }
 
-          for (const track of tracks) {
+          for (const track of enabledTracks) {
             const trackPath = track.path || track.filePath;
             if (!trackPath) {
               console.warn('[useVideoExport] Track missing path:', track);

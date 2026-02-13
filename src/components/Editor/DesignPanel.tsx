@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ImageIcon,
   Video,
-  Square,
   Circle,
   MousePointer2,
   Volume2,
@@ -21,7 +20,6 @@ import { cn } from "@/lib/utils";
 import {
   AVAILABLE_BG_CATEGORIES,
   AVAILABLE_CURSORS,
-  AVAILABLE_POINTERS,
 } from "../../constants/editor";
 import type { RenderGraph } from "../../types";
 import { Language, translations } from "@/i18n/translations";
@@ -91,7 +89,7 @@ export const DesignPanel = memo(function DesignPanel({
   onSetSystemVolume,
   onSetMicrophoneVolume,
   webcamEnabled,
-  webcamShape = "circle",
+  webcamShape: _webcamShape = "rect",
   webcamSize = 360,
   onToggleWebcam,
   onUpdateWebcam,
@@ -200,66 +198,6 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
 
                   {webcamEnabled && (
-                    <div className="space-y-3 pt-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-widest">
-                          {t.editor.webcamShape}
-                        </span>
-                        <div className="h-px flex-1 bg-white/[0.06]" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          {
-                            id: "circle",
-                            icon: Circle,
-                            label: t.editor.shapeCircle,
-                            desc: '全圆形裁剪'
-                          },
-                          {
-                            id: "rect",
-                            icon: Square,
-                            label: t.editor.shapeRect,
-                            desc: '圆角矩形裁剪'
-                          },
-                        ].map((shape) => (
-                          <button
-                            key={shape.id}
-                            onClick={() =>
-                              onUpdateWebcam?.({ shape: shape.id as any })
-                            }
-                            className={cn(
-                              "flex flex-col items-center justify-center gap-3 h-24 rounded-2xl border transition-all duration-500",
-                              webcamShape === shape.id
-                                ? "bg-white/[0.08] border-white/20 text-emerald-400 shadow-2xl shadow-emerald-500/10"
-                                : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:bg-white/[0.04] hover:text-white/40",
-                            )}
-                          >
-                            <div className={cn(
-                              "w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-500",
-                              webcamShape === shape.id ? "bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)]" : "bg-white/5"
-                            )}>
-                              <shape.icon
-                                size={16}
-                                strokeWidth={webcamShape === shape.id ? 2.5 : 1.5}
-                                className={cn(
-                                  "transition-transform duration-500",
-                                  webcamShape === shape.id ? "scale-110" : "scale-100",
-                                  shape.id === "rect" ? "rounded-[4px] overflow-hidden" : ""
-                                )}
-                              />
-                            </div>
-                            <div className="flex flex-col items-center gap-0.5">
-                              <span className="text-[11px] font-semibold tracking-tight">
-                                {shape.label}
-                              </span>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {webcamEnabled && (
                     <div className="space-y-4 pt-4">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-medium text-white/60 tracking-tight">
@@ -356,40 +294,6 @@ export const DesignPanel = memo(function DesignPanel({
                               src={`/cursors/${file}`}
                               className="w-full h-full object-contain filter drop-shadow-sm"
                               alt="cursor"
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 手型样式选择 (仅在 macOS 指针模式下显示) */}
-                  {mouseTheme.style === "macOS" && (
-                    <div className="space-y-4 pt-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
-                          {t.editor.pointerStyle}
-                        </span>
-                        <div className="h-px flex-1 bg-white/[0.03]" />
-                      </div>
-                      <div className="grid grid-cols-6 gap-2">
-                        {AVAILABLE_POINTERS.map((file) => (
-                          <button
-                            key={file}
-                            onClick={() =>
-                              onUpdateMouseTheme({ pointerFile: file })
-                            }
-                            className={cn(
-                              "aspect-square rounded-lg border transition-all duration-300 flex items-center justify-center bg-white/[0.02] p-1",
-                              mouseTheme.pointerFile === file
-                                ? "border-emerald-500 bg-emerald-500/10 shadow-lg"
-                                : "border-white/[0.04] hover:border-white/20 hover:bg-white/[0.05]",
-                            )}
-                          >
-                            <img
-                              src={`/pointer/${file}`}
-                              className="w-full h-full object-contain filter drop-shadow-sm"
-                              alt="pointer"
                             />
                           </button>
                         ))}
@@ -643,7 +547,7 @@ export const DesignPanel = memo(function DesignPanel({
                           <span className="text-[10px] text-white/30">录制应用与系统发出的声音</span>
                         </div>
                         <Switch
-                          checked={!!audioTracks?.tracks?.some((tr) => tr.source === "system")}
+                          checked={!!audioTracks?.tracks?.find((tr) => tr.source === "system")?.enabled !== false}
                           onCheckedChange={(checked) => onToggleSystemAudio?.(checked)}
                           className="scale-[0.85] origin-right"
                         />
@@ -680,7 +584,7 @@ export const DesignPanel = memo(function DesignPanel({
                           <span className="text-[10px] text-white/30">录制你的解说声音</span>
                         </div>
                         <Switch
-                          checked={!!audioTracks?.tracks?.some((tr) => tr.source === "microphone")}
+                          checked={!!audioTracks?.tracks?.find((tr) => tr.source === "microphone")?.enabled !== false}
                           onCheckedChange={(checked) => onToggleMicrophoneAudio?.(checked)}
                           className="scale-[0.85] origin-right"
                         />

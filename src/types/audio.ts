@@ -22,6 +22,8 @@ export interface AudioTrack {
   fadeIn?: number;
   /** 淡出时长（毫秒，可选） */
   fadeOut?: number;
+  /** 是否启用此音频轨道（默认为 true） */
+  enabled?: boolean;
 }
 
 /**
