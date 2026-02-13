@@ -8,6 +8,7 @@ export const translations = {
       settings: '设置',
       language: '语言',
       none: '无',
+      savedTo: '已保存至',
     },
     home: {
       subtitle: '选择素材来源',
@@ -97,6 +98,7 @@ export const translations = {
       settings: 'Settings',
       language: 'Language',
       none: 'None',
+      savedTo: 'Saved to',
     },
     home: {
       subtitle: 'Select Source',

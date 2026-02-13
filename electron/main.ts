@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, protocol, dialog, shell, globalShortcut, Notification } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -142,6 +142,24 @@ ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode 
       win.setAlwaysOnTop(false)
       win.setIgnoreMouseEvents(false) // 恢复正常交互
     }
+  }
+})
+
+// 监听来自渲染进程的尺寸调整请求
+ipcMain.on('set-progress-bar', (_event, progress: number) => {
+  if (win && !win.isDestroyed()) {
+    win.setProgressBar(progress);
+    // 如果进度完成 (1)，闪烁窗口提醒
+    if (progress >= 1 || progress < 0) {
+      win.flashFrame(true);
+      setTimeout(() => win?.flashFrame(false), 3000);
+    }
+  }
+})
+
+ipcMain.on('show-notification', (_event, { title, body, silent }) => {
+  if (Notification.isSupported()) {
+    new Notification({ title, body, silent }).show();
   }
 })
 
@@ -309,8 +327,7 @@ class SessionRecorder {
   async start(ffmpegPath: string, args: string[], monitorPath: string): Promise<{ success: boolean; error?: string; readyOffset?: number }> {
     const { spawn } = await import('node:child_process');
 
-    // 1. 启动 FFmpeg (打印完整命令用于调试)
-    console.log(`[Session] Starting FFmpeg: ${ffmpegPath} ${args.join(' ')}`);
+    // 1. 启动 FFmpeg
     this.ffmpegProcess = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], shell: false });
 
     // 防止 stdin 写入错误（如 EPIPE）导致整个主进程崩溃
@@ -325,8 +342,6 @@ class SessionRecorder {
 
       this.ffmpegProcess.stderr.on('data', (data: Buffer) => {
         const log = data.toString().trim();
-        // 打印实时日志到控制台，不只是简单的 log
-        process.stderr.write(`[FFmpeg Err] ${log}\n`);
 
         if (log.includes('frame=')) {
           if (!resolved) {

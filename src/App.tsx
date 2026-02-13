@@ -170,7 +170,6 @@ function App() {
     },
   ) => {
     try {
-      console.log("[App] Starting recording...");
       await mouseTracker.syncClock();
       mouseTracker.start();
       

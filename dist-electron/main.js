@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { ipcMain, app, protocol, desktopCapturer, dialog, screen, shell, BrowserWindow, globalShortcut } from "electron";
+import { ipcMain, app, protocol, Notification, desktopCapturer, dialog, screen, shell, BrowserWindow, globalShortcut } from "electron";
 import { fileURLToPath } from "node:url";
 import path$1 from "node:path";
 import fs$1 from "node:fs";
@@ -217,6 +217,20 @@ ipcMain.on("resize-window", (_event, { width, height, resizable, position, mode 
     }
   }
 });
+ipcMain.on("set-progress-bar", (_event, progress) => {
+  if (win && !win.isDestroyed()) {
+    win.setProgressBar(progress);
+    if (progress >= 1 || progress < 0) {
+      win.flashFrame(true);
+      setTimeout(() => win == null ? void 0 : win.flashFrame(false), 3e3);
+    }
+  }
+});
+ipcMain.on("show-notification", (_event, { title, body, silent }) => {
+  if (Notification.isSupported()) {
+    new Notification({ title, body, silent }).show();
+  }
+});
 ipcMain.on("set-ignore-mouse-events", (_event, ignore, options) => {
   if (win) {
     win.setIgnoreMouseEvents(ignore, options);
@@ -338,7 +352,6 @@ class SessionRecorder {
   }
   async start(ffmpegPath2, args, monitorPath) {
     const { spawn } = await import("node:child_process");
-    console.log(`[Session] Starting FFmpeg: ${ffmpegPath2} ${args.join(" ")}`);
     this.ffmpegProcess = spawn(ffmpegPath2, args, { stdio: ["pipe", "pipe", "pipe"], shell: false });
     if (this.ffmpegProcess.stdin) {
       this.ffmpegProcess.stdin.on("error", (err) => {
@@ -349,8 +362,6 @@ class SessionRecorder {
       let resolved = false;
       this.ffmpegProcess.stderr.on("data", (data) => {
         const log = data.toString().trim();
-        process.stderr.write(`[FFmpeg Err] ${log}
-`);
         if (log.includes("frame=")) {
           if (!resolved) {
             resolved = true;

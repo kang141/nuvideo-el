@@ -584,6 +584,7 @@ export function EditorPage({
         success={exportSuccess}
         onOpenFile={handleOpenFile}
         onClose={handleCloseOverlay}
+        lastExportPath={lastExportPath}
       />
 
       {!isFullscreenPreview && (

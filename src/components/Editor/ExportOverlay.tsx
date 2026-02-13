@@ -10,6 +10,7 @@ interface ExportOverlayProps {
   success?: boolean;
   onOpenFile?: () => void;
   onClose?: () => void;
+  lastExportPath?: string | null;
 }
 
 export function ExportOverlay({ 
@@ -19,7 +20,8 @@ export function ExportOverlay({
   onCancel,
   success,
   onOpenFile,
-  onClose
+  onClose,
+  lastExportPath
 }: ExportOverlayProps) {
   const t = translations[language];
   return (
@@ -61,26 +63,39 @@ export function ExportOverlay({
             </>
           ) : (
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex flex-col items-center"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              className="flex flex-col items-center max-w-lg text-center px-6"
             >
-              <div className="h-20 w-20 rounded-full bg-emerald-500/20 flex items-center justify-center mb-6">
-                <svg className="w-10 h-10 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              <div className="h-24 w-24 rounded-full bg-emerald-500/10 flex items-center justify-center mb-8 relative">
+                <motion.div 
+                   initial={{ scale: 0 }}
+                   animate={{ scale: 1.2 }}
+                   className="absolute inset-0 bg-emerald-500/20 rounded-full blur-xl"
+                />
+                <svg className="w-12 h-12 text-emerald-500 relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <motion.path 
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 0.5, delay: 0.2 }}
+                    strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" 
+                  />
                 </svg>
               </div>
-              <h2 className="text-3xl font-bold text-white mb-2">{t.editor.exportSuccess}</h2>
-              <div className="flex gap-4 mt-8">
+              <h2 className="text-4xl font-black text-white mb-4 tracking-tight">{t.editor.exportSuccess}</h2>
+              <p className="text-white/40 text-sm mb-8 font-medium line-clamp-2 px-4 italic">
+                {t.common.savedTo || 'Saved to'}: {lastExportPath || '...'}
+              </p>
+              <div className="flex gap-4">
                 <button 
                   onClick={onOpenFile}
-                  className="px-8 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-500/20"
+                  className="px-8 py-4 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-600/20 active:scale-95"
                 >
                   {t.editor.openFile}
                 </button>
                 <button 
                   onClick={onClose}
-                  className="px-8 py-3 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20 transition-all"
+                  className="px-8 py-4 rounded-2xl bg-white/5 text-white/80 font-bold hover:bg-white/10 transition-all border border-white/5 active:scale-95"
                 >
                   {t.editor.close}
                 </button>

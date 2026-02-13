@@ -22,7 +22,6 @@ export class ScreenRecorder {
     }
   ): Promise<{ bounds: any; t0: number; readyOffset: number; scaleFactor: number }> {
     if (this._isRecording || this._isStopping) return { bounds: null, t0: 0, readyOffset: 0, scaleFactor: 1 };
-    console.log('[ScreenRecorder] Requesting Sidecar start...', sourceId, 'Audio:', audioConfig);
 
     try {
       // 1. 开启内容保护
@@ -36,7 +35,6 @@ export class ScreenRecorder {
       }
 
       this._isRecording = true;
-      console.log('[ScreenRecorder] Sidecar recording started. readyOffset:', result.readyOffset);
 
       // 使用渲染进程的 performance.now() 作为统一的时间基准，避免跨进程时钟偏差
       return { 

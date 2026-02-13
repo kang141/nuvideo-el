@@ -46,20 +46,11 @@ export function useVideoExport({
     isExportingRef.current = false;
     setIsExporting(false);
     resetCameraCache();
+    // 重置任务栏进度
+    (window as any).ipcRenderer.send('set-progress-bar', -1);
   };
 
   const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
-    console.log('[useVideoExport] handleExport called', { 
-      quality, 
-      targetPath, 
-      hasRenderGraph: !!renderGraph,
-      audioTracks: renderGraph?.audio?.tracks?.length,
-      videoSource: renderGraph?.videoSource 
-    });
-    if (renderGraph) {
-      console.log('[useVideoExport] RenderGraph details:', JSON.stringify(renderGraph, (k,v) => k === 'mouse' ? undefined : v, 2));
-    }
-
     if (isExportingRef.current) return { success: false };
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -107,9 +98,7 @@ export function useVideoExport({
       isGif = finalPath!.toLowerCase().endsWith('.gif');
       const workPath = isGif ? finalPath!.replace(/\.(gif|mp4)$/i, '') + `.temp_${Date.now()}.mp4` : finalPath!;
 
-      // 2. 预解码并混合音轨（GIF模式跳过音频处理）
       let decodedAudio: AudioBuffer | null = null;
-      console.log('[useVideoExport] Entering audio processing block...');
       
       if (renderGraph?.audio?.tracks && !isGif) {
         try {
@@ -134,25 +123,19 @@ export function useVideoExport({
               continue;
             }
 
-            const targetUrl = trackPath;
-            console.log(`[useVideoExport] Processing track: ${track.source}, URL: ${targetUrl}`);
-            
             try {
+              const targetUrl = trackPath;
               const resp = await fetch(targetUrl);
               if (!resp.ok) {
                 console.error(`[useVideoExport] Fetch failed for ${track.source}: ${resp.status} ${resp.statusText}`);
                 continue;
               }
               const arrayBuffer = await resp.arrayBuffer();
-              console.log(`[useVideoExport] Decoded raw size: ${arrayBuffer.byteLength} bytes`);
-              
               const trackBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-              console.log(`[useVideoExport] Track decoded: ${track.source}, Duration: ${trackBuffer.duration.toFixed(2)}s, Channels: ${trackBuffer.numberOfChannels}`);
               
               // 混合到 mixedBuffer
               const startOffset = Math.max(0, Math.floor(((track.startTime || 0) + (renderGraph.audioDelay || 0)) / 1000 * 48000));
               const vol = track.volume ?? 1.0;
-              console.log(`[useVideoExport] Mixing ${track.source} at offset: ${startOffset}, volume: ${vol}`);
               
               for (let channel = 0; channel < Math.min(mixedBuffer.numberOfChannels, trackBuffer.numberOfChannels); channel++) {
                 const targetData = mixedBuffer.getChannelData(channel);
@@ -174,12 +157,6 @@ export function useVideoExport({
           }
           
           if (hasAnyAudio) {
-            let maxAmp = 0;
-            const testData = mixedBuffer.getChannelData(0);
-            for (let i = 0; i < Math.min(testData.length, 100000); i += 100) {
-              maxAmp = Math.max(maxAmp, Math.abs(testData[i]));
-            }
-            console.log(`[useVideoExport] Audio mixing complete. Max amplitude sample: ${maxAmp.toFixed(4)}`);
             decodedAudio = mixedBuffer;
           } else {
             console.warn('[useVideoExport] No audio tracks were successfully processed.');
@@ -208,7 +185,6 @@ export function useVideoExport({
           const support = await VideoEncoder.isConfigSupported(testConfig);
           if (support.supported) {
             videoConfig = testConfig;
-            console.log(`[useVideoExport] Selected H.264 codec: ${codec}`);
             break;
           }
         } catch (err) {
@@ -227,23 +203,12 @@ export function useVideoExport({
 
       let writeChain = Promise.resolve();
       let chunksReceived = 0;
-      let lastWriteLog = 0;
 
       const muxerTarget = new StreamTarget({
         onData: (chunk, position) => {
-          const chunkLen = chunk.length;
-          writeChain = writeChain.then(() => 
-            ipc.invoke('write-export-chunk', { streamId, chunk, position })
-          ).then(() => { 
+          writeChain = writeChain.then(async () => {
+            await ipc.invoke('write-export-chunk', { streamId, chunk, position });
             chunksReceived++;
-            if (typeof position !== 'number') {
-              if (performance.now() - lastWriteLog > 1000) {
-                console.log(`[useVideoExport] Writing... Total chunks: ${chunksReceived}, last size: ${chunkLen}`);
-                lastWriteLog = performance.now();
-              }
-            } else {
-              console.log(`[useVideoExport] Header backfill at: ${position}, size: ${chunkLen}`);
-            }
           }).catch(err => console.error('[useVideoExport] Write Error:', err));
         }
       });
@@ -322,18 +287,16 @@ export function useVideoExport({
         bgImage.src = `asset://backgrounds/${cat}/${file}`;
       });
 
-      console.log('[导出] 渲染流程准备完成 (使用主画布)');
-
       // 6. 视频导出循环 (使用 VFC 同步)
       const vVideo = video as any;
       if (typeof vVideo.requestVideoFrameCallback === 'function') {
         console.log('[useVideoExport] Export via VFC started...');
         await new Promise<void>((resolve, reject) => {
-          let vfcId: number;
-          let timeoutId: NodeJS.Timeout;
+          let vfcId: number | null = null;
+          let timeoutId: any = null;
           
           const cleanup = () => {
-            if (vfcId != null) vVideo.cancelVideoFrameCallback(vfcId);
+            if (vfcId !== null) vVideo.cancelVideoFrameCallback(vfcId);
             if (timeoutId) clearTimeout(timeoutId);
             video.removeEventListener('ended', onEnded);
           };
@@ -361,53 +324,10 @@ export function useVideoExport({
               video.play().catch(console.error);
             }
 
-            if (encodedCount % 60 === 0) {
-              console.log('[导出] 准备渲染帧:', { 
-                frameIndex: encodedCount, 
-                mediaTime: meta.mediaTime.toFixed(3),
-                timestampMs: meta.mediaTime * 1000
-              });
-            }
-            
-            // 🎯 关键诊断：在渲染前检查视频状态
-            if (encodedCount === 0) {
-              console.log('[导出] 渲染前视频状态:', {
-                paused: video.paused,
-                currentTime: video.currentTime,
-                readyState: video.readyState,
-                videoWidth: video.videoWidth,
-                videoHeight: video.videoHeight
-              });
-            }
-            
-            // 🎯 使用主渲染器绘制到主画布
             await renderFrame(meta.mediaTime * 1000);
             const exportCanvas = canvas;
             
-            // 🎯 调试：检查画布内容（每10帧检查一次）
-            if (encodedCount % 10 === 0) {
-              const ctx = exportCanvas.getContext('2d');
-              if (ctx) {
-                const imageData = ctx.getImageData(0, 0, Math.min(10, exportCanvas.width), Math.min(10, exportCanvas.height));
-                const hasContent = Array.from(imageData.data).some(v => v !== 0);
-                const nonZeroCount = Array.from(imageData.data).filter(v => v !== 0).length;
-                console.log(`[导出] 第${encodedCount}帧画布检查:`, {
-                  canvasSize: { width: exportCanvas.width, height: exportCanvas.height },
-                  hasContent,
-                  nonZeroPixels: nonZeroCount,
-                  totalPixels: imageData.data.length,
-                  samplePixels: Array.from(imageData.data.slice(0, 16))
-                });
-              }
-            }
-            
             const vFrame = new VideoFrame(exportCanvas, { timestamp: frameTimestamp, alpha: 'discard' });
-            console.log('[导出] 创建视频帧:', {
-              frameIndex: encodedCount,
-              timestamp: frameTimestamp,
-              mediaTime: meta.mediaTime.toFixed(3),
-              frameSize: { width: vFrame.displayWidth, height: vFrame.displayHeight }
-            });
             
             if (videoEncoder) {
               videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
@@ -416,14 +336,12 @@ export function useVideoExport({
             encodedCount++;
             frameTimestamp += frameDuration; // 递增时间戳
 
-            if (encodedCount % 60 === 0) {
-              console.log(`[useVideoExport] Progress - Time: ${meta.mediaTime.toFixed(2)}s, Encoded Frames: ${encodedCount}, Encoder Output: ${encoderOutputCount}`);
-            }
-
             if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
               const progressRatio = meta.mediaTime / durationSeconds;
               const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
-              setExportProgress(Math.min(0.95, displayProgress));
+              const finalProgress = Math.min(0.95, displayProgress);
+              setExportProgress(finalProgress);
+              (window as any).ipcRenderer.send('set-progress-bar', finalProgress);
               lastProgressAt = performance.now();
             }
             vfcId = vVideo.requestVideoFrameCallback(onFrame);
@@ -566,6 +484,14 @@ export function useVideoExport({
       }
 
       setExportProgress(1);
+      (window as any).ipcRenderer.send('set-progress-bar', 1);
+      (window as any).ipcRenderer.send('show-notification', {
+        title: '导出成功',
+        body: `视频已保存至: ${finalPath}`,
+        silent: false
+      });
+      setTimeout(() => (window as any).ipcRenderer.send('set-progress-bar', -1), 3000);
+
       console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
       
       // 🎯 导出完成后恢复预览配置
