@@ -20,8 +20,8 @@ export class ScreenRecorder {
       microphoneLabel: string | null;
       systemAudio: boolean 
     }
-  ): Promise<{ bounds: any; t0: number; readyOffset: number }> {
-    if (this._isRecording || this._isStopping) return { bounds: null, t0: 0, readyOffset: 0 };
+  ): Promise<{ bounds: any; t0: number; readyOffset: number; scaleFactor: number }> {
+    if (this._isRecording || this._isStopping) return { bounds: null, t0: 0, readyOffset: 0, scaleFactor: 1 };
     console.log('[ScreenRecorder] Requesting Sidecar start...', sourceId, 'Audio:', audioConfig);
 
     try {
@@ -42,7 +42,8 @@ export class ScreenRecorder {
       return { 
         bounds: result.bounds, 
         t0: performance.now(), 
-        readyOffset: result.readyOffset || 0 
+        readyOffset: result.readyOffset || 0,
+        scaleFactor: result.scaleFactor || 1
       };
     } catch (err) {
       console.error('[ScreenRecorder] Start failed:', err);

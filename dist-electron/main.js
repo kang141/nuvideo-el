@@ -282,6 +282,7 @@ ipcMain.handle("sync-clock", async (_event, tClient) => {
   return { tClient, tServer: performance.now() };
 });
 class SessionRecorder {
+  // 判定录制是否已成功开始（即绕过启动探测阶段）
   constructor(sourceId, bounds, scaleFactor) {
     __publicField(this, "sessionId");
     __publicField(this, "sessionDir");
@@ -298,6 +299,7 @@ class SessionRecorder {
     __publicField(this, "readyOffset", 0);
     // 关键：从 FFmpeg 启动到产生第一帧的毫秒数
     __publicField(this, "isStopping", false);
+    __publicField(this, "isRecordingStarted", false);
     this.sessionId = crypto.randomUUID();
     this.bounds = bounds;
     this.sessionDir = path$1.join(app.getPath("temp"), "nuvideo_sessions", this.sessionId);
@@ -352,6 +354,7 @@ class SessionRecorder {
         if (log.includes("frame=")) {
           if (!resolved) {
             resolved = true;
+            this.isRecordingStarted = true;
             this.readyOffset = performance.now() - this.startTime;
             resolve({ success: true, readyOffset: this.readyOffset });
           }
@@ -411,7 +414,7 @@ class SessionRecorder {
         if (code !== 0 && !this.isStopping) {
           this.manifest.status = "error";
           this.writeManifest();
-          if (win) {
+          if (this.isRecordingStarted && win) {
             win.webContents.send("recording-error", "底层录制引擎(FFmpeg)意外中断，请检查系统资源。");
           }
         }
@@ -441,6 +444,7 @@ class SessionRecorder {
     if (this.ffmpegProcess) {
       const proc = this.ffmpegProcess;
       this.ffmpegProcess = null;
+      this.isRecordingStarted = false;
       return new Promise((resolve) => {
         const timer = setTimeout(() => proc.kill("SIGKILL"), 1e3);
         proc.once("close", () => {
@@ -526,23 +530,26 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-c:v",
         "h264_nvenc",
         "-preset",
-        "p4",
+        "p7",
+        // 改为最高质量预设
         "-tune",
         "hq",
         "-rc",
         "vbr",
         "-cq",
-        "19",
+        "17",
+        // 降低 cq 值（0-51，越小越清晰，17为视觉无损级别）
         "-b:v",
         "0",
         "-maxrate",
-        "100M",
+        "120M",
         "-bufsize",
-        "200M",
+        "240M",
         "-profile:v",
         "high",
         "-level",
-        "5.1",
+        "5.2",
+        // 提升 Level 支持更高分辨率
         "-pix_fmt",
         "yuv420p",
         "-movflags",
@@ -560,19 +567,21 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-rc",
         "vbr_latency",
         "-qp_i",
-        "18",
+        "16",
+        // 提升 I 帧质量
         "-qp_p",
-        "20",
+        "18",
+        // 提升 P 帧质量
         "-b:v",
-        "50M",
+        "60M",
         "-maxrate",
-        "100M",
+        "120M",
         "-bufsize",
-        "200M",
+        "240M",
         "-profile:v",
         "high",
         "-level",
-        "5.1",
+        "5.2",
         "-pix_fmt",
         "yuv420p",
         "-movflags",
@@ -622,15 +631,17 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "medium",
+        // 从 veryfast 提升到 medium 以换取细节
         "-tune",
         "zerolatency",
         "-crf",
-        "20",
+        "18",
+        // 提升画质（18-22为标准清晰范围）
         "-profile:v",
         "high",
         "-level",
-        "5.1",
+        "5.2",
         "-pix_fmt",
         "yuv420p",
         "-movflags",

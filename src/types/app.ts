@@ -3,6 +3,8 @@
  */
 export type AppState = 'home' | 'recording' | 'editor';
 
+import { QualityConfig } from '../constants/quality';
+
 /**
  * 录制状态
  */
@@ -21,4 +23,6 @@ export interface RecordingState {
   autoZoom: boolean;
   /** 摄像头设备ID（用于录制时预览） */
   webcamDeviceId?: string | null;
+  /** 质量配置 */
+  quality?: QualityConfig;
 }

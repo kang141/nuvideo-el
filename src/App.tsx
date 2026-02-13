@@ -3,7 +3,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { EditorPage } from "./components/EditorPage";
 import { RecordingStatusBar } from "./components/RecordingStatusBar";
 import { HomePage } from "./components/HomePage";
-import { AppState, RecordingState, RenderGraph, MouseEvent } from "./types";
+import { RecordingState, RenderGraph, MouseEvent } from "./types";
+import { useAppStore } from "./store/useAppStore";
 import { mouseTracker, screenRecorder } from "./recorder";
 import { nativeAudioRecorder } from "./recorder/audio-capture";
 import { webcamRecorder } from "./recorder/webcam-capture";
@@ -12,7 +13,7 @@ import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
 
 function App() {
-  const [appState, setAppState] = useState<AppState>("home");
+  const { appState, setAppState: transitionTo } = useAppStore();
   const homeStartRef = useRef<() => void>();
 
   const [recordingState, setRecordingState] = useState<RecordingState>(() => ({
@@ -39,6 +40,8 @@ function App() {
   const audioDelayRef = useRef<number>(0);
   const webcamDelayRef = useRef<number>(0);
   const readyOffsetRef = useRef<number>(0);
+  const recordingBoundsRef = useRef<{ width: number; height: number } | null>(null);
+  const recordingScaleFactorRef = useRef<number>(1);
 
   const [autoZoomEnabled, setAutoZoomEnabled] = useState(
     () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
@@ -58,9 +61,7 @@ function App() {
     localStorage.setItem("nuvideo_language", lang);
   };
 
-  const transitionTo = useCallback((nextState: AppState) => {
-    setAppState(nextState);
-  }, []);
+
 
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -183,6 +184,8 @@ function App() {
 
       if (startResult?.t0) {
         readyOffsetRef.current = startResult.readyOffset;
+        recordingBoundsRef.current = startResult.bounds;
+        recordingScaleFactorRef.current = startResult.scaleFactor || 1;
         mouseTracker.align(startResult.t0);
         audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0 + 150;
         webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
@@ -196,6 +199,7 @@ function App() {
         format,
         autoZoom,
         webcamDeviceId: webcamConfig.enabled ? webcamConfig.deviceId : null,
+        quality, // 存储质量配置
       });
 
       transitionTo("recording");
@@ -374,8 +378,11 @@ function App() {
         },
         config: {
           fps: 60,
-          ratio: "16:9",
-          outputWidth: 1920,
+          ratio: "16:9", // 先恢复固定比例以修复类型错误，后续可根据 bounds 动态计算
+          outputWidth: Math.min(
+            (currentState.quality?.maxWidth || 1920), 
+            Math.round((recordingBoundsRef.current?.width || 1920) * recordingScaleFactorRef.current)
+          ),
           targetFormat: currentState.format,
         },
         autoZoom: currentState.autoZoom,
