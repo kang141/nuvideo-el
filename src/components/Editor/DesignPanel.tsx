@@ -187,7 +187,7 @@ export const DesignPanel = memo(function DesignPanel({
                         {t.editor.webcam}
                       </span>
                       <span className="text-[10px] text-white/30">
-                        {webcamEnabled ? '已开启实时预览' : '开启后可在画面中叠加上方摄像头'}
+                        {webcamEnabled ? t.editor.webcamOn : t.editor.webcamOff}
                       </span>
                     </div>
                     <Switch
@@ -326,17 +326,17 @@ export const DesignPanel = memo(function DesignPanel({
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center gap-2 px-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
-                        {t.editor.clickEffect || '点击特效 (Click Effect)'}
+                        {t.editor.clickEffect}
                       </span>
                       <div className="h-px flex-1 bg-white/[0.03]" />
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                      {[
-                        { id: 'none', label: '无', icon: X },
-                        { id: 'ripple', label: '波纹', icon: Circle },
-                        { id: 'ring', label: '圆环', icon: Target },
-                        { id: 'spark', label: '星火', icon: Sparkles },
-                      ].map(effect => {
+                    {[
+                      { id: 'none', label: t.common.none, icon: X },
+                      { id: 'ripple', label: t.editor.ripple, icon: Circle },
+                      { id: 'ring', label: t.editor.ring, icon: Target },
+                      { id: 'spark', label: t.editor.spark, icon: Sparkles },
+                    ].map(effect => {
                         const isActive = (mouseTheme.clickEffect || (mouseTheme.showRipple ? 'ripple' : 'none')) === effect.id;
                         return (
                           <button
@@ -356,7 +356,7 @@ export const DesignPanel = memo(function DesignPanel({
                       })}
                     </div>
                     <p className="text-[9px] text-white/20 px-1 leading-relaxed">
-                      选择点击时的视觉反馈样式，让操作指引更清晰。
+                      {t.editor.clickEffectDesc}
                     </p>
                   </div>
                 </section>
@@ -365,7 +365,7 @@ export const DesignPanel = memo(function DesignPanel({
                 <section className="space-y-6 pt-4">
                   <div className="flex items-center gap-2 px-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-white/25">
-                      运动物理 (Physics)
+                      {t.editor.physics}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
@@ -374,9 +374,9 @@ export const DesignPanel = memo(function DesignPanel({
                     {/* 预设选择 */}
                     <div className="grid grid-cols-3 gap-2">
                       {[
-                        { id: 'snappy', label: '干脆', icon: Zap, smoothing: 0.30, speedLimit: 9000 },
-                        { id: 'balanced', label: '均衡', icon: Target, smoothing: 0.60, speedLimit: 6500 },
-                        { id: 'cinematic', label: '电影感', icon: Film, smoothing: 0.88, speedLimit: 2400 },
+                        { id: 'snappy', label: t.editor.snappy, icon: Zap, smoothing: 0.30, speedLimit: 9000 },
+                        { id: 'balanced', label: t.editor.balanced, icon: Target, smoothing: 0.60, speedLimit: 6500 },
+                        { id: 'cinematic', label: t.editor.cinematic, icon: Film, smoothing: 0.88, speedLimit: 2400 },
                       ].map(preset => {
                         const isActive = Math.abs(mousePhysics.smoothing - preset.smoothing) < 0.05;
                         return (
@@ -404,7 +404,7 @@ export const DesignPanel = memo(function DesignPanel({
                     {/* 平滑度调节 */}
                     <div className="space-y-3">
                       <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[11px] font-medium text-white/60">跟随平滑度</span>
+                        <span className="text-[11px] font-medium text-white/60">{t.editor.smoothing}</span>
                         <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.smoothing * 100)}%</span>
                       </div>
                       <input
@@ -421,7 +421,7 @@ export const DesignPanel = memo(function DesignPanel({
                     {/* 速度限制调节 */}
                     <div className="space-y-3">
                       <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[11px] font-medium text-white/60">最大速度限制</span>
+                        <span className="text-[11px] font-medium text-white/60">{t.editor.speedLimit}</span>
                         <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.speedLimit)}px/s</span>
                       </div>
                       <input
@@ -437,7 +437,7 @@ export const DesignPanel = memo(function DesignPanel({
                   </div>
                   
                   <p className="text-[10px] text-white/20 italic text-center px-4 leading-relaxed">
-                    开启“电影感”预设可显著减缓鼠标在缩放时的大幅突跳感。
+                    {t.editor.physicsTip}
                   </p>
                 </section>
               </motion.div>
@@ -544,7 +544,7 @@ export const DesignPanel = memo(function DesignPanel({
                           <span className="text-[12px] font-medium text-white/90">
                             {t.editor.systemAudio}
                           </span>
-                          <span className="text-[10px] text-white/30">录制应用与系统发出的声音</span>
+                          <span className="text-[10px] text-white/30">{t.editor.systemAudioDesc}</span>
                         </div>
                         <Switch
                           checked={!!audioTracks?.tracks?.find((tr) => tr.source === "system")?.enabled !== false}
@@ -556,7 +556,7 @@ export const DesignPanel = memo(function DesignPanel({
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-0.5">
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
-                            音量增益
+                            {t.editor.volumeGain}
                           </span>
                           <span className="text-[10px] font-mono text-emerald-400 font-bold">
                             {Math.round((audioTracks?.tracks?.find((tr) => tr.source === "system")?.volume ?? 1) * 100)}%
@@ -581,7 +581,7 @@ export const DesignPanel = memo(function DesignPanel({
                           <span className="text-[12px] font-medium text-white/90">
                             {t.editor.micAudio}
                           </span>
-                          <span className="text-[10px] text-white/30">录制你的解说声音</span>
+                          <span className="text-[10px] text-white/30">{t.editor.micAudioDesc}</span>
                         </div>
                         <Switch
                           checked={!!audioTracks?.tracks?.find((tr) => tr.source === "microphone")?.enabled !== false}
@@ -593,7 +593,7 @@ export const DesignPanel = memo(function DesignPanel({
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-0.5">
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
-                            音量增益
+                            {t.editor.volumeGain}
                           </span>
                           <span className="text-[10px] font-mono text-emerald-400 font-bold">
                             {Math.round((audioTracks?.tracks?.find((tr) => tr.source === "microphone")?.volume ?? 1) * 100)}%

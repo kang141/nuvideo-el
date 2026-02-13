@@ -322,10 +322,10 @@ export function HomePage({
     
     // 阶段化提示文案
     const steps = [
-      "正在初始化硬件设备...",
-      "准备显卡采集引擎...",
-      "同步音频采样流...",
-      "配置视频编码环境..."
+      t.home.initHardware,
+      t.home.initEngine,
+      t.home.syncAudio,
+      t.home.configVideo
     ];
     
     let stepIdx = 0;
@@ -407,15 +407,15 @@ export function HomePage({
 
       {/* App Header */}
       <div
-        className="flex items-center justify-between px-5 h-11 shrink-0 relative z-50 border-b border-white/[0.04] overflow-hidden"
+        className="flex items-center justify-between px-5 h-11 shrink-0 relative z-50 border-b border-white/[0.04]"
       >
         <div 
           className="absolute inset-0 z-0" 
           style={{ WebkitAppRegion: "drag" } as any} 
         />
         
-        <div className="relative z-10 w-full h-full flex items-center justify-between" style={{ WebkitAppRegion: "no-drag" } as any}>
-          <div className="flex items-center gap-2.5">
+        <div className="relative z-[60] w-full h-full flex items-center justify-between pointer-events-none">
+          <div className="flex items-center gap-2.5 pointer-events-auto">
             <div className="w-5 h-5 rounded-md bg-white/[0.06] flex items-center justify-center overflow-hidden ring-1 ring-white/[0.08]">
               <img
                 src="/logo.png"
@@ -428,7 +428,7 @@ export function HomePage({
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 pointer-events-auto" style={{ WebkitAppRegion: "no-drag" } as any}>
             <AppSettingsMenu
               autoZoomEnabled={autoZoomEnabled}
               onToggleAutoZoom={onToggleAutoZoom}
@@ -463,8 +463,8 @@ export function HomePage({
             </div>
             <div className="flex p-0.5 bg-white/[0.03] rounded-lg border border-white/[0.04] h-8">
               {[
-                { id: "screen", label: "全屏", icon: Monitor },
-                { id: "window", label: "窗口", icon: AppWindow },
+                { id: "screen", label: t.home.screen, icon: Monitor },
+                { id: "window", label: t.home.window, icon: AppWindow },
               ].map((type) => (
                 <button
                   key={type.id}
@@ -645,10 +645,10 @@ export function HomePage({
                   <Zap size={20} />
                 </div>
                 <h3 className="text-[13px] font-medium text-white/60 mb-2">
-                  GIF 专属模式
+                  {t.home.gifExclusive}
                 </h3>
                 <p className="text-[11px] text-white/30 leading-relaxed">
-                  为了保证动态图片的轻量与兼容性，GIF 录制暂时不支持开启摄像头与录音功能。
+                  {t.home.gifExclusiveDesc}
                 </p>
               </motion.div>
             )}

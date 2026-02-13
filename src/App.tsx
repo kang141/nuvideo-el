@@ -529,8 +529,6 @@ function App() {
                 duration={recordingState.duration}
                 isPaused={recordingState.isPaused}
                 onStop={handleStopRecording}
-                onPause={handlePauseRecording}
-                onResume={handleResumeRecording}
                 language={language}
               />
             </div>

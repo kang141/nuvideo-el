@@ -89,8 +89,9 @@ export function AppSettingsMenu({
               </div>
               <div className="flex p-1 bg-white/[0.03] rounded-lg border border-white/[0.04]">
                 {[
-                  { id: 'zh', label: '中文' },
-                  { id: 'en', label: 'English' }
+                  { id: 'zh', label: '简' },
+                  { id: 'tw', label: '繁' },
+                  { id: 'en', label: 'EN' }
                 ].map((lang) => (
                   <button
                     key={lang.id}
