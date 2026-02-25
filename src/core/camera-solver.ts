@@ -30,7 +30,7 @@ const DEADZONE_W = 0.15; // 横向死区（占画面宽度的 15%）
 const DEADZONE_H = 0.12; // 纵向死区（占画面高度的 12%）
 
 // 自动对焦时的缩放力度
-const AUTO_ZOOM_SCALE = 2.0; // Screen Studio 风格：更大幅度的局部特写
+const AUTO_ZOOM_SCALE = 2.0; // 与 auto-zoom.ts 保持一致
 
 // ============ 增量缓存系统 ============
 // 用于导出时避免 O(n²) 重复计算
@@ -104,15 +104,15 @@ function findMousePos(
 
   // 2. 如果是最后一个点，直接返回
   if (idx >= events.length - 1) {
-     return { x: events[idx].x, y: events[idx].y };
+    return { x: events[idx].x, y: events[idx].y };
   }
 
   // 3. 获取插值所需的上下文点 (p0, p1, p2, p3)
   const p1 = events[idx];
   const p2 = events[idx + 1];
-  
+
   const span = p2.t - p1.t;
-  
+
   // 🎯 优化：对于极短时间跨度（<1ms），直接返回 p1，避免数值不稳定
   if (span <= 1.0) return { x: p1.x, y: p1.y };
 
@@ -162,12 +162,12 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   // 镜头配置：优先使用 graph.camera.springConfig
   const camConfig = (() => {
     const cfg = graph.camera?.springConfig;
-    
+
     // Screen Studio 核心调校：临界阻尼 (Critically Damped)
     // 刚度 320 提供足够的加速度 (快)，阻尼 36 确保准确停车 (无回弹/震荡)
     // 2 * sqrt(320) ≈ 35.77，取 36 略微过阻尼，实现"如丝般顺滑且精准"的停顿
     const fallback = { stiffness: 320, damping: 36 };
-    
+
     const stiffness = typeof cfg?.stiffness === 'number' ? cfg.stiffness : fallback.stiffness;
     const damping = typeof cfg?.damping === 'number' ? cfg.damping : fallback.damping;
     return {
@@ -254,13 +254,13 @@ export function computeCameraState(graph: RenderGraph, t: number) {
         state.mvx += fMx * factor;
         state.mvy += fMy * factor;
 
-          const speed = Math.sqrt(
-            state.mvx * state.mvx + state.mvy * state.mvy,
-          );
-          if (speed > mouseConfig.maxSpeed) {
-            state.mvx = (state.mvx / speed) * mouseConfig.maxSpeed;
-            state.mvy = (state.mvy / speed) * mouseConfig.maxSpeed;
-          }
+        const speed = Math.sqrt(
+          state.mvx * state.mvx + state.mvy * state.mvy,
+        );
+        if (speed > mouseConfig.maxSpeed) {
+          state.mvx = (state.mvx / speed) * mouseConfig.maxSpeed;
+          state.mvy = (state.mvy / speed) * mouseConfig.maxSpeed;
+        }
         state.mx += state.mvx * factor;
         state.my += state.mvy * factor;
       }
@@ -305,14 +305,14 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     }
 
     // 3. 镜头物理 (Scale 与 Position 异步，创造高级电影感)
-    
+
     // --- Scale 物理优化 ---
     // 退出缩放 (targetScale=1) 时稍微增加刚度，让全局视图回归更利索
     const isZoomingOut = targetScale < state.scale;
     const currentScaleStiffness = isZoomingOut ? camConfig.stiffness * 1.5 : camConfig.stiffness * 1.2;
     // 临界阻尼：D = 2 * sqrt(k)，确保绝对无回弹
-    const currentScaleDamping = 2 * Math.sqrt(currentScaleStiffness) * 1.1; 
-    
+    const currentScaleDamping = 2 * Math.sqrt(currentScaleStiffness) * 1.1;
+
     const fS =
       -currentScaleStiffness * (state.scale - targetScale) -
       currentScaleDamping * state.vs;
@@ -321,9 +321,9 @@ export function computeCameraState(graph: RenderGraph, t: number) {
 
     // --- Position 物理优化 ---
     // 降低位置刚度，使其落后于缩放进度，形成“先放大，后对焦”的视觉深度感
-    const posStiffness = camConfig.stiffness * 0.4; 
+    const posStiffness = camConfig.stiffness * 0.4;
     const posDamping = 2 * Math.sqrt(posStiffness) * 1.2; // 略微过阻尼，极其平滑
-    
+
     const fX =
       -posStiffness * (state.cx - targetCx) -
       posDamping * state.vx;

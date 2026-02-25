@@ -126,12 +126,12 @@ function App() {
   const handleRecordingError = useCallback((msg: string) => {
     // 防止重复弹窗
     if (recordingStateRef.current.isPaused) return;
-    
+
     console.error("[App] Recording error detected:", msg);
-    
+
     // 1. 通知用户
     alert(`录制环境异常：${msg}\n\n录制已自动暂停，您可以尝试修复设备后继续，或直接停止保存。`);
-    
+
     // 2. 自动切换到暂停状态，避免计时器继续走
     handlePauseRecording();
   }, [handlePauseRecording]);
@@ -172,7 +172,7 @@ function App() {
     try {
       await mouseTracker.syncClock();
       mouseTracker.start();
-      
+
       const [startResult, audioT0, webcamT0] = await Promise.all([
         screenRecorder.start(sourceId, quality, audioConfig),
         nativeAudioRecorder.start(sourceId, audioConfig),
@@ -367,8 +367,8 @@ function App() {
           pointerFile: "pointer-2.svg",
         },
         mousePhysics: {
-          smoothing: 0.88,
-          speedLimit: 2400,
+          smoothing: 0.90,
+          speedLimit: 2200,
         },
         camera: {
           intents: [],
@@ -379,7 +379,7 @@ function App() {
           fps: 60,
           ratio: "16:9", // 先恢复固定比例以修复类型错误，后续可根据 bounds 动态计算
           outputWidth: Math.min(
-            (currentState.quality?.maxWidth || 1920), 
+            (currentState.quality?.maxWidth || 1920),
             Math.round((recordingBoundsRef.current?.width || 1920) * recordingScaleFactorRef.current)
           ),
           targetFormat: currentState.format,
@@ -451,7 +451,7 @@ function App() {
 
     const onToggle = () => {
       if (isExportingRef.current) return;
-      
+
       const state = recordingStateRef.current;
       if (state.isRecording) {
         handleStopRecording();
@@ -510,12 +510,12 @@ function App() {
         appState === "recording"
           ? "bg-transparent border-0 shadow-none"
           : cn(
-              "bg-neutral-950 border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)] transition-all duration-300",
-              isMaximized ? "rounded-none border-none" : "rounded-[24px] border"
-            )
+            "bg-neutral-950 border-white/[0.08] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.8)] transition-all duration-300",
+            isMaximized ? "rounded-none border-none" : "rounded-[24px] border"
+          )
       )}
     >
-      <div 
+      <div
         className={cn(
           "flex h-full w-full flex-col relative z-10",
           appState !== "recording" && "will-change-[transform,filter]"
@@ -564,7 +564,7 @@ function App() {
             </div>
           )}
         </>
-     </div>
+      </div>
     </div>
   );
 }

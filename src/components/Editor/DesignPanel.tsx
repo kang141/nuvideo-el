@@ -1,4 +1,4 @@
-import { memo, useEffect } from "react";
+import { memo, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ImageIcon,
@@ -95,9 +95,7 @@ export const DesignPanel = memo(function DesignPanel({
   onUpdateWebcam,
   exportFormat = "mp4",
 }: DesignPanelProps) {
-  /*
   const [showAdvancedCursorPhysics, setShowAdvancedCursorPhysics] = useState(false);
-  */
   const t = translations[language];
 
   const TABS = [
@@ -151,10 +149,10 @@ export const DesignPanel = memo(function DesignPanel({
                     transition={{ type: "spring", stiffness: 400, damping: 30 }}
                   />
                 )}
-                <tab.icon 
-                  size={15} 
+                <tab.icon
+                  size={15}
                   strokeWidth={isActive ? 2.5 : 2}
-                  className={cn("relative z-20 transition-transform duration-500", isActive ? "scale-110" : "scale-100")} 
+                  className={cn("relative z-20 transition-transform duration-500", isActive ? "scale-110" : "scale-100")}
                 />
               </button>
             );
@@ -331,12 +329,12 @@ export const DesignPanel = memo(function DesignPanel({
                       <div className="h-px flex-1 bg-white/[0.03]" />
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                    {[
-                      { id: 'none', label: t.common.none, icon: X },
-                      { id: 'ripple', label: t.editor.ripple, icon: Circle },
-                      { id: 'ring', label: t.editor.ring, icon: Target },
-                      { id: 'spark', label: t.editor.spark, icon: Sparkles },
-                    ].map(effect => {
+                      {[
+                        { id: 'none', label: t.common.none, icon: X },
+                        { id: 'ripple', label: t.editor.ripple, icon: Circle },
+                        { id: 'ring', label: t.editor.ring, icon: Target },
+                        { id: 'spark', label: t.editor.spark, icon: Sparkles },
+                      ].map(effect => {
                         const isActive = (mouseTheme.clickEffect || (mouseTheme.showRipple ? 'ripple' : 'none')) === effect.id;
                         return (
                           <button
@@ -375,8 +373,8 @@ export const DesignPanel = memo(function DesignPanel({
                     <div className="grid grid-cols-3 gap-2">
                       {[
                         { id: 'snappy', label: t.editor.snappy, icon: Zap, smoothing: 0.30, speedLimit: 9000 },
-                        { id: 'balanced', label: t.editor.balanced, icon: Target, smoothing: 0.60, speedLimit: 6500 },
-                        { id: 'cinematic', label: t.editor.cinematic, icon: Film, smoothing: 0.88, speedLimit: 2400 },
+                        { id: 'balanced', label: t.editor.balanced, icon: Target, smoothing: 0.65, speedLimit: 5500 },
+                        { id: 'cinematic', label: t.editor.cinematic, icon: Film, smoothing: 0.90, speedLimit: 2200 },
                       ].map(preset => {
                         const isActive = Math.abs(mousePhysics.smoothing - preset.smoothing) < 0.05;
                         return (
@@ -390,8 +388,8 @@ export const DesignPanel = memo(function DesignPanel({
                                 : "bg-white/[0.02] border-white/[0.04] text-white/20 hover:border-white/20 hover:text-white/40"
                             )}
                           >
-                            <preset.icon 
-                              size={14} 
+                            <preset.icon
+                              size={14}
                               strokeWidth={isActive ? 2.5 : 2}
                               className={cn("transition-transform duration-500", isActive ? "scale-110" : "scale-100")}
                             />
@@ -401,41 +399,59 @@ export const DesignPanel = memo(function DesignPanel({
                       })}
                     </div>
 
-                    {/* 平滑度调节 */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[11px] font-medium text-white/60">{t.editor.smoothing}</span>
-                        <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.smoothing * 100)}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="0.99"
-                        step="0.01"
-                        value={mousePhysics.smoothing}
-                        onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
-                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                      />
-                    </div>
+                    {/* 高级设置开关 */}
+                    <button
+                      onClick={() => setShowAdvancedCursorPhysics(!showAdvancedCursorPhysics)}
+                      className="w-full flex items-center justify-center gap-1.5 py-1 text-[9px] font-bold tracking-tighter text-white/10 hover:text-white/40 transition-colors uppercase"
+                    >
+                      <div className="h-px flex-1 bg-white/[0.02]" />
+                      <span>{showAdvancedCursorPhysics ? "隐藏高级调整" : "显示高级参数"}</span>
+                      <div className="h-px flex-1 bg-white/[0.02]" />
+                    </button>
 
-                    {/* 速度限制调节 */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[11px] font-medium text-white/60">{t.editor.speedLimit}</span>
-                        <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.speedLimit)}px/s</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="1000"
-                        max="12000"
-                        step="100"
-                        value={mousePhysics.speedLimit}
-                        onChange={(e) => onUpdateMousePhysics({ speedLimit: parseInt(e.target.value) })}
-                        className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
-                      />
-                    </div>
+                    {showAdvancedCursorPhysics && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-5 pt-2 overflow-hidden"
+                      >
+                        {/* 平滑度调节 */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between px-0.5">
+                            <span className="text-[11px] font-medium text-white/60">{t.editor.smoothing}</span>
+                            <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.smoothing * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="0.99"
+                            step="0.01"
+                            value={mousePhysics.smoothing}
+                            onChange={(e) => onUpdateMousePhysics({ smoothing: parseFloat(e.target.value) })}
+                            className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* 速度限制调节 */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between px-0.5">
+                            <span className="text-[11px] font-medium text-white/60">{t.editor.speedLimit}</span>
+                            <span className="text-[10px] font-mono text-emerald-400/80">{Math.round(mousePhysics.speedLimit)}px/s</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1000"
+                            max="12000"
+                            step="100"
+                            value={mousePhysics.speedLimit}
+                            onChange={(e) => onUpdateMousePhysics({ speedLimit: parseInt(e.target.value) })}
+                            className="w-full accent-emerald-500 h-1 bg-white/5 rounded-full appearance-none cursor-pointer"
+                          />
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
-                  
                   <p className="text-[10px] text-white/20 italic text-center px-4 leading-relaxed">
                     {t.editor.physicsTip}
                   </p>
@@ -535,7 +551,7 @@ export const DesignPanel = memo(function DesignPanel({
                     </span>
                     <div className="h-px flex-1 bg-white/[0.03]" />
                   </div>
-                  
+
                   <div className="space-y-4">
                     {/* System Audio Tooltip style Card */}
                     <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] space-y-4 shadow-xl">
@@ -552,7 +568,7 @@ export const DesignPanel = memo(function DesignPanel({
                           className="scale-[0.85] origin-right"
                         />
                       </div>
-                      
+
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-0.5">
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
@@ -589,7 +605,7 @@ export const DesignPanel = memo(function DesignPanel({
                           className="scale-[0.85] origin-right"
                         />
                       </div>
-                      
+
                       <div className="space-y-3">
                         <div className="flex items-center justify-between px-0.5">
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-tight">
@@ -624,6 +640,6 @@ export const DesignPanel = memo(function DesignPanel({
           {t.editor.engineInfo}
         </span>
       </div>
-    </aside>
+    </aside >
   );
 });

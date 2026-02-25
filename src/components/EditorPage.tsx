@@ -142,32 +142,37 @@ export function EditorPage({
     if (!graph || !autoZoomEnabled || hasAutoZoomedRef.current) return;
 
     const mouseEvents = graph.mouse || [];
-    if (mouseEvents.length === 0) {
-      console.log("[EditorPage] No mouse events, skipping auto zoom");
-      return;
-    }
-
     hasAutoZoomedRef.current = true;
 
+    // 无论最终是否生成了缩放段，只要开启了自动缩放，我们都应该在编辑器内将其"降级"为可编辑的 intents
+    // 并关闭全局 autoZoom 标记，防止出现"有缩放效果但没法删除"的灵异现象
     try {
       const autoIntents = generateAutoZoomIntents(mouseEvents, graph.duration);
 
-      if (autoIntents.length > 1) {
-        setGraph({
-          ...graph,
+      // 如果生成的 intents 包含实际的缩放段（除了初始 1.0 之外的有 >1.0 的点）
+      const hasRealZoom = autoIntents.some(i => i.targetScale > 1.01);
+
+      setGraph(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          autoZoom: false, // 核心：关闭全局自动标记
           camera: {
-            ...graph.camera,
-            intents: autoIntents,
+            ...prev.camera,
+            intents: hasRealZoom ? autoIntents : prev.camera.intents,
           },
-        });
-        console.log(
-          `[EditorPage] Auto-generated ${autoIntents.length} zoom intents`,
-        );
+        };
+      });
+
+      if (hasRealZoom) {
+        console.log(`[EditorPage] Auto-generated ${autoIntents.length} zoom intents and disabled global autoZoom`);
+      } else {
+        console.log("[EditorPage] Auto zoom enabled but no zoom points detected. Global autoZoom disabled to prevent ghosting.");
       }
     } catch (err) {
       console.error("[EditorPage] Auto zoom generation failed:", err);
     }
-  }, [graph, autoZoomEnabled]);
+  }, [graph?.videoSource, autoZoomEnabled]); // 使用 videoSource 作为 key 确保换素材时重新触发一次
 
   // 4. 业务逻辑 Hooks
   const {
@@ -376,7 +381,7 @@ export function EditorPage({
       if (!graph) return;
       const tracks = graph.audio?.tracks || [];
       const existingTrack = tracks.find((t) => t.source === "system");
-      
+
       let nextTracks = tracks.slice();
       if (existingTrack) {
         // 如果轨道已存在，只修改 enabled 状态
@@ -404,7 +409,7 @@ export function EditorPage({
       if (!graph) return;
       const tracks = graph.audio?.tracks || [];
       const existingTrack = tracks.find((t) => t.source === "microphone");
-      
+
       let nextTracks = tracks.slice();
       if (existingTrack) {
         // 如果轨道已存在，只修改 enabled 状态

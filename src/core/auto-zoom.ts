@@ -23,7 +23,7 @@ export interface AutoZoomConfig {
 }
 
 const DEFAULT_CONFIG: AutoZoomConfig = {
-  zoomScale: 2.2,
+  zoomScale: 2.0,
   dwellThreshold: 450,
   speedThreshold: 0.25,
   zoomDuration: 1200,
@@ -38,7 +38,7 @@ function detectDwellPoints(
   config: AutoZoomConfig
 ): Array<{ t: number; x: number; y: number }> {
   const dwellPoints: Array<{ t: number; x: number; y: number }> = [];
-  
+
   if (events.length < 2) return dwellPoints;
 
   let dwellStart: NuMouseEvent | null = null;
@@ -48,7 +48,7 @@ function detectDwellPoints(
     const prev = events[i - 1];
     const curr = events[i];
     const dt = (curr.t - prev.t) / 1000; // 秒
-    
+
     if (dt <= 0) continue;
 
     const dx = curr.x - prev.x;
@@ -70,7 +70,7 @@ function detectDwellPoints(
         // 计算停留区域的中心点
         const centerX = dwellSum.x / dwellSum.count;
         const centerY = dwellSum.y / dwellSum.count;
-        
+
         dwellPoints.push({
           t: dwellStart.t,
           x: centerX,
@@ -153,7 +153,7 @@ function generateIntents(
       t: point.t,
       targetCx: point.x,
       targetCy: point.y,
-      targetScale: 1.8
+      targetScale: config.zoomScale
     });
 
     // 计算本次缩放的理结束时间
@@ -179,7 +179,7 @@ function generateIntents(
   // 按时间排序并去除过近的重复项
   const filtered = intents
     .sort((a, b) => a.t - b.t)
-    .filter((intent, idx, self) => 
+    .filter((intent, idx, self) =>
       idx === 0 || Math.abs(intent.t - self[idx - 1].t) > 50
     );
 
@@ -204,7 +204,7 @@ export function generateAutoZoomIntents(
 
   // 1. 检测点击位置（优先级更高）
   const clickPoints = detectClickPoints(events);
-  
+
   // 2. 检测停留区域
   const dwellPoints = detectDwellPoints(events, finalConfig);
 
