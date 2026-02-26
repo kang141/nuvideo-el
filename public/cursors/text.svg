@@ -1,6 +1,6 @@
 <svg width="64" height="64" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- 衬线体 I-Beam 光标 -->
+  <!-- 黑色外边框 -->
+  <path d="M12 6H20M16 6V26M12 26H20" stroke="black" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- 衬线体 I-Beam 光标核心 -->
   <path d="M12 6H20M16 6V26M12 26H20" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-  <!-- 黑色外发光/描边 -->
-  <path d="M12 6H20M16 6V26M12 26H20" stroke="white" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
 </svg>

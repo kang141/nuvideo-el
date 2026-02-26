@@ -110,7 +110,7 @@ ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode 
       // 注意：Electron 不支持动态切换构造函数中的 transparent 属性，
       // 但在 Windows 上，我们可以通过 setOpacity 或确保背景透明来模拟。
       // 为了彻底修复黑框，我们需要在创建窗口时保持 transparent: true，或在这里尝试兼容性处理。
-      
+
       win.setResizable(true)
       win.setSize(width, height)
       win.setResizable(false)
@@ -119,7 +119,7 @@ ipcMain.on('resize-window', (_event, { width, height, resizable, position, mode 
       const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
       const x = Math.floor((screenWidth - width) / 2)
       const y = Math.floor(screenHeight - height - 80) // 向上移动约 40px
-      
+
       win.setPosition(x, y)
       win.setAlwaysOnTop(true, 'screen-saver')
       win.setIgnoreMouseEvents(false) // 只有覆盖全屏时才需要开启穿透，现在不需要了
@@ -177,13 +177,15 @@ ipcMain.handle('get-sources', async () => {
   try {
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],
-      thumbnailSize: { width: 400, height: 225 }, // 略微提升分辨率以匹配 UI 宽度 (清晰度+)
-      fetchWindowIcons: false // 首页暂不需要图标，减少开销
+      thumbnailSize: { width: 620, height: 350 }, // 进一步提升分辨率，确保 1080p 屏幕下的清晰度
+      fetchWindowIcons: true // 开启图标获取，有时能触发更完整的窗口列表扫描
     })
+
+    console.log(`[Main] Scanned ${sources.length} sources (Screens: ${sources.filter(s => s.id.startsWith('screen:')).length}, Windows: ${sources.filter(s => !s.id.startsWith('screen:')).length})`);
+
     return sources.map(source => ({
       id: source.id,
-      name: source.name,
-      // 使用 85% 质量的 JPEG，平衡清晰度与性能
+      name: source.name || 'Untitled Window',
       thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString('base64')}`
     }))
   } catch (err) {
@@ -390,7 +392,7 @@ class SessionRecorder {
           if (!win) return;
           const point = screen.getCursorScreenPoint();
           const t = performance.now() - this.startTime;
-          
+
           // 获取当前的鼠标形态 (arrow, hand, text 等)
           const shape = getCursorShape();
 
@@ -460,7 +462,7 @@ class SessionRecorder {
           resolve();
         });
         if (proc.stdin && proc.stdin.writable) {
-          try { proc.stdin.write('q\n'); proc.stdin.end(); } catch(e) {}
+          try { proc.stdin.write('q\n'); proc.stdin.end(); } catch (e) { }
         } else {
           proc.kill('SIGKILL');
         }
@@ -477,7 +479,7 @@ class SessionRecorder {
       clearInterval(this.mousePollTimer);
       this.mousePollTimer = null;
     }
-    
+
     // 清理鼠标监控进程
     if (this.mouseMonitorProcess) {
       this.mouseMonitorProcess.kill();
@@ -494,7 +496,7 @@ class SessionRecorder {
 
       proc.once('close', () => {
         clearTimeout(forceKillTimer);
-        
+
         // 关闭鼠标日志流
         if (this.mouseLogStream) {
           this.mouseLogStream.close();
@@ -647,7 +649,7 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   currentSession = new SessionRecorder(sourceId, bounds, scaleFactor);
   const recordingPath = currentSession.videoPath;
- 
+
   // --- 核心修复：更鲁棒的 ddagrab 参数 ---
   // 加入 dup_frames=0 解决 Invalid argument 报错，增加稳定性
   const inputSource = `ddagrab=output_idx=${outputIdx}:draw_mouse=0:framerate=60:dup_frames=0`;
@@ -663,16 +665,16 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
     : path.join(process.resourcesPath, 'scripts', 'mouse-monitor.ps1');
 
   console.log('[Main] Starting Ultra-High-Performance ddagrab capture (Re-entrant cycle)...');
-  
+
   const encoderFallback: Array<'nvenc' | 'amf' | 'qsv' | 'software'> = ['nvenc', 'amf', 'qsv', 'software'];
   let result: any = null;
-  
+
   for (const encoder of encoderFallback) {
     const argsDda = buildFFmpegArgs(videoInputDda, recordingPath, encoder);
     console.log(`[Main] Attempting [${encoder}] for session [${currentSession.sessionId}]`);
-    
+
     result = await currentSession.start(ffmpegPath, argsDda, psPath);
-    
+
     if (result.success) {
       console.log(`[Main] ✅ Recording started successfully via [${encoder}]`);
       break;
@@ -687,12 +689,12 @@ ipcMain.handle('start-sidecar-record', async (_event, sourceId: string) => {
 
   if (result.success) {
     allSessions.set(currentSession.sessionId, currentSession);
-    return { 
-      success: true, 
-      sessionId: currentSession.sessionId, 
-      bounds, 
+    return {
+      success: true,
+      sessionId: currentSession.sessionId,
+      bounds,
       t0: performance.now(),
-      readyOffset: result.readyOffset || 0 
+      readyOffset: result.readyOffset || 0
     };
   } else {
     // 清理失败的会话，确保状态一致性
@@ -922,7 +924,7 @@ class CleanUpManager {
         const isTooMany = index >= MAX_SESSIONS;
         // 如果正在录制的 session (当前 session) 的文件夹名被包含在内，跳过它
         if (currentSession && session.folder === currentSession.sessionId) return false;
-        
+
         return isTooOld || isTooMany;
       });
 
@@ -947,7 +949,7 @@ class CleanUpManager {
 app.whenReady().then(() => {
   // 启动时执行静默清理
   CleanUpManager.runSilentCleanup();
-  
+
   // --- 现代协议处理器 (Electron 25+) ---
   // 处理 nuvideo://load/filename 格式，将其映射到临时目录
   // 注册协议处理器
@@ -983,7 +985,7 @@ app.whenReady().then(() => {
           return callback({ error: -6 });
         }
         const filePath = path.join(sessionDir, normalizedRelPath);
-        
+
         // 增加文件存在性硬检查
         if (fs.existsSync(filePath)) {
           return callback({ path: filePath });
@@ -1031,7 +1033,7 @@ app.on('will-quit', () => {
 
 ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | 'close' | 'toggle-fullscreen' | 'set-content-protection', value?: any) => {
   if (!win) return
-  
+
   switch (action) {
     case 'set-content-protection':
       win.setContentProtection(!!value)
@@ -1046,11 +1048,11 @@ ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | '
         const bounds = win.getBounds();
         const display = screen.getDisplayMatching(bounds);
         const workArea = display.workArea;
-        
+
         // 允许 10 像素的误差以兼容任务栏偏移
-        const isCurrentlyMaximized = Math.abs(bounds.width - workArea.width) < 10 && 
-                                   Math.abs(bounds.height - workArea.height) < 10;
-        
+        const isCurrentlyMaximized = Math.abs(bounds.width - workArea.width) < 10 &&
+          Math.abs(bounds.height - workArea.height) < 10;
+
         if (isCurrentlyMaximized) {
           win.unmaximize();
         } else {

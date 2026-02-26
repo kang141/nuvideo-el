@@ -26,9 +26,9 @@ export function WindowStatusBar({
   return (
     <div
       className="flex h-12 w-full items-center justify-between border-b border-white/5 bg-transparent px-4 text-white/80"
-      style={{ WebkitAppRegion: 'drag' } as any}
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <img src={logoUrl} alt="logo" className="h-6 w-6 object-contain" />
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-wide text-white">{title}</span>
@@ -40,7 +40,7 @@ export function WindowStatusBar({
         </div>
       </div>
 
-      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {/* 设置按钮 */}
         <AppSettingsMenu 
           autoZoomEnabled={autoZoomEnabled}

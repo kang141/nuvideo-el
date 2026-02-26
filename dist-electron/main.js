@@ -63,16 +63,6 @@ const IDC_HAND = 32649;
 const IDC_APPSTARTING = 32650;
 const IDC_HELP = 32651;
 const user32 = koffi.load("user32.dll");
-const POINT = koffi.struct("POINT", {
-  x: "long",
-  y: "long"
-});
-koffi.struct("CURSORINFO", {
-  cbSize: "uint32",
-  flags: "uint32",
-  hCursor: "intptr",
-  ptScreenPos: POINT
-});
 const GetCursorInfo = user32.func("int __stdcall GetCursorInfo(void *pci)");
 const LoadCursorA = user32.func("intptr __stdcall LoadCursorA(intptr hInstance, intptr lpCursorName)");
 const cursorHandles = {};
@@ -242,15 +232,15 @@ ipcMain.handle("get-sources", async () => {
   try {
     const sources = await desktopCapturer.getSources({
       types: ["window", "screen"],
-      thumbnailSize: { width: 400, height: 225 },
-      // 略微提升分辨率以匹配 UI 宽度 (清晰度+)
-      fetchWindowIcons: false
-      // 首页暂不需要图标，减少开销
+      thumbnailSize: { width: 620, height: 350 },
+      // 进一步提升分辨率，确保 1080p 屏幕下的清晰度
+      fetchWindowIcons: true
+      // 开启图标获取，有时能触发更完整的窗口列表扫描
     });
+    console.log(`[Main] Scanned ${sources.length} sources (Screens: ${sources.filter((s) => s.id.startsWith("screen:")).length}, Windows: ${sources.filter((s) => !s.id.startsWith("screen:")).length})`);
     return sources.map((source) => ({
       id: source.id,
-      name: source.name,
-      // 使用 85% 质量的 JPEG，平衡清晰度与性能
+      name: source.name || "Untitled Window",
       thumbnail: `data:image/jpeg;base64,${source.thumbnail.toJPEG(85).toString("base64")}`
     }));
   } catch (err) {

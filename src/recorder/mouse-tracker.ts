@@ -13,7 +13,7 @@ export class MouseTracker {
   private eventLock: boolean = false; // 添加锁标志以防止竞态条件
 
   constructor() {
-    (window as any).ipcRenderer.on('mouse-update', (_: any, point: { x: number, y: number, t?: number }) => {
+    window.ipcRenderer.on('mouse-update', (_: Electron.IpcRendererEvent, point: { x: number, y: number, t?: number }) => {
       if (!this.isTracking) return;
       if (typeof point.t !== 'number') return;
 
@@ -37,7 +37,7 @@ export class MouseTracker {
       }, 0);
     });
 
-    (window as any).ipcRenderer.on('mouse-click', (_: any, payload: { type: 'down' | 'up', t: number }) => {
+    window.ipcRenderer.on('mouse-click', (_: Electron.IpcRendererEvent, payload: { type: 'down' | 'up', t: number }) => {
       if (!this.isTracking) return;
       
       // 使用简单的锁机制防止竞态条件

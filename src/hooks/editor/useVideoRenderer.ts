@@ -1,9 +1,11 @@
 import { useEffect, useRef, RefObject, useState } from 'react';
-import { EDITOR_CANVAS_SIZE, AVAILABLE_CURSORS, AVAILABLE_POINTERS } from '../../constants/editor';
-import { RenderGraph } from '../../types';
+import { EDITOR_CANVAS_SIZE, AVAILABLE_CURSORS } from '../../constants/editor';
+import { RenderGraph, MouseEvent } from '../../types';
 import { computeCameraState } from '../../core/camera-solver';
+import type { ExtendedCameraState } from '../../core/camera-solver';
 import { ModernVideoRenderer } from '../../core/modern-video-renderer';
 import { applyRenderConfig, getRenderConfig } from '../../core/render-config';
+import { logger } from '../../utils/logger';
 
 interface UseVideoRendererOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -33,7 +35,7 @@ export function useVideoRenderer({
   const webcamRendererRef = useRef<ModernVideoRenderer | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   // 核心修复：视频帧缓存备份，彻底消除 seek 时的黑屏闪烁
-  const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null); 
+  const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null);
   const webcamCacheRef = useRef<HTMLCanvasElement | null>(null);
 
   // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
@@ -51,13 +53,6 @@ export function useVideoRenderer({
       const img = new Image();
       img.src = `/cursors/${file}`;
       img.onload = () => { cursorImagesRef.current[`cursor:${file}`] = img; };
-    });
-
-    // 预加载所有手型样式的指针
-    AVAILABLE_POINTERS.forEach(file => {
-      const img = new Image();
-      img.src = `/pointer/${file}`;
-      img.onload = () => { cursorImagesRef.current[`pointer:${file}`] = img; };
     });
 
     // 固定加载 text 类型
@@ -85,14 +80,14 @@ export function useVideoRenderer({
 
     // 🎯 预览和导出模式都绘制背景
     if (bgImageRef.current) {
-       oCtx.imageSmoothingEnabled = true;
-       oCtx.imageSmoothingQuality = 'high';
-       oCtx.drawImage(bgImageRef.current, 0, 0, W, H);
+      oCtx.imageSmoothingEnabled = true;
+      oCtx.imageSmoothingQuality = 'high';
+      oCtx.drawImage(bgImageRef.current, 0, 0, W, H);
     }
 
     // 2. 根据视频比例计算布局并绘制窗口阴影 + 窗口主体
     const layout = calculateLayout(W, H, vw, vh);
-    layoutRef.current = layout; 
+    layoutRef.current = layout;
     const { dx, dy, totalW, totalH, r } = layout;
 
     oCtx.save();
@@ -122,7 +117,7 @@ export function useVideoRenderer({
     }
 
     // 绘制地址栏装饰
-    const barW = Math.min(totalW * 0.45, 400); 
+    const barW = Math.min(totalW * 0.45, 400);
     const barH = 20;
     const barX = dx + (totalW - barW) / 2;
     const barY = dy + (TB_H - barH) / 2;
@@ -131,15 +126,15 @@ export function useVideoRenderer({
     oCtx.fillStyle = 'rgba(255, 255, 255, 0.2)';
     oCtx.font = '10px "Inter"'; oCtx.textAlign = 'center';
     oCtx.fillText('🔒 nuvideo.dev', barX + barW / 2, barY + barH / 2 + 1);
-    
+
     // 绘制功能图标
     const navX = dx + 64;
     oCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     oCtx.lineWidth = 1.5;
     oCtx.lineCap = 'round';
-    oCtx.beginPath(); 
-    oCtx.moveTo(navX, dy + TB_H/2 - 4); oCtx.lineTo(navX - 4, dy + TB_H/2); oCtx.lineTo(navX, dy + TB_H/2 + 4); 
-    oCtx.moveTo(navX + 16, dy + TB_H/2 - 4); oCtx.lineTo(navX + 20, dy + TB_H/2); oCtx.lineTo(navX + 16, dy + TB_H/2 + 4); 
+    oCtx.beginPath();
+    oCtx.moveTo(navX, dy + TB_H / 2 - 4); oCtx.lineTo(navX - 4, dy + TB_H / 2); oCtx.lineTo(navX, dy + TB_H / 2 + 4);
+    oCtx.moveTo(navX + 16, dy + TB_H / 2 - 4); oCtx.lineTo(navX + 20, dy + TB_H / 2); oCtx.lineTo(navX + 16, dy + TB_H / 2 + 4);
     oCtx.stroke();
   };
 
@@ -175,7 +170,7 @@ export function useVideoRenderer({
     rendererRef.current = renderer;
 
     renderer.initialize().then(() => {
-      console.log('[useVideoRenderer] Modern renderer initialized');
+      logger.debug('Modern renderer initialized');
       if (isExporting) {
         requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
       }
@@ -189,7 +184,7 @@ export function useVideoRenderer({
 
   // 启动摄像头渲染器
   useEffect(() => {
-    const webcamSource = renderGraph.webcamSource;
+    const webcamSource = renderGraph?.webcamSource;
     if (!webcamSource) return;
 
     const video = document.createElement('video');
@@ -203,26 +198,26 @@ export function useVideoRenderer({
     webcamRendererRef.current = renderer;
 
     renderer.initialize().then(() => {
-      console.log('[useVideoRenderer] Webcam renderer initialized');
+      logger.debug('Webcam renderer initialized');
     });
 
     // 状态同步逻辑：让摄像头播放器跟随主视频状态
     const mainVideo = videoRef.current;
-    
+
     // 状态切换同步：处理播放、暂停、速率
     const syncState = () => {
       if (!mainVideo || !video) return;
       video.playbackRate = mainVideo.playbackRate;
       if (mainVideo.paused && !video.paused) video.pause();
-      if (!mainVideo.paused && video.paused) video.play().catch(() => {});
+      if (!mainVideo.paused && video.paused) video.play().catch(() => { });
     };
 
     // 强校准：仅在进度拖动或开始播放时对齐时间轴
     const hardSync = (tolerance = 0.1) => {
-      if (!mainVideo || !video) return;
+      if (!mainVideo || !video || !renderGraph) return;
       const delay = (renderGraph.webcamDelay || 0) / 1000;
       const targetTime = Math.max(0, mainVideo.currentTime - delay);
-      
+
       // 容差判定：如果偏差过大，执行一次 Seek。
       // 注意：Seek 操作非常昂贵且是同步的，减少它能极大提升播放响应速度。
       if (Math.abs(video.currentTime - targetTime) > tolerance) {
@@ -245,7 +240,7 @@ export function useVideoRenderer({
       hardSync(0.1);
     }
 
-    console.log('[useVideoRenderer] Webcam sync optimized (Low-overhead mode)');
+    logger.debug('Webcam sync optimized (Low-overhead mode)');
 
     return () => {
       if (mainVideo) {
@@ -287,10 +282,10 @@ export function useVideoRenderer({
     const TB_H = 34;   // 稍微压缩标题栏高度
     const videoAspect = videoW / videoH;
     const padding = 0.85;
-    
+
     let dw = W * padding;
     let dh = dw / videoAspect;
-    
+
     // 检查总高度是否超限
     if (dh + TB_H > H * padding) {
       dh = H * padding - TB_H;
@@ -298,7 +293,7 @@ export function useVideoRenderer({
     }
 
     const totalW = dw;
-    const totalH = dh + TB_H; 
+    const totalH = dh + TB_H;
 
     return {
       dw, dh, totalW, totalH,
@@ -317,28 +312,28 @@ export function useVideoRenderer({
     const isExportingNow = isExportingRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) {
       if (isExportingNow) {
-        console.warn('[渲染] 帧被跳过:', { 
-          hasVideo: !!video, 
-          hasCanvas: !!canvas, 
-          isReady, 
-          hasOffscreen: !!offscreenRef.current 
+        logger.warn('帧被跳过:', {
+          hasVideo: !!video,
+          hasCanvas: !!canvas,
+          isReady,
+          hasOffscreen: !!offscreenRef.current
         });
       }
       return;
     }
 
     // 🎯 统一获取 context：确保预览和导出使用相同的配置
-    const ctx = canvas.getContext('2d', { 
+    const ctx = canvas.getContext('2d', {
       alpha: false,
-      willReadFrequently: false 
+      willReadFrequently: false
     });
     if (!ctx) return;
-    
 
-    
+
+
     const renderGraph = renderGraphRef.current;
     if (!renderGraph) {
-      if (isExporting) console.warn('[渲染] renderGraph 为空！');
+      if (isExporting) logger.warn('renderGraph 为空！');
       return;
     }
 
@@ -375,10 +370,10 @@ export function useVideoRenderer({
       // 🎯 核心优化：导出模式且视频正在播放时（VFC模式），不使用 seek 模式的 getFrameAt
       // 而是直接使用捕获当前帧，避免 seek 导致的黑屏。
       const isActuallyPlaying = video && !video.paused;
-      
+
       // 🎯 诊断日志
       if (isExportingNow && timestampMs < 100) {
-        console.log('[渲染] 渲染路径选择:', {
+        logger.debug('渲染路径选择:', {
           isExportingNow,
           isActuallyPlaying,
           videoPaused: video.paused,
@@ -387,15 +382,15 @@ export function useVideoRenderer({
           timestampMs
         });
       }
-      
+
       if (!isExportingNow || isActuallyPlaying) {
         // 预览模式或正在播放的导出，直接从视频层抽取
         frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
-        
+
         if (isExportingNow && timestampMs < 100) {
-          console.log('[渲染] drawToCanvas 结果:', { frameRendered, videoReadyState: video.readyState });
+          logger.debug('drawToCanvas 结果:', { frameRendered, videoReadyState: video.readyState });
         }
-        
+
         // 更新缓存（用于丢帧时的兜底）
         if (frameRendered) {
           if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
@@ -410,18 +405,18 @@ export function useVideoRenderer({
             } catch (e) { /* ignore */ }
           }
         }
-      } 
+      }
       else {
         // 导出模式且视频暂停（手动 Seek 模式）：使用精确帧获取
         if (timestampMs < 100) {
-          console.log('[渲染] 使用 getFrameAt 模式');
+          logger.debug('使用 getFrameAt 模式');
         }
         try {
           const frame = await renderer.getFrameAt(timestampMs, true);
           if (frame) {
             ctx.drawImage(frame, 0, 0, dw, dh);
             frameRendered = true;
-            
+
             // 更新缓存
             if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
             if (mainVideoCacheRef.current.width !== dw) {
@@ -430,13 +425,13 @@ export function useVideoRenderer({
             }
             const cacheCtx = mainVideoCacheRef.current.getContext('2d');
             if (cacheCtx) cacheCtx.drawImage(frame, 0, 0, dw, dh);
-            
+
             frame.close();
           } else {
-             if (isExportingNow) console.warn('[渲染] getFrameAt 返回空, 时间戳:', timestampMs);
+            if (isExportingNow) logger.warn('getFrameAt 返回空, 时间戳:', timestampMs);
           }
         } catch (e) {
-          console.warn('[渲染] 获取精确帧失败:', e);
+          logger.warn('获取精确帧失败:', e);
         }
       }
     }
@@ -445,7 +440,7 @@ export function useVideoRenderer({
     if (!frameRendered && mainVideoCacheRef.current) {
       ctx.drawImage(mainVideoCacheRef.current, 0, 0, dw, dh);
     }
-    drawSmoothMouse(ctx, camera, dw, dh, renderGraph, timestampMs);
+    drawSmoothMouse(ctx, camera as ExtendedCameraState, dw, dh, renderGraph, timestampMs);
     ctx.restore(); ctx.restore(); ctx.restore();
 
     // 细节描边
@@ -456,10 +451,10 @@ export function useVideoRenderer({
     const webcamVideo = webcamVideoRef.current;
     const webcamRenderer = webcamRendererRef.current;
     if (webcamVideo && webcamRenderer && renderGraph.webcamSource && renderGraph.webcam?.isEnabled) {
-      const pipSize = renderGraph.webcam?.size ?? 360; 
-      const padding = 60;   
-      const px = EDITOR_CANVAS_SIZE.width - pipSize/2 - padding;
-      const py = EDITOR_CANVAS_SIZE.height - pipSize/2 - padding;
+      const pipSize = renderGraph.webcam?.size ?? 360;
+      const padding = 60;
+      const px = EDITOR_CANVAS_SIZE.width - pipSize / 2 - padding;
+      const py = EDITOR_CANVAS_SIZE.height - pipSize / 2 - padding;
 
       // 计算摄像头采样时间戳：减去延迟量。如果结果为负，说明摄像头还没开始录制
       const webcamDelay = renderGraph.webcamDelay || 0;
@@ -469,25 +464,25 @@ export function useVideoRenderer({
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.beginPath();
-        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize/2, py - pipSize/2, pipSize, pipSize, 40);
-        else ctx.arc(px, py, pipSize/2, 0, Math.PI * 2);
+        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize / 2, py - pipSize / 2, pipSize, pipSize, 40);
+        else ctx.arc(px, py, pipSize / 2, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.save(); ctx.beginPath();
-        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize/2, py - pipSize/2, pipSize, pipSize, 40);
-        else ctx.arc(px, py, pipSize/2, 0, Math.PI * 2);
+        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize / 2, py - pipSize / 2, pipSize, pipSize, 40);
+        else ctx.arc(px, py, pipSize / 2, 0, Math.PI * 2);
         ctx.clip();
 
         ctx.translate(px, py); ctx.scale(-1, 1);
         const vw = (source instanceof HTMLVideoElement) ? source.videoWidth : (source as HTMLCanvasElement).width;
         const vh = (source instanceof HTMLVideoElement) ? source.videoHeight : (source as HTMLCanvasElement).height;
         const minSide = Math.min(vw, vh);
-        ctx.drawImage(source, (vw - minSide) / 2, (vh - minSide) / 2, minSide, minSide, -pipSize/2, -pipSize/2, pipSize, pipSize);
+        ctx.drawImage(source, (vw - minSide) / 2, (vh - minSide) / 2, minSide, minSide, -pipSize / 2, -pipSize / 2, pipSize, pipSize);
         ctx.restore();
 
         ctx.beginPath();
-        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize/2, py - pipSize/2, pipSize, pipSize, 40);
-        else ctx.arc(px, py, pipSize/2, 0, Math.PI * 2);
+        if (renderGraph.webcam?.shape === 'rect') ctx.roundRect(px - pipSize / 2, py - pipSize / 2, pipSize, pipSize, 40);
+        else ctx.arc(px, py, pipSize / 2, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 3; ctx.stroke();
         ctx.restore();
       };
@@ -496,7 +491,7 @@ export function useVideoRenderer({
         // 预览模式：直接绘制
         if (!isExporting && webcamVideo.readyState >= 2 && webcamVideo.videoWidth > 0) {
           drawPip(webcamVideo);
-        } 
+        }
         // 导出模式：获取精确帧
         else if (isExporting) {
           try {
@@ -521,7 +516,7 @@ export function useVideoRenderer({
               drawPip(webcamCacheRef.current);
             }
           } catch (e) {
-            console.warn('[渲染] 摄像头帧获取失败:', e);
+            logger.warn('摄像头帧获取失败:', e);
             if (webcamCacheRef.current && webcamCacheRef.current.width > 0) {
               drawPip(webcamCacheRef.current);
             }
@@ -539,7 +534,7 @@ export function useVideoRenderer({
   useEffect(() => {
     if (!isReady || isExporting) return;
     const canvas = canvasRef.current;
-    if (canvas) { 
+    if (canvas) {
       // 🎯 使用统一的渲染配置
       const config = getRenderConfig(false); // 预览模式
       applyRenderConfig(canvas, config);
@@ -571,7 +566,7 @@ export function useVideoRenderer({
       // 立即渲染一帧，确保响应性
       void renderFrame(video.currentTime * 1000);
     };
-    
+
     video.addEventListener('seeked', onSync);
     video.addEventListener('pause', onSync);
     video.addEventListener('play', onSync);
@@ -579,7 +574,7 @@ export function useVideoRenderer({
 
     // 启动渲染循环
     rafRef.current = requestAnimationFrame(tick);
-    
+
     // 立即渲染第一帧
     onSync();
 
@@ -599,7 +594,7 @@ export function useVideoRenderer({
 
   // --- 光标路径定义 (Path2D) ---
   // 二分查找当前时刻对应的最后一个鼠标事件索引
-  function findLastEventIndex(events: any[], t: number) {
+  function findLastEventIndex(events: MouseEvent[], t: number) {
     let low = 0, high = events.length - 1;
     let ans = -1;
     while (low <= high) {
@@ -614,11 +609,11 @@ export function useVideoRenderer({
     return ans;
   }
 
-  function drawSmoothMouse(ctx: CanvasRenderingContext2D, camera: any, dw: number, dh: number, graph: RenderGraph, t: number) {
+  function drawSmoothMouse(ctx: CanvasRenderingContext2D, camera: ExtendedCameraState, dw: number, dh: number, graph: RenderGraph, t: number) {
     const events = graph.mouse;
     if (!events || events.length === 0) return;
-    const { style, showRipple, size } = graph.mouseTheme;
-    
+    const { style, size } = graph.mouseTheme;
+
     // --- 性能优化核心：定位当前时刻的事件 ---
     const lastIdx = findLastEventIndex(events, t);
     if (lastIdx === -1) return;
@@ -630,7 +625,7 @@ export function useVideoRenderer({
     const mx = camera.mx * dw;
     const my = camera.my * dh;
 
-    
+
     let isDown = false;
     // 往前搜索找到最近的 down/up 决定状态
     for (let i = lastIdx; i >= 0; i--) {
@@ -638,73 +633,11 @@ export function useVideoRenderer({
       if (events[i].type === 'up') { isDown = false; break; }
     }
 
-    // 点击特效引擎
-    const clickEffect = graph.mouseTheme.clickEffect || (showRipple ? 'ripple' : 'none');
-    if (clickEffect !== 'none') {
-      ctx.save();
-      for (let i = lastIdx; i >= 0; i--) {
-        const evIter = events[i];
-        if (t - evIter.t > 600) break; // 超出特效寿命，停止遍历
-        if (evIter.type === 'down') {
-          const age = t - evIter.t;
-          const progress = age / 600;
-          const ex = evIter.x * dw;
-          const ey = evIter.y * dh;
 
-          if (clickEffect === 'ripple') {
-            // --- Pulse (灵动光晕) ---
-            // 放弃描边，使用填充色块，模拟光晕感
-            ctx.beginPath();
-            ctx.arc(ex, ey, progress * size * 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 2) * 0.15})`;
-            ctx.fill();
-          } else if (clickEffect === 'ring') {
-            // --- Orbit (精细圆环) ---
-            // 使用极细线条，配合高弹性扩张感知
-            const ringProgress = 1 - Math.pow(1 - progress, 3); // 快速起步慢速结束
-            ctx.beginPath();
-            ctx.arc(ex, ey, ringProgress * size * 2.0, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 1.2) * 0.6})`;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            
-            // 核心微点
-            if (progress < 0.5) {
-              ctx.beginPath();
-              ctx.arc(ex, ey, (1 - progress * 2) * 3, 0, Math.PI * 2);
-              ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * (1 - progress * 2)})`;
-              ctx.fill();
-            }
-          } else if (clickEffect === 'spark') {
-            // --- Nano (纳米火花) ---
-            // 增加线条数量但极度缩减宽度，追求颗粒感
-            const count = 8;
-            const dist = (1 - Math.pow(1 - progress, 2)) * size * 1.5;
-            const len = size * 0.3 * (1 - progress);
-            ctx.strokeStyle = `rgba(255, 255, 255, ${Math.pow(1 - progress, 1.5) * 0.8})`;
-            ctx.lineWidth = 1;
-            
-            for (let j = 0; j < count; j++) {
-              const angle = (j * Math.PI * 2) / count;
-              const sx = ex + Math.cos(angle) * dist;
-              const sy = ey + Math.sin(angle) * dist;
-              const tx = ex + Math.cos(angle) * (dist + len);
-              const ty = ey + Math.sin(angle) * (dist + len);
-              
-              ctx.beginPath();
-              ctx.moveTo(sx, sy);
-              ctx.lineTo(tx, ty);
-              ctx.stroke();
-            }
-          }
-        }
-      }
-      ctx.restore();
-    }
 
     ctx.save();
     const visualSize = size * (isDown ? 0.85 : 1.0);
-    
+
     // 动态决定使用的图片资源
     let cursorImg: HTMLImageElement | undefined;
     if (currentShape === 'text') {
@@ -719,14 +652,14 @@ export function useVideoRenderer({
 
     if (cursorImg) {
       ctx.translate(mx, my);
-      
+
       // 根据光标类型动态校准热点偏移
       let ox = 0, oy = 0;
       if (currentShape === 'text') {
         ox = -16; oy = -16;
       } else if (currentShape === 'pointer') {
         // 由于用户下载的 SVG 格式不一，这里尝试一个通用的手型热点偏移（食指大概在中间靠上）
-        ox = -12; oy = -2; 
+        ox = -12; oy = -2;
       } else {
         // 默认箭头热点在左上角稍微偏一点
         ox = -4; oy = -2;
@@ -734,7 +667,7 @@ export function useVideoRenderer({
 
       const scale = visualSize / 32;
       ctx.scale(scale, scale);
-      
+
       // 核心修复：强制指定绘制宽高为 32x32
       // 这样无论原始 SVG 是 512 还是 1024，都会被缩放到我们定义的逻辑网格内
       ctx.drawImage(cursorImg, ox, oy, 32, 32);

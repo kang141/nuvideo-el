@@ -14,8 +14,8 @@ interface AppSettingsMenuProps {
   align?: 'left' | 'right' | 'center';
 }
 
-export function AppSettingsMenu({ 
-  autoZoomEnabled, 
+export function AppSettingsMenu({
+  autoZoomEnabled,
   onToggleAutoZoom,
   language,
   setLanguage,
@@ -47,9 +47,9 @@ export function AppSettingsMenu({
 
   return (
     <div className="relative" ref={menuRef}>
-      <Button 
-        variant="ghost" 
-        size="icon" 
+      <Button
+        variant="ghost"
+        size="icon"
         className={cn(
           "h-8 w-8 rounded-lg transition-all",
           isOpen ? "text-white bg-white/10" : "text-white/20 hover:text-white/70 hover:bg-white/5"
@@ -58,11 +58,11 @@ export function AppSettingsMenu({
       >
         <Settings2 size={16} />
       </Button>
-      
+
       {/* 设置下拉菜单 */}
       {isOpen && (
         <div className={cn(
-          "absolute top-full mt-2 w-56 bg-[#1a1a1a] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden z-[100]",
+          "absolute top-full mt-2 w-56 bg-[#1c1c1e] border border-white/[0.08] rounded-xl shadow-[0_24px_48px_rgba(0,0,0,0.5)] overflow-hidden z-[100] backdrop-blur-3xl",
           alignClass
         )}>
           <div className="p-3 space-y-4">
@@ -72,7 +72,7 @@ export function AppSettingsMenu({
                 <span className="text-[11px] font-semibold text-white/90">{t.home.autoZoom}</span>
                 <span className="text-[10px] text-white/50 leading-tight max-w-[120px]">{t.home.autoZoomDesc}</span>
               </div>
-              <Switch 
+              <Switch
                 checked={autoZoomEnabled}
                 onCheckedChange={onToggleAutoZoom}
                 className="scale-[0.8] origin-right shrink-0"

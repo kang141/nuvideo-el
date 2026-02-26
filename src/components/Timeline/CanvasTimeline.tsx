@@ -49,20 +49,20 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const [scrollLeft, setScrollLeft] = useState(0);
   const [hoverX, setHoverX] = useState<number | null>(null);
 
-  
+
   // 拖拽编辑状态
   const [dragMode, setDragMode] = useState<DragMode>('none');
   const [dragZoomIndex, setDragZoomIndex] = useState<number>(-1);
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number>(-1); // 新增：选中状态
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartIntents, setDragStartIntents] = useState<CameraIntent[]>([]);
-  
+
   const minPPS = useMemo(() => {
     if (width <= 0 || duration <= 0) return TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS;
     // 基础 minPPS 是"刚好铺满全屏"的比例，但不能低于绝对最小值
     return Math.max(TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS, (width - 60) / duration);
   }, [width, duration]);
-  
+
   const pps = useMemo(() => {
     if (userPPS === null) return minPPS;
     return Math.max(TIMELINE_CONSTANTS.ABSOLUTE_MIN_PPS, userPPS);
@@ -93,14 +93,14 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     const dpr = window.devicePixelRatio || 1;
     const targetW = Math.round(width * dpr);
     const targetH = Math.round(height * dpr);
-    
+
     // 仅在尺寸变更时才重置 canvas 宽高（重置会导致内容清空）
     if (canvas.width !== targetW || canvas.height !== targetH) {
       canvas.width = targetW;
       canvas.height = targetH;
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
     const { PADDING_LEFT, TRACK_HEIGHT, TRACK_GAP, TRACKS_START_Y, ZOOM_BAR_PADDING } = TIMELINE_CONSTANTS;
@@ -114,14 +114,14 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     // 绘制轨道槽位
     const contentWidth = width - PADDING_LEFT * 2;
     for (let i = 0; i < trackCount; i++) {
-        const ty = TRACKS_START_Y + i * (TRACK_HEIGHT + TRACK_GAP);
-        ctx.beginPath();
-        ctx.roundRect(PADDING_LEFT, ty, contentWidth, TRACK_HEIGHT, 10);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+      const ty = TRACKS_START_Y + i * (TRACK_HEIGHT + TRACK_GAP);
+      ctx.beginPath();
+      ctx.roundRect(PADDING_LEFT, ty, contentWidth, TRACK_HEIGHT, 10);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
 
     // 绘制刻度线
@@ -138,17 +138,17 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       if (isMajor) {
         ctx.font = '600 10px "Inter", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
         ctx.fillText(t % 1 === 0 ? `${t}s` : `${t.toFixed(1)}s`, x, 15);
         ctx.beginPath(); ctx.arc(x, 30, 1.5, 0, Math.PI * 2); ctx.fill();
       } else {
-        ctx.beginPath(); ctx.moveTo(x, 28); ctx.lineTo(x, 32); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, 28); ctx.lineTo(x, 32); ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.stroke();
       }
     }
 
     // 绘制 Zoom 条
     const zoomTrackY = TRACKS_START_Y;
-    
+
     // --- Clipping: 限制绘制区域，防止溢出 ---
     ctx.save();
     ctx.beginPath();
@@ -171,21 +171,21 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         ctx.save();
         const grad = ctx.createLinearGradient(startX, ry, startX, ry + rh);
         grad.addColorStop(0, isSelected ? '#ffbd69' : '#ff9f43');
-        grad.addColorStop(1, isSelected ? '#ff8080' : '#ff6b6b');
+        grad.addColorStop(1, isSelected ? '#fa5252' : '#eb6a4c'); // 更深沉的橙红
         ctx.beginPath(); ctx.roundRect(startX, ry, rw, rh, 8);
         ctx.fillStyle = grad;
-        ctx.shadowColor = isSelected ? 'rgba(255, 107, 107, 0.8)' : 'rgba(255, 107, 107, 0.4)';
-        ctx.shadowBlur = isSelected ? 20 : 12;
+        ctx.shadowColor = isSelected ? 'rgba(235, 106, 76, 0.4)' : 'rgba(235, 106, 76, 0.2)';
+        ctx.shadowBlur = isSelected ? 15 : 8;
         ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = isSelected ? '#fff' : 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = isSelected ? 2 : 1;
+        ctx.strokeStyle = isSelected ? '#fff' : 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = isSelected ? 1.5 : 1;
         ctx.stroke();
         if (rw > 50) {
-            ctx.font = '900 10px "Inter", sans-serif';
-            ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
-            ctx.textAlign = 'center';
-            ctx.fillText('ZOOM', startX + rw / 2, ry + rh / 2 + 3.5);
+          ctx.font = '900 10px "Inter", sans-serif';
+          ctx.fillStyle = isSelected ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.7)';
+          ctx.textAlign = 'center';
+          ctx.fillText('ZOOM', startX + rw / 2, ry + rh / 2 + 3.5);
         }
         ctx.restore();
       }
@@ -198,33 +198,33 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     const videoTrackY = TRACKS_START_Y + 1 * (TRACK_HEIGHT + TRACK_GAP);
     const vty = videoTrackY + 4;
     const vth = TRACK_HEIGHT - 8;
-    
+
     ctx.save();
-    
+
     // 获取切片列表，如果没有则默认为一个完整切片
-    const clips = renderGraph.clips || [{ 
-      id: 'default', 
-      sourceStartTime: 0, 
-      duration: duration * 1000, 
-      startAt: 0 
+    const clips = renderGraph.clips || [{
+      id: 'default',
+      sourceStartTime: 0,
+      duration: duration * 1000,
+      startAt: 0
     }];
 
     clips.forEach(clip => {
       const startX = timeToX(clip.startAt / 1000);
       const w = (clip.duration / 1000) * pps;
       // 减去 1px 缝隙，视觉上区分
-      const rw = Math.max(2, w - 1); 
+      const rw = Math.max(2, w - 1);
 
       // 仅绘制可见区域
       if (startX + rw < PADDING_LEFT || startX > width) return;
 
       ctx.beginPath();
       ctx.roundRect(startX, vty, rw, vth, 6);
-      
-      // 使用高级的深空渐变色
+
+      // 使用 Apple 风的正蓝色
       const grad = ctx.createLinearGradient(startX, vty, startX, vty + vth);
-      grad.addColorStop(0, '#2563eb'); // blue-600
-      grad.addColorStop(1, '#1d4ed8'); // blue-700
+      grad.addColorStop(0, '#0071e3');
+      grad.addColorStop(1, '#005bb7');
       ctx.fillStyle = grad;
       ctx.fill();
 
@@ -235,10 +235,10 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
       // 如果比较宽，显示时长
       if (rw > 40) {
-         ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-         ctx.font = '500 10px "Inter", sans-serif';
-         ctx.textAlign = 'center';
-         ctx.fillText(`${(clip.duration / 1000).toFixed(1)}s`, startX + rw/2, vty + vth/2 + 3);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.font = '500 10px "Inter", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${(clip.duration / 1000).toFixed(1)}s`, startX + rw / 2, vty + vth / 2 + 3);
       }
     });
 
@@ -250,7 +250,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   // 4. 驱动播放头的高频同步循环
   useEffect(() => {
     let raf: number;
-    
+
     const tick = () => {
       const video = videoRef.current;
       const canvas = playheadCanvasRef.current;
@@ -270,34 +270,34 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         canvas.height = targetH;
       }
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); 
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
       const { PADDING_LEFT, TRACK_HEIGHT, TRACK_GAP, TRACKS_START_Y } = TIMELINE_CONSTANTS;
       const timeToX = (t: number) => PADDING_LEFT + t * pps - scrollLeft;
-      
+
       const curTime = video.currentTime;
       const phX = Math.round(timeToX(curTime));
 
       if (phX >= PADDING_LEFT && phX <= width - PADDING_LEFT) {
-        const playheadColor = '#ff4757';
+        const playheadColor = '#e5484d'; // Apple 风格的红色线基色
         const totalContentH = (TRACK_HEIGHT + TRACK_GAP) * 2;
 
         // --- 绘制极致精美的红针 ---
         ctx.save();
-        
+
         // 1. 顶部表头 (带有倒角的精密设计)
         ctx.fillStyle = playheadColor;
         const headW = 12;
         const headH = 8;
         ctx.beginPath();
-        ctx.roundRect(phX - headW/2, 22, headW, headH, 2);
+        ctx.roundRect(phX - headW / 2, 22, headW, headH, 2);
         ctx.fill();
-        
+
         // 2. 指向三角形
         ctx.beginPath();
-        ctx.moveTo(phX - headW/2, 22 + headH);
-        ctx.lineTo(phX + headW/2, 22 + headH);
+        ctx.moveTo(phX - headW / 2, 22 + headH);
+        ctx.lineTo(phX + headW / 2, 22 + headH);
         ctx.lineTo(phX, 22 + headH + 4);
         ctx.closePath();
         ctx.fill();
@@ -309,7 +309,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         ctx.strokeStyle = playheadColor;
         ctx.lineWidth = 1;
         ctx.stroke();
-        
+
         // 4. 高亮圆点
         ctx.beginPath();
         ctx.arc(phX, 26, 1.5, 0, Math.PI * 2);
@@ -372,19 +372,19 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     const intents = renderGraph.camera.intents || [];
     const { PADDING_LEFT, TRACK_HEIGHT, TRACKS_START_Y, ZOOM_BAR_PADDING, EDGE_HOTZONE } = TIMELINE_CONSTANTS;
     const zoomTrackY = TRACKS_START_Y;
-    
+
     const timeToX = (t: number) => PADDING_LEFT + t * pps - scrollLeft;
-    
+
     for (let i = 0; i < intents.length; i++) {
       const current = intents[i];
       const next = intents[i + 1];
-      
+
       if (current.targetScale > 1.0) {
         const startX = timeToX(current.t / 1000);
         const endX = next ? timeToX(next.t / 1000) : timeToX(duration);
         const ry = zoomTrackY + ZOOM_BAR_PADDING;
         const rh = TRACK_HEIGHT - ZOOM_BAR_PADDING * 2;
-        
+
         // 检查 Y 范围
         if (y >= ry && y <= ry + rh) {
           // 检查左右边缘
@@ -402,7 +402,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const deleteSelectedIntent = useCallback(() => {
     if (selectedZoomIndex < 0) return;
     const intents = [...renderGraph.camera.intents];
-    
+
     // 如果删除的是缩放意图，我们通常也要处理它后面的恢复意图(如果是自动生成的)
     // 逻辑：删除当前 i 和 i+1 (如果 i+1 是 1.0)
     const current = intents[selectedZoomIndex];
@@ -423,9 +423,9 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
+
     const hit = hitTestZoomBar(x, y);
-    
+
     if (hit) {
       e.preventDefault();
       const intents = [...(renderGraph.camera.intents || [])];
@@ -442,7 +442,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
           intents.splice(hit.index, 0, splitPoint);
           finalIndex = hit.index + 1;
         }
-      } 
+      }
       // 场景 2: 缩放右边缘
       else if (hit.edge === 'right') {
         finalMode = 'resize-right';
@@ -460,7 +460,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
       setDragZoomIndex(finalIndex);
       setDragStartX(x);
       setDragMode(finalMode);
-      
+
       // 同步到状态中，防止渲染滞后
       onUpdateIntents(intents);
     } else {
@@ -509,15 +509,15 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     } else if (dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0) {
       const deltaX = x - dragStartX;
       const deltaTime = Math.round((deltaX / pps) * 1000); // 转换为毫秒
-      
+
       // 性能优化：拖动过程中不进行 snap 对齐，减少计算开销
       const newIntents = [...dragStartIntents];
       const current = dragStartIntents[dragZoomIndex];
       const prev = dragStartIntents[dragZoomIndex - 1];
       const next = dragStartIntents[dragZoomIndex + 1];
-      
+
       const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
-      
+
       if (dragMode === 'move-zoom') {
         // 移动整个区间 (需要同时移动开始和结束点)
         // 这里的 logic 是：current 是缩放开始，next 是缩放恢复
@@ -525,22 +525,22 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
           const duration_ms = (next.t - current.t);
           // 拖动中使用原始值，不 snap，提升流畅度
           let newStartT = current.t + deltaTime;
-                  
+
           // 限制范围（拖动中使用宽松的边界检查）
           const minT = prev ? prev.t + MIN_GAP : 0;
           const nextNext = dragStartIntents[dragZoomIndex + 2];
           const rawMaxT = nextNext ? nextNext.t - duration_ms - MIN_GAP : duration * 1000 - duration_ms;
-                  
+
           newStartT = Math.max(minT, Math.min(rawMaxT, newStartT));
-                  
+
           const newEndT = newStartT + duration_ms;
-                  
+
           // 二次检查：确保结束点不会超出边界
           const absoluteMaxEndT = nextNext ? nextNext.t - MIN_GAP : duration * 1000;
           if (newEndT > absoluteMaxEndT) {
             newStartT = absoluteMaxEndT - duration_ms;
           }
-                  
+
           newIntents[dragZoomIndex] = { ...current, t: newStartT };
           newIntents[dragZoomIndex + 1] = { ...next, t: newStartT + duration_ms };
         }
@@ -560,7 +560,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
           newIntents[dragZoomIndex + 1] = { ...next, t: Math.max(minT, Math.min(maxT, newT)) };
         }
       }
-      
+
       // 关键修复：即便在拖动中，也要保持 intents 的排序和基本合法性
       // 否则物理引擎在乱序的关键帧下会产生剧烈的画面跳变（闪烁）
       const sortedIntents = newIntents.sort((a, b) => a.t - b.t);
@@ -574,11 +574,11 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
   const handleMouseUp = useCallback(() => {
     const wasDraggingZoom = dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0;
-    
+
     isDragging.current = false;
     setDragMode('none');
     setDragZoomIndex(-1);
-    
+
     // 如果刚才在拖动 zoom 块，需要进行 snap 对齐和推挤处理
     if (wasDraggingZoom) {
       const intents = renderGraph.camera.intents || [];
@@ -586,11 +586,11 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         ...intent,
         t: snapMs(intent.t)
       }));
-      
+
       // 应用推挤逻辑，确保最小间距
       const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
       const durMs = Math.round(duration * 1000);
-      
+
       for (let i = 1; i < snappedIntents.length; i++) {
         const prev = snappedIntents[i - 1];
         const cur = snappedIntents[i];
@@ -598,7 +598,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
           snappedIntents[i] = { ...cur, t: snapMs(Math.min(durMs, prev.t + MIN_GAP)) };
         }
       }
-      
+
       // 最终标准化
       const normalized = normalizeIntents(snappedIntents);
       onUpdateIntents(normalized);
@@ -631,7 +631,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    
+
     const container = containerRef.current;
     if (container) {
       container.addEventListener('wheel', handleWheel, { passive: false });
@@ -647,7 +647,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   }, [handleMouseMove, handleMouseUp, handleWheel]);
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className={`relative w-full h-full cursor-crosshair select-none overflow-hidden ${className}`}
       onMouseDown={handleMouseDown}

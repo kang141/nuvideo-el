@@ -1,20 +1,17 @@
 import {
   RenderGraph,
   CameraIntent,
+  CameraState,
   MouseEvent as NuMouseEvent,
 } from "../types";
 
-interface CameraState {
-  cx: number;
-  cy: number;
-  scale: number;
-  vx: number;
-  vy: number;
-  vs: number;
+// 扩展CameraState接口以包含鼠标相关属性
+export interface ExtendedCameraState extends CameraState {
   mx: number;
   my: number;
   mvx: number;
   mvy: number;
+  vs: number;
 }
 
 const defaultIntent: CameraIntent = {
@@ -30,13 +27,13 @@ const DEADZONE_W = 0.15; // 横向死区（占画面宽度的 15%）
 const DEADZONE_H = 0.12; // 纵向死区（占画面高度的 12%）
 
 // 自动对焦时的缩放力度
-const AUTO_ZOOM_SCALE = 2.0; // 与 auto-zoom.ts 保持一致
+const AUTO_ZOOM_SCALE = 1.5; // 与 auto-zoom.ts 保持一致
 
 // ============ 增量缓存系统 ============
 // 用于导出时避免 O(n²) 重复计算
 interface CameraSolverCache {
   lastT: number;
-  state: CameraState;
+  state: ExtendedCameraState;
   mouseIdx: number;
 }
 
@@ -57,6 +54,7 @@ export function enableIncrementalMode(): void {
   incrementalCache = {
     lastT: 0,
     state: {
+      t: 0,
       cx: 0.5, cy: 0.5, scale: 1.0,
       vx: 0, vy: 0, vs: 0,
       mx: 0.5, my: 0.5, mvx: 0, mvy: 0,
@@ -151,7 +149,7 @@ function findMousePos(
   };
 }
 
-export function computeCameraState(graph: RenderGraph, t: number) {
+export function computeCameraState(graph: RenderGraph, t: number): ExtendedCameraState {
   const intents = graph.camera.intents || [];
   const mouseEvents = graph.mouse || [];
 
@@ -192,7 +190,7 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   })();
 
   // ============ 增量模式：从缓存继续积分 ============
-  let state: CameraState;
+  let state: ExtendedCameraState;
   let currentT: number;
 
   if (incrementalCache && t >= incrementalCache.lastT) {
@@ -210,6 +208,7 @@ export function computeCameraState(graph: RenderGraph, t: number) {
     // 非增量模式或时间回退：从头开始
     const firstMouse = mouseEvents[0];
     state = {
+      t: 0,
       cx: 0.5,
       cy: 0.5,
       scale: 1.0,
@@ -326,15 +325,15 @@ export function computeCameraState(graph: RenderGraph, t: number) {
 
     const fX =
       -posStiffness * (state.cx - targetCx) -
-      posDamping * state.vx;
-    state.vx += fX * factor;
-    state.cx += state.vx * factor;
+      posDamping * (state.vx || 0);
+    state.vx = (state.vx || 0) + fX * factor;
+    state.cx += (state.vx || 0) * factor;
 
     const fY =
       -posStiffness * (state.cy - targetCy) -
-      posDamping * state.vy;
-    state.vy += fY * factor;
-    state.cy += state.vy * factor;
+      posDamping * (state.vy || 0);
+    state.vy = (state.vy || 0) + fY * factor;
+    state.cy += (state.vy || 0) * factor;
 
     currentT = nextT;
   }
@@ -347,12 +346,17 @@ export function computeCameraState(graph: RenderGraph, t: number) {
   }
 
   return {
+    t: t,
     cx: state.cx,
     cy: state.cy,
     scale: state.scale,
+    vx: state.vx || 0,
+    vy: state.vy || 0,
+    vScale: state.vs || 0,
     mx: state.mx,
     my: state.my,
     mvx: state.mvx,
     mvy: state.mvy,
+    vs: state.vs,
   };
 }

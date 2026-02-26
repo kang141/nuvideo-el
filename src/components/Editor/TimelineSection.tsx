@@ -25,12 +25,12 @@ export function TimelineSection({
 }: TimelineSectionProps) {
   const t = translations[language];
   return (
-    <section className="h-[200px] min-h-[200px] w-full flex-shrink-0 bg-[#060606] border-t border-white/[0.04] flex z-50 overflow-hidden">
+    <section className="h-[200px] min-h-[200px] w-full flex-shrink-0 bg-[var(--app-bg)] border-t border-white/[0.04] flex z-50 overflow-hidden">
       {/* 左侧功能侧边栏 */}
-      <div className="w-[64px] border-r border-white/[0.02] flex flex-col items-center bg-[#080808]/50 relative">
+      <div className="w-[64px] border-r border-white/[0.02] flex flex-col items-center bg-black/20 backdrop-blur-xl relative">
         {/* 顶部占位，对齐 Ruler 区域 */}
         <div className="h-[45px]" />
-        
+
         {/* 对齐第一条轨道 (Zoom) */}
         <div className="h-[40px] flex items-center justify-center">
           <button title={t.editor.zoomTool} className="h-8 w-8 flex items-center justify-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition-all border border-white/[0.03]">
@@ -55,10 +55,10 @@ export function TimelineSection({
           </button>
         </div>
       </div>
-      
+
       {/* 时间轴内容 */}
       <div className="flex-1 relative">
-        <CanvasTimelineMemo 
+        <CanvasTimelineMemo
           duration={duration}
           currentTime={currentTime}
           videoRef={videoRef}

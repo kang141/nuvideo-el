@@ -9,3 +9,6 @@ export type { CameraAlgorithm, CameraIntent, CameraState, CameraConfig, SpringCo
 export type { AudioSource, AudioTrack, AudioConfig } from './audio';
 export type { AspectRatio, GIFProfile, RenderConfig, RenderGraph } from './render-graph';
 export type { AppState, RecordingState } from './app';
+
+// Electron IPC类型
+export type { IpcChannels, IpcHandlerReturns } from './electron';

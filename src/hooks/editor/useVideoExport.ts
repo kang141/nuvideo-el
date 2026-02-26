@@ -4,6 +4,7 @@ import { QualityConfig, DEFAULT_QUALITY } from '../../constants/quality';
 import { RenderGraph } from '../../types/render-graph';
 import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
 import { applyRenderConfig, EXPORT_CONFIG, PREVIEW_CONFIG } from '../../core/render-config';
+import { logger } from '../../utils/logger';
 
 interface UseVideoExportOptions {
   videoRef: RefObject<HTMLVideoElement>;
@@ -50,7 +51,7 @@ export function useVideoExport({
     // 重置播放速率
     if (videoRef.current) videoRef.current.playbackRate = 1.0;
     // 重置任务栏进度
-    (window as any).ipcRenderer.send('set-progress-bar', -1);
+    window.ipcRenderer.send('set-progress-bar', -1);
   };
 
   const handleExport = async (quality?: QualityConfig, targetPath?: string | null): Promise<{ success: boolean; filePath?: string }> => {
@@ -58,7 +59,7 @@ export function useVideoExport({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) {
-      console.error('[useVideoExport] Required DOM elements missing:', { video: !!video, canvas: !!canvas });
+      logger.error('Required DOM elements missing:', { video: !!video, canvas: !!canvas });
       return { success: false };
     }
     
@@ -126,10 +127,10 @@ export function useVideoExport({
           const tracks = renderGraph.audio.tracks;
           // 只处理启用的音频轨道
           const enabledTracks = tracks.filter(t => t.enabled !== false);
-          console.log('[useVideoExport] Audio mixing start. Track count:', tracks.length, 'Enabled:', enabledTracks.length, 'Duration:', durationSeconds);
+          logger.debug('Audio mixing start. Track count:', tracks.length, 'Enabled:', enabledTracks.length, 'Duration:', durationSeconds);
 
           if (enabledTracks.length === 0) {
-            console.warn('[useVideoExport] No enabled audio tracks.');
+            logger.warn('No enabled audio tracks.');
           }
 
           // 🎯 并行化音频轨道获取与解码
@@ -162,7 +163,7 @@ export function useVideoExport({
               }
               hasAnyAudio = true;
             } catch (trackErr) {
-              console.error(`[useVideoExport] Error mixing track:`, trackErr);
+              logger.error(`Error mixing track:`, trackErr);
             }
           }));
           
@@ -376,7 +377,7 @@ export function useVideoExport({
               const displayProgress = isGif ? progressRatio * 0.9 : progressRatio;
               const finalProgress = Math.min(0.95, displayProgress);
               setExportProgress(finalProgress);
-              (window as any).ipcRenderer.send('set-progress-bar', finalProgress);
+              window.ipcRenderer.send('set-progress-bar', finalProgress);
               lastProgressAt = performance.now();
             }
             vfcId = vVideo.requestVideoFrameCallback(onFrame);
@@ -524,13 +525,13 @@ export function useVideoExport({
       }
 
       setExportProgress(1);
-      (window as any).ipcRenderer.send('set-progress-bar', 1);
-      (window as any).ipcRenderer.send('show-notification', {
+      window.ipcRenderer.send('set-progress-bar', 1);
+      window.ipcRenderer.send('show-notification', {
         title: '导出成功',
         body: `视频已保存至: ${finalPath}`,
         silent: false
       });
-      setTimeout(() => (window as any).ipcRenderer.send('set-progress-bar', -1), 3000);
+      setTimeout(() => window.ipcRenderer.send('set-progress-bar', -1), 3000);
 
       console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
       

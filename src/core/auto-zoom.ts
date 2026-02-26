@@ -23,7 +23,7 @@ export interface AutoZoomConfig {
 }
 
 const DEFAULT_CONFIG: AutoZoomConfig = {
-  zoomScale: 2.0,
+  zoomScale: 1.5,
   dwellThreshold: 450,
   speedThreshold: 0.25,
   zoomDuration: 1200,

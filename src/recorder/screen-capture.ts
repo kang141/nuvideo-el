@@ -25,10 +25,10 @@ export class ScreenRecorder {
 
     try {
       // 1. 开启内容保护
-      await (window as any).ipcRenderer.send('window-control', 'set-content-protection', true);
+      await window.ipcRenderer.send('window-control', 'set-content-protection', true);
 
       // 2. 调用主进程启动 FFmpeg，获取所选屏幕的几何信息
-      const result = await (window as any).ipcRenderer.invoke('start-sidecar-record', sourceId, audioConfig);
+      const result = await window.ipcRenderer.invoke('start-sidecar-record', sourceId, audioConfig);
 
       if (!result.success) {
         throw new Error(result.error || 'Failed to start FFmpeg Sidecar');
@@ -60,10 +60,11 @@ export class ScreenRecorder {
     try {
       console.log('[ScreenRecorder] Requesting Sidecar stop...');
       
-      // 1. 关闭内容保护
-      await (window as any).ipcRenderer.send('window-control', 'set-content-protection', false);
+ // 1. 关闭内容保护
+      await window.ipcRenderer.send('window-control', 'set-content-protection', false);
 
-      const result = await (window as any).ipcRenderer.invoke('stop-sidecar-record');
+      // 2. 调用主进程停止 FFmpeg
+      const result = await window.ipcRenderer.invoke('stop-sidecar-record');
       
       this._isRecording = false;
       this._isStopping = false;

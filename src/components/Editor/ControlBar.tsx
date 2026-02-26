@@ -24,7 +24,6 @@ export function ControlBar({
 }: ControlBarProps) {
   const timeDisplayRef = useRef<HTMLSpanElement>(null);
 
-  // 独立的 UI 更新循环：绕过 React Render
   useEffect(() => {
     let raf: number;
     const update = () => {
@@ -40,56 +39,54 @@ export function ControlBar({
       raf = requestAnimationFrame(update);
     } else {
       if (timeDisplayRef.current) {
-         timeDisplayRef.current.innerText = formatTime(currentTime);
+        timeDisplayRef.current.innerText = formatTime(currentTime);
       }
     }
     return () => cancelAnimationFrame(raf);
   }, [isPlaying, currentTime, videoRef]);
 
   return (
-    <div className="h-16 flex-shrink-0 flex items-center justify-between px-8 border-t border-white/[0.03] bg-[#090909]">
-      {/* 左侧：时间显示 */}
-      <div className="flex items-center gap-4 min-w-[140px]">
-        <span className="font-mono text-[12px] font-medium tracking-tight text-white/40 tabular-nums">
-          <span ref={timeDisplayRef} className="text-white/80">{formatTime(currentTime)}</span>
-          <span className="text-white/10 mx-1.5">/</span>
-          {formatTime(maxDuration)}
+    <div className="h-16 flex-shrink-0 flex items-center justify-between px-8 border-t border-white/[0.04] bg-[var(--panel-bg)] shadow-[0_-4px_24px_rgba(0,0,0,0.5)] z-50">
+      {/* 左侧：时间显示 (高对比度) */}
+      <div className="flex items-center min-w-[180px]">
+        <span className="font-mono text-[13px] font-bold tracking-tight text-white/30 tabular-nums bg-white/[0.03] px-3 py-1.5 rounded-lg border border-white/[0.05]">
+          <span ref={timeDisplayRef} className="text-white/90">{formatTime(currentTime)}</span>
+          <span className="text-white/10 mx-2.5">/</span>
+          <span className="text-white/40">{formatTime(maxDuration)}</span>
         </span>
       </div>
 
-      {/* 中间：播放核心 (更有手感) */}
+      {/* 中间：播放核心 (Apple 风格实体感) */}
       <div className="flex items-center">
-        <button 
-          onClick={onTogglePlay} 
+        <button
+          onClick={onTogglePlay}
           className={cn(
-            "h-10 w-10 flex items-center justify-center rounded-xl transition-all duration-300 active:scale-[0.85] group relative",
-            isPlaying 
-              ? "bg-white/[0.05] text-white hover:bg-white/10 border border-white/[0.08]" 
-              : "bg-white text-black hover:bg-neutral-200 shadow-[0_4px_20px_rgba(255,255,255,0.1)]"
+            "h-12 w-12 flex items-center justify-center rounded-2xl transition-all duration-300 active:scale-90 group relative shadow-2xl",
+            isPlaying
+              ? "bg-white/[0.08] text-white hover:bg-white/[0.12] border border-white/[0.1]"
+              : "bg-white text-black hover:bg-[#F0F0F0] shadow-[0_10px_40px_rgba(255,255,255,0.2)]"
           )}
         >
-          {isPlaying 
-            ? <Pause size={18} fill="currentColor" /> 
-            : <Play size={18} fill="currentColor" className="translate-x-0.5" />
+          {isPlaying
+            ? <Pause size={20} fill="currentColor" />
+            : <Play size={20} fill="currentColor" className="translate-x-0.5" />
           }
-           {/* 微小的光晕效果，仅在非播放时显示以增强引导 */}
-           {!isPlaying && <div className="absolute inset-0 rounded-xl bg-white/20 animate-ping [animation-duration:3s]" />}
         </button>
       </div>
 
-      {/* 右侧：功能控制 */}
-      <div className="flex items-center gap-4 min-w-[140px] justify-end">
-        <button 
+      {/* 右侧：全屏预览 */}
+      <div className="flex items-center min-w-[180px] justify-end">
+        <button
           onClick={onToggleFullscreen}
           className={cn(
-            "h-8 w-8 flex items-center justify-center rounded-lg transition-all duration-300",
-            isFullscreen 
-              ? "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 shadow-lg shadow-emerald-500/5" 
-              : "text-white/20 hover:text-white/60 hover:bg-white/[0.05]"
+            "h-10 w-10 flex items-center justify-center rounded-xl transition-all duration-300",
+            isFullscreen
+              ? "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 shadow-lg shadow-emerald-500/5"
+              : "text-white/30 hover:text-white hover:bg-white/[0.1] border border-white/[0.05]"
           )}
           title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Preview"}
         >
-          <Maximize2 size={16} />
+          <Maximize2 size={18} strokeWidth={2.5} />
         </button>
       </div>
     </div>

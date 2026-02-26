@@ -66,10 +66,10 @@ function App() {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    const ipc = (window as any).ipcRenderer;
+    const ipc = window.ipcRenderer;
     if (!ipc) return;
 
-    const handleStatus = (_: any, status: boolean) => {
+    const handleStatus = (_: Electron.IpcRendererEvent, status: boolean) => {
       setIsMaximized(status);
     };
 
@@ -142,9 +142,9 @@ function App() {
     webcamRecorder.onError = handleRecordingError;
 
     // 监听主进程级（FFMPEG）录制引擎的错误通知
-    const ipc = (window as any).ipcRenderer;
+    const ipc = window.ipcRenderer;
     if (ipc) {
-      const handler = (_: any, err: string) => {
+      const handler = (_: Electron.IpcRendererEvent, err: string) => {
         handleRecordingError(err);
       };
       ipc.on("recording-error", handler);
@@ -286,9 +286,17 @@ function App() {
       }
 
       const { sessionId } = sessionResult;
-      const audioTracks: any[] = [];
+      const audioTracks: Array<{
+        source: 'microphone' | 'system';
+        startTime: number;
+        path: string;
+        volume: number;
+        fadeIn: number;
+        fadeOut: number;
+        enabled: boolean;
+      }> = [];
       if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
-        const saveResult = await (window as any).ipcRenderer.invoke(
+        const saveResult = await window.ipcRenderer.invoke(
           "save-session-audio-segments",
           {
             sessionId,
@@ -325,7 +333,7 @@ function App() {
 
       let finalWebcamPath = undefined;
       if (webcamBuffer && webcamBuffer.byteLength > 0) {
-        const saveResult = await (window as any).ipcRenderer.invoke(
+        const saveResult = await window.ipcRenderer.invoke(
           "save-session-webcam",
           {
             sessionId,
@@ -416,7 +424,7 @@ function App() {
 
   // --- 关键生命周期：窗口尺寸与模式同步 ---
   useEffect(() => {
-    const ipc = (window as any).ipcRenderer;
+    const ipc = window.ipcRenderer;
     if (!ipc) return;
 
     const timeout = setTimeout(() => {
@@ -446,7 +454,7 @@ function App() {
 
   // --- 快捷键逻辑 ---
   useEffect(() => {
-    const ipc = (window as any).ipcRenderer;
+    const ipc = window.ipcRenderer;
     if (!ipc) return;
 
     const onToggle = () => {

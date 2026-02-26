@@ -30,7 +30,7 @@ export function useVideoPlayback(
     const video = videoRef.current;
     const audio = audioRef.current;
     if (!video || !renderGraph) return;
-    
+
     // 视频源
     if (renderGraph.videoSource) {
       video.src = renderGraph.videoSource;
@@ -62,7 +62,7 @@ export function useVideoPlayback(
         }
         video.pause();
         video.currentTime = 0;
-        
+
         if (audio && renderGraph.audioSource) {
           audio.currentTime = 0;
           audio.volume = 1.0;
@@ -101,13 +101,13 @@ export function useVideoPlayback(
     // 兼容旧版
     const allTracks = [...tracks];
     if (renderGraph?.audioSource) {
-       allTracks.push({ source: 'legacy', path: renderGraph.audioSource, startTime: 0, volume: 1.0 });
+      allTracks.push({ source: 'legacy', path: renderGraph.audioSource, startTime: 0, volume: 1.0 });
     }
 
     // 清理旧元素
     audioTracksRef.current.forEach(el => {
       el.pause();
-      el.src = ''; 
+      el.src = '';
       el.remove();
     });
     audioTracksRef.current = [];
@@ -116,14 +116,14 @@ export function useVideoPlayback(
     allTracks.forEach(track => {
       // 跳过未启用的轨道（enabled 为 false 时）
       if (track.enabled === false) return;
-      
+
       if (track.path) {
         const el = document.createElement('audio');
         el.src = track.path;
         el.volume = track.volume ?? 1.0;
         el.style.display = 'none';
         el.preload = 'auto';
-        document.body.appendChild(el); 
+        document.body.appendChild(el);
         audioTracksRef.current.push(el);
       }
     });
@@ -138,7 +138,7 @@ export function useVideoPlayback(
       audioTracksRef.current = [];
     };
   }, [
-    renderGraph?.audio?.tracks?.length, 
+    renderGraph?.audio?.tracks?.length,
     renderGraph?.audio?.tracks?.map(t => t.path).join(','),
     renderGraph?.audio?.tracks?.map(t => t.enabled).join(','),
     renderGraph?.audioSource
@@ -164,7 +164,7 @@ export function useVideoPlayback(
 
           // --- 1. 实时音量计算 (含淡入淡出) ---
           const baseVol = tracks[idx]?.volume ?? 1.0;
-          
+
           // 真正的剩余时间：取 [视频剩余] 和 [音频剩余] 的较小值
           // 这样即使音频比视频短，也能在音频结束前优雅淡出
           const timeToVideoEnd = maxDuration - now;
@@ -173,50 +173,50 @@ export function useVideoPlayback(
           const timeToEnd = Math.min(timeToVideoEnd, timeToAudioEnd);
 
           let fadeMultiplier = 1.0;
-          
+
           // 每个轨道可以有自己的 startTime，这里简化假设都从 0 开始，叠加全局 delay
           const targetAudioTime = now - delayGlobal;
 
           // A. 开头淡入 (0.1s): 消除启动爆音
           if (targetAudioTime < 0.1 && targetAudioTime >= 0) {
-             fadeMultiplier = targetAudioTime / 0.1;
+            fadeMultiplier = targetAudioTime / 0.1;
           }
-          
+
           // B. 末尾淡出 (0.5s): 缩短淡出时间，保留更多尾音
           if (timeToEnd < 0.5 && timeToEnd >= 0) {
             // 如果只有最后 0.05s，直接强制静音
             if (timeToEnd < 0.05) {
-               fadeMultiplier = 0;
+              fadeMultiplier = 0;
             } else {
-               fadeMultiplier = Math.min(fadeMultiplier, timeToEnd / 0.5);
+              fadeMultiplier = Math.min(fadeMultiplier, timeToEnd / 0.5);
             }
           }
-          
+
           // 平滑应用音量 (性能优化：仅在有显著变化时才触碰 DOM 属性)
           const newVol = Math.max(0, Math.min(1, baseVol * fadeMultiplier));
           if (Math.abs(audio.volume - newVol) > 0.001) {
             audio.volume = newVol;
           }
-          
+
           // --- 2. 时间与同步逻辑 ---
 
           if (targetAudioTime < 0) {
             if (!audio.paused) audio.pause();
             if (audio.currentTime !== 0) audio.currentTime = 0;
           } else {
-             // 状态同步：如果视频在播且时间已到，音频也得播
-             if (isPlaying && audio.paused) {
-                audio.play().catch(e => {
-                  if (e.name !== 'AbortError') console.warn('Audio play failed:', e);
-                });
-             }
+            // 状态同步：如果视频在播且时间已到，音频也得播
+            if (isPlaying && audio.paused) {
+              audio.play().catch(e => {
+                if (e.name !== 'AbortError') console.warn('Audio play failed:', e);
+              });
+            }
 
-             // 时间同步策略优化
-             // 仅当各端时间偏差显著 (>0.25s) 时才进行硬校准
-             const diff = targetAudioTime - audio.currentTime;
-             if (!audio.seeking && Math.abs(diff) > 0.25) {
-               audio.currentTime = targetAudioTime;
-             }
+            // 时间同步策略优化
+            // 仅当各端时间偏差显著 (>0.25s) 时才进行硬校准
+            const diff = targetAudioTime - audio.currentTime;
+            if (!audio.seeking && Math.abs(diff) > 0.25) {
+              audio.currentTime = targetAudioTime;
+            }
           }
         });
 
@@ -224,8 +224,8 @@ export function useVideoPlayback(
         // 但 Canvas 的实时绘制（依赖 internalTimeRef）仍保持 60fps
         const performanceNow = performance.now();
         if (performanceNow - lastStateUpdateTime > 100 || now >= maxDuration) {
-           lastStateUpdateTime = performanceNow;
-           setCurrentTime(now);
+          lastStateUpdateTime = performanceNow;
+          setCurrentTime(now);
         }
 
         if (now >= maxDuration) {
@@ -262,24 +262,34 @@ export function useVideoPlayback(
   const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
-    
+
     try {
       if (video.paused) {
         if (video.currentTime >= maxDuration - 0.1) {
           video.currentTime = 0;
           // 重置所有音频轨道
           audioTracksRef.current.forEach(audio => {
-             const delaySec = (renderGraph?.audioDelay || 0) / 1000;
-             audio.currentTime = Math.max(0, 0 - delaySec);
+            const delaySec = (renderGraph?.audioDelay || 0) / 1000;
+            audio.currentTime = Math.max(0, 0 - delaySec);
           });
           setCurrentTime(0);
         }
-        await video.play();
-        // 音频播放由 useEffect[isPlaying] 驱动，这里只需改变状态
+
+        // 核心：直接在用户手势回调中触发所有音频播放，防止被浏览器拦截
+        const audioPromises = audioTracksRef.current.map(audio => {
+          if (audio.paused && audio.src) {
+            return audio.play().catch(e => {
+              if (e.name !== 'AbortError') console.warn('[Playback] Audio play blocked:', e);
+            });
+          }
+          return Promise.resolve();
+        });
+
+        await Promise.all([video.play(), ...audioPromises]);
         setIsPlaying(true);
       } else {
         video.pause();
-        // 音频暂停同理
+        audioTracksRef.current.forEach(audio => audio.pause());
         setIsPlaying(false);
       }
     } catch (err: any) {
@@ -298,23 +308,23 @@ export function useVideoPlayback(
     if (!video) return;
 
     const time = Math.min(Math.max(0, s), maxDuration);
-    
+
     setCurrentTime(time);
     internalTimeRef.current = time;
 
     if (!isSeekingRef.current) {
       isSeekingRef.current = true;
       if (seekRafRef.current) cancelAnimationFrame(seekRafRef.current);
-      
+
       seekRafRef.current = requestAnimationFrame(() => {
         video.currentTime = time;
         // 同步所有音频轨道 Seek
         const delaySec = (renderGraph?.audioDelay || 0) / 1000;
         const audioTime = Math.max(0, time - delaySec);
         audioTracksRef.current.forEach(audio => {
-           audio.currentTime = audioTime;
+          audio.currentTime = audioTime;
         });
-        
+
         isSeekingRef.current = false;
       });
     }

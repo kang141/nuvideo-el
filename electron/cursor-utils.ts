@@ -18,22 +18,6 @@ const IDC_HELP = 32651;
 // Load user32.dll
 const user32 = koffi.load('user32.dll');
 
-// Define POINT structure
-const POINT = koffi.struct('POINT', {
-    x: 'long',
-    y: 'long'
-});
-
-// Define CURSORINFO structure
-// 在 x64 架构下，intptr 是 8 字节，long 是 4 字节
-// cbSize(4) + flags(4) + hCursor(8) + ptScreenPos(8) = 24 字节
-const CURSORINFO = koffi.struct('CURSORINFO', {
-    cbSize: 'uint32',
-    flags: 'uint32',
-    hCursor: 'intptr',
-    ptScreenPos: POINT
-});
-
 // Define functions
 // 使用 void* 指针接收 Buffer
 const GetCursorInfo = user32.func('int __stdcall GetCursorInfo(void *pci)');

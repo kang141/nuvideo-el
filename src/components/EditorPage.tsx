@@ -51,7 +51,7 @@ export function EditorPage({
     file: "sonoma-light.jpg",
   });
   const [activeTab, setActiveTab] = useState("appearance");
-  const [hideIdle, setHideIdle] = useState(false);
+
   const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   // 生成默认文件名 (根据模式自适应后缀，包含秒以防止重复)
@@ -94,7 +94,7 @@ export function EditorPage({
   const handlePickAddress = useCallback(async () => {
     try {
       const cachedDir = localStorage.getItem(LAST_DIR_KEY);
-      const result = await (window as any).ipcRenderer.invoke(
+      const result = await window.ipcRenderer.invoke(
         "show-save-dialog",
         {
           defaultPath: cachedDir || undefined,
@@ -125,16 +125,32 @@ export function EditorPage({
     }
   }, [filename]);
 
-  // 2. 引用
+  // 1. 引用
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // 3. 处理全屏逻辑
-  const toggleFullscreen = () => {
-    const next = !isFullscreenPreview;
-    setIsFullscreenPreview(next);
-  };
+  // 2. 状态逻辑 Hooks
+  const {
+    isPlaying,
+    setIsPlaying,
+    currentTime,
+    maxDuration,
+    togglePlay,
+    handleSeek,
+  } = useVideoPlayback(videoRef, audioRef, graph);
+
+  // 自动聚焦以确保键盘事件能被捕获
+  useEffect(() => {
+    const focusTimer = setTimeout(() => {
+      if (containerRef.current) {
+        containerRef.current.focus();
+        console.log("[EditorPage] Auto-focused container");
+      }
+    }, 100);
+    return () => clearTimeout(focusTimer);
+  }, []);
 
   // 首次加载时自动生成缩放关键帧
   const hasAutoZoomedRef = useRef(false);
@@ -174,34 +190,50 @@ export function EditorPage({
     }
   }, [graph?.videoSource, autoZoomEnabled]); // 使用 videoSource 作为 key 确保换素材时重新触发一次
 
-  // 4. 业务逻辑 Hooks
-  const {
-    isPlaying,
-    setIsPlaying,
-    currentTime,
-    maxDuration,
-    togglePlay,
-    handleSeek,
-  } = useVideoPlayback(videoRef, audioRef, graph);
+  // 3. 处理全屏逻辑
+  const toggleFullscreen = () => {
+    const next = !isFullscreenPreview;
+    setIsFullscreenPreview(next);
+  };
+
+  // 4. 键盘监听优化：使用 Ref 避免频繁重绑定导致的失效
+  const handlersRef = useRef({ togglePlay, isFullscreenPreview, setIsFullscreenPreview, graph, maxDuration, videoRef });
+  useEffect(() => {
+    handlersRef.current = { togglePlay, isFullscreenPreview, setIsFullscreenPreview, graph, maxDuration, videoRef };
+  }, [togglePlay, isFullscreenPreview, setIsFullscreenPreview, graph, maxDuration, videoRef]);
 
   // 监听键盘快捷键 (ESC 退出全屏, Space 播放/暂停, Z 添加缩放)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreenPreview) {
-        setIsFullscreenPreview(false);
+      const {
+        isFullscreenPreview: isFS,
+        setIsFullscreenPreview: setFS,
+        togglePlay: play,
+        graph: g,
+        maxDuration: dur,
+        videoRef: vRef
+      } = handlersRef.current;
+
+      if (e.key === "Escape" && isFS) {
+        setFS(false);
+      }
+
+      // 仅当没在输入框中时响应
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
+        return;
       }
 
       // 空格键控制播放/暂停
       if (e.code === "Space") {
         e.preventDefault(); // 防止页面滚动
-        togglePlay();
+        play();
       }
 
       // Z 键添加缩放关键帧
       if (e.key === "z" || e.key === "Z") {
         e.preventDefault();
-        const currentTimeMs = (videoRef.current?.currentTime || 0) * 1000;
-        const currentIntents = graph?.camera.intents || [];
+        const currentTimeMs = (vRef.current?.currentTime || 0) * 1000;
+        const currentIntents = g?.camera.intents || [];
 
         // 查找当前生效的 scale
         let activeScale = 1.0;
@@ -211,7 +243,7 @@ export function EditorPage({
           }
         }
 
-        if (graph) {
+        if (g) {
           let newIntents = [...currentIntents];
 
           if (activeScale >= 1.5) {
@@ -222,10 +254,9 @@ export function EditorPage({
               targetCy: 0.5,
               targetScale: 1.0,
             });
-            console.log(`[Hotkey Z] End zoom at ${currentTimeMs}ms`);
           } else {
             // --- 核心：找到当前时间点的鼠标位置 ---
-            const mouseEvents = graph.mouse || [];
+            const mouseEvents = g.mouse || [];
             let targetCx = 0.5;
             let targetCy = 0.5;
 
@@ -238,9 +269,6 @@ export function EditorPage({
             if (activeMouseEvent) {
               targetCx = activeMouseEvent.x;
               targetCy = activeMouseEvent.y;
-              console.log(
-                `[Hotkey Z] Found mouse at (${targetCx}, ${targetCy})`,
-              );
             }
 
             // 如果是原始大小，按 Z 表示“在这里开始缩放 1 秒”
@@ -248,13 +276,13 @@ export function EditorPage({
               t: currentTimeMs,
               targetCx,
               targetCy,
-              targetScale: 2.0,
+              targetScale: 1.5,
             });
 
             // 自动在 1 秒后（或视频结束前）添加恢复
             const endT = Math.min(
               currentTimeMs + 1000,
-              maxDuration * 1000 - 100,
+              dur * 1000 - 100,
             );
             newIntents.push({
               t: endT,
@@ -262,9 +290,6 @@ export function EditorPage({
               targetCy: 0.5,
               targetScale: 1.0,
             });
-            console.log(
-              `[Hotkey Z] Add 1s zoom block at ${currentTimeMs}ms targeting mouse`,
-            );
           }
 
           // 过滤掉同一时间点的重复项，并排序
@@ -276,9 +301,9 @@ export function EditorPage({
             );
 
           setGraph({
-            ...graph,
+            ...g,
             camera: {
-              ...graph.camera,
+              ...g.camera,
               intents: finalIntents,
             },
           });
@@ -287,7 +312,7 @@ export function EditorPage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFullscreenPreview, togglePlay, graph, maxDuration]);
+  }, []); // 仅绑定一次，逻辑通过 Ref 读取
 
   const { isReady, renderFrame } = useVideoRenderer({
     videoRef,
@@ -476,7 +501,7 @@ export function EditorPage({
       if (existingIndex > -1) {
         // 这里的力度加大：如果原本是 1.0x 的，点击后强制变成 2.5x 缩放
         const targetScale = Math.max(
-          2.5,
+          2.0,
           newIntents[existingIndex].targetScale,
         );
         newIntents[existingIndex] = {
@@ -490,7 +515,7 @@ export function EditorPage({
           t: currentTimeMs,
           targetCx: cx,
           targetCy: cy,
-          targetScale: 2.5,
+          targetScale: 2.0,
         });
       }
 
@@ -521,17 +546,7 @@ export function EditorPage({
     [graph],
   );
 
-  // 更新鼠标物理配置
-  const handleUpdateMousePhysics = useCallback(
-    (updates: Partial<RenderGraph["mousePhysics"]>) => {
-      if (!graph) return;
-      setGraph({
-        ...graph,
-        mousePhysics: { ...graph.mousePhysics, ...updates },
-      });
-    },
-    [graph],
-  );
+
 
   const handleUpdateWebcam = useCallback(
     (
@@ -544,7 +559,11 @@ export function EditorPage({
       if (!graph) return;
       setGraph({
         ...graph,
-        webcam: { ...graph.webcam, ...updates } as any,
+        webcam: {
+          isEnabled: graph.webcam?.isEnabled ?? false,
+          ...graph.webcam,
+          ...updates
+        },
       });
     },
     [graph],
@@ -552,7 +571,7 @@ export function EditorPage({
 
   const handleOpenFile = useCallback(() => {
     if (lastExportPath) {
-      (window as any).ipcRenderer.invoke("show-item-in-folder", lastExportPath);
+      window.ipcRenderer.invoke("show-item-in-folder", lastExportPath);
     }
   }, [lastExportPath]);
 
@@ -564,14 +583,17 @@ export function EditorPage({
 
   return (
     <div
+      ref={containerRef}
+      tabIndex={0}
+      onClick={() => containerRef.current?.focus()}
       className={cn(
-        "relative flex h-full min-h-0 flex-col bg-[#0e0e0e] text-neutral-200 overflow-hidden font-sans",
+        "relative flex h-full min-h-0 flex-col bg-[var(--app-bg)] text-neutral-200 overflow-hidden font-sans outline-none",
       )}
     >
       {/* 加载指示器 */}
       {!isReady && (
         <div
-          className="absolute inset-0 z-[200] flex items-center justify-center bg-[#0e0e0e]/80 backdrop-blur-sm"
+          className="absolute inset-0 z-[200] flex items-center justify-center bg-[var(--app-bg)]/80 backdrop-blur-sm"
         >
           <div className="flex flex-col items-center gap-4">
             <div
@@ -658,13 +680,9 @@ export function EditorPage({
               setBgCategory={setBrowsingCategory}
               bgFile={activeWallpaper.file}
               setBgFile={handleSetBgFile}
-              hideIdle={hideIdle}
-              setHideIdle={setHideIdle}
               onResetZoom={handleResetZoom}
               mouseTheme={graph.mouseTheme}
               onUpdateMouseTheme={handleUpdateMouseTheme}
-              mousePhysics={graph.mousePhysics}
-              onUpdateMousePhysics={handleUpdateMousePhysics}
               language={language}
               audioTracks={graph.audio}
               onToggleSystemAudio={handleToggleSystemAudio}
@@ -672,7 +690,7 @@ export function EditorPage({
               onSetSystemVolume={handleSetSystemVolume}
               onSetMicrophoneVolume={handleSetMicrophoneVolume}
               webcamEnabled={graph.webcam?.isEnabled}
-              webcamShape={graph.webcam?.shape}
+
               webcamSize={graph.webcam?.size}
               onToggleWebcam={(enabled) =>
                 handleUpdateWebcam({ isEnabled: enabled })

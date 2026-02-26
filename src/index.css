@@ -4,6 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
+
   html,
   body,
   #root {
@@ -82,15 +83,35 @@
 
   --color-primary: #ffffff;
   --color-accent-emerald: #10b981;
-  --color-accent-blue: #3b82f6;
-  --color-surface-950: #030303;
-  --color-surface-900: #080808;
-  --color-surface-850: #0c0c0c;
-  --color-surface-800: #111111;
-  --color-surface-750: #151515;
-  --color-surface-700: #1a1a1a;
-  --color-surface-650: #1f1f1f;
-  --color-surface-600: #262626;
+  --color-accent-blue: #0071e3;
+
+  /* Apple Pro Dark Mode Palette */
+  --color-surface-950: #0a0a0c;
+  /* Main canvas bg */
+  --color-surface-900: #121214;
+  /* Panels bg */
+  --color-surface-850: #1c1c1e;
+  /* Sidebar bg / Card bg */
+  --color-surface-800: #2c2c2e;
+  /* Active state / Hover */
+  --color-surface-750: #3a3a3c;
+  /* Borders / Dividers */
+  --color-surface-700: #48484a;
+  --color-surface-650: #636366;
+  /* Secondary text/icons */
+  --color-surface-600: #8e8e93;
+  /* Muted text */
+
+  /* Semantic UI Tokens */
+  --app-bg: var(--color-surface-950);
+  --panel-bg: var(--color-surface-900);
+  --sidebar-bg: var(--color-surface-850);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(255, 255, 255, 0.15);
+
+  /* Feature Colors */
+  --color-zoom-bar: #eb6a4c;
+  --color-main-track: #0071e3;
 
   /* Premium Motion Tokens */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -119,16 +140,12 @@
     background-color: #050505;
     background-image:
       radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.06) 0px, transparent 50%),
-      radial-gradient(
-        at 100% 0%,
+      radial-gradient(at 100% 0%,
         rgba(139, 92, 246, 0.05) 0px,
-        transparent 50%
-      ),
-      radial-gradient(
-        at 50% 100%,
+        transparent 50%),
+      radial-gradient(at 50% 100%,
         rgba(16, 185, 129, 0.04) 0px,
-        transparent 50%
-      );
+        transparent 50%);
     background-attachment: fixed;
   }
 
@@ -150,6 +167,7 @@
       transform: scale(0.8);
       opacity: 0.8;
     }
+
     100% {
       transform: scale(2.4);
       opacity: 0;
@@ -173,12 +191,10 @@
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.08),
-      rgba(255, 255, 255, 0.02) 50%,
-      rgba(255, 255, 255, 0.04)
-    );
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.08),
+        rgba(255, 255, 255, 0.02) 50%,
+        rgba(255, 255, 255, 0.04));
     mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -202,12 +218,10 @@
     left: -50%;
     width: 200%;
     height: 200%;
-    background: linear-gradient(
-      45deg,
-      transparent 45%,
-      rgba(255, 255, 255, 0.08) 50%,
-      transparent 55%
-    );
+    background: linear-gradient(45deg,
+        transparent 45%,
+        rgba(255, 255, 255, 0.08) 50%,
+        transparent 55%);
     transform: rotate(45deg);
     animation: button-shimmer 3s infinite;
   }
@@ -216,6 +230,7 @@
     0% {
       transform: translateX(-100%) rotate(45deg);
     }
+
     100% {
       transform: translateX(100%) rotate(45deg);
     }
@@ -286,11 +301,9 @@
     inset: -1px;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.1),
-      transparent 50%
-    );
+    background: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.1),
+        transparent 50%);
     -webkit-mask:
       linear-gradient(#fff 0 0) content-box,
       linear-gradient(#fff 0 0);
@@ -303,11 +316,9 @@
   }
 
   .premium-card {
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.03) 0%,
-      rgba(255, 255, 255, 0.01) 100%
-    );
+    background: linear-gradient(180deg,
+        rgba(255, 255, 255, 0.03) 0%,
+        rgba(255, 255, 255, 0.01) 100%);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: var(--radius-lg);
     box-shadow:
@@ -317,11 +328,9 @@
   }
 
   .premium-card:hover {
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.05) 0%,
-      rgba(255, 255, 255, 0.02) 100%
-    );
+    background: linear-gradient(180deg,
+        rgba(255, 255, 255, 0.05) 0%,
+        rgba(255, 255, 255, 0.02) 100%);
     border-color: rgba(255, 255, 255, 0.12);
     transform: translateY(-1px);
     box-shadow:
