@@ -50,10 +50,18 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   const [hoverX, setHoverX] = useState<number | null>(null);
 
 
+  // 确保所有 intents 都有 ID
+  const intentsWithIds = useMemo(() => {
+    return (renderGraph.camera.intents || []).map(i => ({
+      ...i,
+      id: i.id || Math.random().toString(36).slice(2)
+    }));
+  }, [renderGraph.camera.intents]);
+
   // 拖拽编辑状态
   const [dragMode, setDragMode] = useState<DragMode>('none');
-  const [dragZoomIndex, setDragZoomIndex] = useState<number>(-1);
-  const [selectedZoomIndex, setSelectedZoomIndex] = useState<number>(-1); // 新增：选中状态
+  const [dragIntentId, setDragIntentId] = useState<string | null>(null);
+  const [selectedIntentId, setSelectedIntentId] = useState<string | null>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [dragStartIntents, setDragStartIntents] = useState<CameraIntent[]>([]);
 
@@ -157,7 +165,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     ctx.rect(PADDING_LEFT, 0, width - PADDING_LEFT * 2, height);
     ctx.clip();
 
-    const intents = renderGraph.camera.intents || [];
+    const intents = intentsWithIds;
     intents.forEach((current, i) => {
       const next = intents[i + 1];
       if (current.targetScale > 1.0) {
@@ -166,7 +174,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         const rw = Math.max(4, endX - startX);
         const ry = zoomTrackY + ZOOM_BAR_PADDING;
         const rh = TRACK_HEIGHT - ZOOM_BAR_PADDING * 2;
-        const isSelected = i === selectedZoomIndex;
+        const isSelected = current.id === selectedIntentId;
 
         ctx.save();
         const grad = ctx.createLinearGradient(startX, ry, startX, ry + rh);
@@ -245,7 +253,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     ctx.restore();
 
     ctx.restore();
-  }, [width, height, duration, pps, scrollLeft, renderGraph, selectedZoomIndex, language]);
+  }, [width, height, duration, pps, scrollLeft, renderGraph, selectedIntentId, language]);
 
   // 4. 驱动播放头的高频同步循环
   useEffect(() => {
@@ -342,7 +350,7 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   // 这里的关键：所有可能影响静态层的状态变化都要触发重绘
   useEffect(() => {
     drawStatic();
-  }, [drawStatic, duration, renderGraph, renderGraph.clips, selectedZoomIndex, language]);
+  }, [drawStatic, duration, intentsWithIds, selectedIntentId, language]);
 
   // ... (保留之前的辅助函数) ...
   const isDragging = useRef(false);
@@ -368,8 +376,8 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
   }, [renderGraph.config?.fps, duration]);
 
   // 辅助函数：检测点击位置是否在某个缩放条上
-  const hitTestZoomBar = useCallback((x: number, y: number): { index: number; edge: 'left' | 'right' | 'center' } | null => {
-    const intents = renderGraph.camera.intents || [];
+  const hitTestZoomBar = useCallback((x: number, y: number): { intent: CameraIntent; edge: 'left' | 'right' | 'center' } | null => {
+    const intents = intentsWithIds;
     const { PADDING_LEFT, TRACK_HEIGHT, TRACKS_START_Y, ZOOM_BAR_PADDING, EDGE_HOTZONE } = TIMELINE_CONSTANTS;
     const zoomTrackY = TRACKS_START_Y;
 
@@ -388,10 +396,10 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
         // 检查 Y 范围
         if (y >= ry && y <= ry + rh) {
           // 检查左右边缘
-          if (Math.abs(x - startX) < EDGE_HOTZONE) return { index: i, edge: 'left' };
-          if (Math.abs(x - endX) < EDGE_HOTZONE) return { index: i, edge: 'right' };
+          if (Math.abs(x - startX) < EDGE_HOTZONE) return { intent: current, edge: 'left' };
+          if (Math.abs(x - endX) < EDGE_HOTZONE) return { intent: current, edge: 'right' };
           // 检查中间区域
-          if (x >= startX && x <= endX) return { index: i, edge: 'center' };
+          if (x >= startX && x <= endX) return { intent: current, edge: 'center' };
         }
       }
     }
@@ -400,23 +408,23 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
   // 删除选中的 intent
   const deleteSelectedIntent = useCallback(() => {
-    if (selectedZoomIndex < 0) return;
-    const intents = [...renderGraph.camera.intents];
+    if (!selectedIntentId) return;
+    const intents = [...intentsWithIds];
+    const idx = intents.findIndex(i => i.id === selectedIntentId);
+    if (idx === -1) return;
 
-    // 如果删除的是缩放意图，我们通常也要处理它后面的恢复意图(如果是自动生成的)
-    // 逻辑：删除当前 i 和 i+1 (如果 i+1 是 1.0)
-    const current = intents[selectedZoomIndex];
+    const current = intents[idx];
     if (current && current.targetScale > 1.0) {
-      const next = intents[selectedZoomIndex + 1];
+      const next = intents[idx + 1];
       if (next && next.targetScale === 1.0) {
-        intents.splice(selectedZoomIndex, 2);
+        intents.splice(idx, 2);
       } else {
-        intents.splice(selectedZoomIndex, 1);
+        intents.splice(idx, 1);
       }
       onUpdateIntents(intents);
-      setSelectedZoomIndex(-1);
+      setSelectedIntentId(null);
     }
-  }, [selectedZoomIndex, renderGraph.camera.intents, onUpdateIntents]);
+  }, [selectedIntentId, intentsWithIds, onUpdateIntents]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!containerRef.current) return;
@@ -428,49 +436,43 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
 
     if (hit) {
       e.preventDefault();
-      const intents = [...(renderGraph.camera.intents || [])];
-      let finalIndex = hit.index;
+      const intents = [...intentsWithIds];
+      const targetId = hit.intent.id!;
       let finalMode: DragMode = 'none';
 
-      // --- 核心修复：解耦逻辑 ---
-      // 场景 1: 拖动整个块 或 缩放左边缘
+      // 获取当前正在操作的 intent 索引 (可能会因为 split 变化)
+      let idx = intents.findIndex(i => i.id === targetId);
+
       if (hit.edge === 'center' || hit.edge === 'left') {
         finalMode = hit.edge === 'center' ? 'move-zoom' : 'resize-left';
-        // 如果该块起始点前面紧挨着另一个缩放块，插入一个 1.0 进行切分
-        if (hit.index > 0 && intents[hit.index - 1].targetScale > 1.0) {
-          const splitPoint = { ...intents[hit.index], targetScale: 1.0 };
-          intents.splice(hit.index, 0, splitPoint);
-          finalIndex = hit.index + 1;
+        if (idx > 0 && intents[idx - 1].targetScale > 1.0) {
+          const splitPoint = { ...intents[idx], id: Math.random().toString(36).slice(2), targetScale: 1.0 };
+          intents.splice(idx, 0, splitPoint);
+          idx++; // 保持索引同步
         }
-      }
-      // 场景 2: 缩放右边缘
-      else if (hit.edge === 'right') {
+      } else if (hit.edge === 'right') {
         finalMode = 'resize-right';
-        const nextIdx = hit.index + 1;
-        // 如果该块的结束点同时也是下一个缩放块的起始点 (即 next 还是大于 1.0)
+        const nextIdx = idx + 1;
         if (intents[nextIdx] && intents[nextIdx].targetScale > 1.0) {
-          const splitPoint = { ...intents[nextIdx], targetScale: 1.0 };
+          const splitPoint = { ...intents[nextIdx], id: Math.random().toString(36).slice(2), targetScale: 1.0 };
           intents.splice(nextIdx, 0, splitPoint);
-          // 这种情况下 finalIndex 不变，因为我们操作的是原来的 next，它现在还在那个位置，只是后面多了一个点
         }
       }
 
-      setSelectedZoomIndex(finalIndex);
+      setSelectedIntentId(targetId);
       setDragStartIntents(intents);
-      setDragZoomIndex(finalIndex);
+      setDragIntentId(targetId);
       setDragStartX(x);
       setDragMode(finalMode);
-
-      // 同步到状态中，防止渲染滞后
       onUpdateIntents(intents);
     } else {
-      setSelectedZoomIndex(-1); // 取消选中
+      setSelectedIntentId(null);
       isDragging.current = true;
       setDragMode('seek');
       const time = (x - TIMELINE_CONSTANTS.PADDING_LEFT + scrollLeft) / pps;
       onSeek(Math.max(0, Math.min(duration, time)));
     }
-  }, [hitTestZoomBar, renderGraph.camera.intents, scrollLeft, pps, duration, onSeek, onUpdateIntents]);
+  }, [hitTestZoomBar, intentsWithIds, scrollLeft, pps, duration, onSeek, onUpdateIntents]);
 
 
   useEffect(() => {
@@ -506,109 +508,80 @@ export const CanvasTimeline: React.FC<CanvasTimelineProps> = ({
     if (dragMode === 'seek' && isDragging.current) {
       const time = (x - TIMELINE_CONSTANTS.PADDING_LEFT + scrollLeft) / pps;
       onSeek(Math.max(0, Math.min(duration, time)));
-    } else if (dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0) {
+    } else if (dragMode !== 'none' && dragMode !== 'seek' && dragIntentId) {
       const deltaX = x - dragStartX;
       const deltaTime = Math.round((deltaX / pps) * 1000); // 转换为毫秒
 
-      // 性能优化：拖动过程中不进行 snap 对齐，减少计算开销
       const newIntents = [...dragStartIntents];
-      const current = dragStartIntents[dragZoomIndex];
-      const prev = dragStartIntents[dragZoomIndex - 1];
-      const next = dragStartIntents[dragZoomIndex + 1];
+      const idx = newIntents.findIndex(i => i.id === dragIntentId);
+      if (idx === -1) return;
 
+      const current = newIntents[idx];
+      const prev = newIntents[idx - 1];
+      const next = newIntents[idx + 1];
       const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
+      const totalDurMs = Math.round(duration * 1000);
 
       if (dragMode === 'move-zoom') {
-        // 移动整个区间 (需要同时移动开始和结束点)
-        // 这里的 logic 是：current 是缩放开始，next 是缩放恢复
         if (next && next.targetScale === 1.0) {
-          const duration_ms = (next.t - current.t);
-          // 拖动中使用原始值，不 snap，提升流畅度
+          const blockDuration = next.t - current.t;
           let newStartT = current.t + deltaTime;
 
-          // 限制范围（拖动中使用宽松的边界检查）
           const minT = prev ? prev.t + MIN_GAP : 0;
-          const nextNext = dragStartIntents[dragZoomIndex + 2];
-          const rawMaxT = nextNext ? nextNext.t - duration_ms - MIN_GAP : duration * 1000 - duration_ms;
+          const nextNext = newIntents[idx + 2];
+          const maxT = nextNext ? nextNext.t - blockDuration - MIN_GAP : totalDurMs - blockDuration;
 
-          newStartT = Math.max(minT, Math.min(rawMaxT, newStartT));
-
-          const newEndT = newStartT + duration_ms;
-
-          // 二次检查：确保结束点不会超出边界
-          const absoluteMaxEndT = nextNext ? nextNext.t - MIN_GAP : duration * 1000;
-          if (newEndT > absoluteMaxEndT) {
-            newStartT = absoluteMaxEndT - duration_ms;
-          }
-
-          newIntents[dragZoomIndex] = { ...current, t: newStartT };
-          newIntents[dragZoomIndex + 1] = { ...next, t: newStartT + duration_ms };
+          newStartT = Math.max(minT, Math.min(maxT, newStartT));
+          newIntents[idx] = { ...current, t: newStartT };
+          newIntents[idx + 1] = { ...next, t: newStartT + blockDuration };
         }
       } else if (dragMode === 'resize-left') {
-        // 调整左边缘（拖动中不 snap）
         let newT = current.t + deltaTime;
         const minT = prev ? prev.t + MIN_GAP : 0;
-        const maxT = next ? next.t - MIN_GAP : duration * 1000 - MIN_GAP;
-        newIntents[dragZoomIndex] = { ...current, t: Math.max(minT, Math.min(maxT, newT)) };
+        const maxT = next ? next.t - MIN_GAP : totalDurMs - MIN_GAP;
+        newIntents[idx] = { ...current, t: Math.max(minT, Math.min(maxT, newT)) };
       } else if (dragMode === 'resize-right') {
-        // 调整右边缘 (即修改 next 的时间，拖动中不 snap)
         if (next) {
           let newT = next.t + deltaTime;
           const minT = current.t + MIN_GAP;
-          const nextNext = dragStartIntents[dragZoomIndex + 2];
-          const maxT = nextNext ? nextNext.t - MIN_GAP : duration * 1000;
-          newIntents[dragZoomIndex + 1] = { ...next, t: Math.max(minT, Math.min(maxT, newT)) };
+          const nextNext = newIntents[idx + 2];
+          const maxT = nextNext ? nextNext.t - MIN_GAP : totalDurMs;
+          newIntents[idx + 1] = { ...next, t: Math.max(minT, Math.min(maxT, newT)) };
         }
       }
 
-      // 关键修复：即便在拖动中，也要保持 intents 的排序和基本合法性
-      // 否则物理引擎在乱序的关键帧下会产生剧烈的画面跳变（闪烁）
-      const sortedIntents = newIntents.sort((a, b) => a.t - b.t);
-      onUpdateIntents(sortedIntents);
+      // 注意：拖拽时不实时排序，保持 dragStartIntents 的 ID 对应关系
+      // 排序只在 mouseUp 时最终确定，或者在拖拽时保证不改变拓扑结构
+      onUpdateIntents([...newIntents]);
     }
-  }, [dragMode, dragZoomIndex, dragStartX, dragStartIntents, pps, scrollLeft, duration, onSeek, onUpdateIntents, hitTestZoomBar]);
+  }, [dragMode, dragIntentId, dragStartX, dragStartIntents, pps, scrollLeft, duration, onSeek, onUpdateIntents, hitTestZoomBar]);
 
   const handleMouseLeave = () => {
     setHoverX(null);
   };
 
   const handleMouseUp = useCallback(() => {
-    const wasDraggingZoom = dragMode !== 'none' && dragMode !== 'seek' && dragZoomIndex >= 0;
+    const wasDraggingZoom = dragMode !== 'none' && dragMode !== 'seek' && dragIntentId;
 
     isDragging.current = false;
     setDragMode('none');
-    setDragZoomIndex(-1);
+    setDragIntentId(null);
 
-    // 如果刚才在拖动 zoom 块，需要进行 snap 对齐和推挤处理
     if (wasDraggingZoom) {
-      const intents = renderGraph.camera.intents || [];
+      // 最终确认：执行 Snap 对齐和标准化
+      const intents = intentsWithIds;
       const snappedIntents = intents.map(intent => ({
         ...intent,
         t: snapMs(intent.t)
-      }));
+      })).sort((a, b) => a.t - b.t);
 
-      // 应用推挤逻辑，确保最小间距
-      const MIN_GAP = TIMELINE_CONSTANTS.MIN_INTENT_GAP;
-      const durMs = Math.round(duration * 1000);
-
-      for (let i = 1; i < snappedIntents.length; i++) {
-        const prev = snappedIntents[i - 1];
-        const cur = snappedIntents[i];
-        if (cur.t <= prev.t + MIN_GAP) {
-          snappedIntents[i] = { ...cur, t: snapMs(Math.min(durMs, prev.t + MIN_GAP)) };
-        }
-      }
-
-      // 最终标准化
       const normalized = normalizeIntents(snappedIntents);
       onUpdateIntents(normalized);
     } else {
-      // 普通情况，只做标准化
-      const intents = renderGraph.camera.intents || [];
-      const normalized = normalizeIntents(intents);
+      const normalized = normalizeIntents(intentsWithIds);
       onUpdateIntents(normalized);
     }
-  }, [dragMode, dragZoomIndex, renderGraph.camera.intents, normalizeIntents, onUpdateIntents, snapMs, duration]);
+  }, [dragMode, dragIntentId, intentsWithIds, normalizeIntents, onUpdateIntents, snapMs, duration]);
 
   const handleWheel = useCallback((e: WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {

@@ -512,6 +512,7 @@ export function EditorPage({
         };
       } else {
         newIntents.push({
+          id: Math.random().toString(36).slice(2),
           t: currentTimeMs,
           targetCx: cx,
           targetCy: cy,

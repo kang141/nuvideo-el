@@ -21,10 +21,9 @@ const defaultIntent: CameraIntent = {
   targetScale: 1.0,
 };
 
-// Deadzone：放大时鼠标可以在这个区域内自由移动而不触发镜头跟随
-// 数值越大，放大后画面越稳定（鼠标需要移动到更靠近边缘才会拖动镜头）
-const DEADZONE_W = 0.15; // 横向死区（占画面宽度的 15%）
-const DEADZONE_H = 0.12; // 纵向死区（占画面高度的 12%）
+// 极致响应：缩小死区，让鼠标微动更灵敏地驱动镜头
+const DEADZONE_W = 0.08;
+const DEADZONE_H = 0.06;
 
 // 自动对焦时的缩放力度
 const AUTO_ZOOM_SCALE = 1.5; // 与 auto-zoom.ts 保持一致
@@ -161,10 +160,8 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
   const camConfig = (() => {
     const cfg = graph.camera?.springConfig;
 
-    // Screen Studio 核心调校：临界阻尼 (Critically Damped)
-    // 刚度 320 提供足够的加速度 (快)，阻尼 36 确保准确停车 (无回弹/震荡)
-    // 2 * sqrt(320) ≈ 35.77，取 36 略微过阻尼，实现"如丝般顺滑且精准"的停顿
-    const fallback = { stiffness: 320, damping: 36 };
+    // 极致凌厉调校：Stiffness 1800 配合 85 阻尼，提供瞬间位移感
+    const fallback = { stiffness: 1800, damping: 85 };
 
     const stiffness = typeof cfg?.stiffness === 'number' ? cfg.stiffness : fallback.stiffness;
     const damping = typeof cfg?.damping === 'number' ? cfg.damping : fallback.damping;
@@ -235,7 +232,33 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
     const active = findActiveIntent(intents, currentT);
     const rawMouse = findMousePos(mouseEvents, currentT);
 
-    // 1. 鼠标物理计算
+    // 1. 镜头意图与桥接优化 (Bridging)
+    // 场景：当两个缩放块挨得很近时，中间会产生一个瞬间回到 1.0x 的“空隙”。
+    // 这会导致镜头目标在 (x, y, 1.0) 和 (next_x, next_y, 2.0) 之间剧烈抖动。
+    // 方案：如果当前是 1.0x（准备回归），但 80ms 内有下一个放大意愿，则进行“桥接插值”。
+    const BRIDGE_MS = 80;
+    const nextIdx = intents.findIndex(i => i.t > currentT);
+    const next = intents[nextIdx];
+
+    let targetScale = active.targetScale;
+    let targetCx = active.targetCx;
+    let targetCy = active.targetCy;
+
+    if (active.targetScale <= 1.01 && next && next.targetScale > 1.01) {
+      const waitTime = next.t - currentT;
+      if (waitTime < BRIDGE_MS) {
+        // 处于桥接区：计算桥接比例 (0.0 -> 1.0)
+        const t_ratio = 1.0 - (waitTime / BRIDGE_MS);
+        // 使用简单的 ease-in-out 让桥接更自然
+        const ease_ratio = t_ratio * t_ratio * (3 - 2 * t_ratio);
+
+        targetScale = 1.0 + (next.targetScale - 1.0) * ease_ratio;
+        targetCx = active.targetCx + (next.targetCx - active.targetCx) * ease_ratio;
+        targetCy = active.targetCy + (next.targetCy - active.targetCy) * ease_ratio;
+      }
+    }
+
+    // 2. 鼠标物理计算
     if (rawMouse) {
       if (isInstantMouse) {
         state.mx = rawMouse.x;
@@ -243,7 +266,6 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
         state.mvx = 0;
         state.mvy = 0;
       } else {
-        // 彻底移除瞬移判定，始终使用弹簧物理系统进行插值追踪，确保轨迹绝对连续
         const fMx =
           -mouseConfig.stiffness * (state.mx - rawMouse.x) -
           mouseConfig.damping * state.mvx;
@@ -265,15 +287,8 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
       }
     }
 
-    // 2. 镜头跟随
-    // 智能分段逻辑：仅当当前时刻处于“空闲”状态（即没有正在生效的手动缩放意图）时，才应用自动缩放
-    // 判定标准：当前 active intent 是默认值（t=0, scale=1）或者显式的手动恢复（scale=1）
-    // 如果 active 是手动缩放（scale > 1 且 t > 0），则完全尊重手动意图
-    const isManualZooming = active.targetScale > 1.0 && active.t > 0;
-
-    let targetScale = active.targetScale;
-    let targetCx = state.cx;
-    let targetCy = state.cy;
+    // 3. 镜头跟随与自动对焦
+    const isManualZooming = targetScale > 1.01;
 
     // 自动缩放激活条件：全局开关开启 + 当前非手动缩放时段 + 鼠标存在
     if (graph.autoZoom && !isManualZooming && rawMouse) {
@@ -284,11 +299,10 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
       const marginX = 0.5 / targetScale;
       const marginY = 0.5 / targetScale;
 
-
-      const left = state.cx - DEADZONE_W;
-      const right = state.cx + DEADZONE_W;
-      const top = state.cy - DEADZONE_H;
-      const bottom = state.cy + DEADZONE_H;
+      const left = targetCx - DEADZONE_W;
+      const right = targetCx + DEADZONE_W;
+      const top = targetCy - DEADZONE_H;
+      const bottom = targetCy + DEADZONE_H;
 
       if (rawMouse.x < left) targetCx = rawMouse.x + DEADZONE_W;
       else if (rawMouse.x > right) targetCx = rawMouse.x - DEADZONE_W;
@@ -298,7 +312,7 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
 
       targetCx = Math.max(marginX, Math.min(1 - marginX, targetCx));
       targetCy = Math.max(marginY, Math.min(1 - marginY, targetCy));
-    } else {
+    } else if (!isManualZooming) {
       targetCx = 0.5;
       targetCy = 0.5;
     }
@@ -306,11 +320,9 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
     // 3. 镜头物理 (Scale 与 Position 异步，创造高级电影感)
 
     // --- Scale 物理优化 ---
-    // 退出缩放 (targetScale=1) 时稍微增加刚度，让全局视图回归更利索
-    const isZoomingOut = targetScale < state.scale;
-    const currentScaleStiffness = isZoomingOut ? camConfig.stiffness * 1.5 : camConfig.stiffness * 1.2;
-    // 临界阻尼：D = 2 * sqrt(k)，确保绝对无回弹
-    const currentScaleDamping = 2 * Math.sqrt(currentScaleStiffness) * 1.1;
+    // 刚度倍率统一拉升，追求瞬时响应
+    const currentScaleStiffness = camConfig.stiffness * 2.0;
+    const currentScaleDamping = 2 * Math.sqrt(currentScaleStiffness);
 
     const fS =
       -currentScaleStiffness * (state.scale - targetScale) -
@@ -319,9 +331,9 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
     state.scale += state.vs * factor;
 
     // --- Position 物理优化 ---
-    // 降低位置刚度，使其落后于缩放进度，形成“先放大，后对焦”的视觉深度感
-    const posStiffness = camConfig.stiffness * 0.4;
-    const posDamping = 2 * Math.sqrt(posStiffness) * 1.2; // 略微过阻尼，极其平滑
+    // 100% 同步：位移与倍率完全同频，消除任何肉眼可见的先后滞后感
+    const posStiffness = currentScaleStiffness;
+    const posDamping = currentScaleDamping;
 
     const fX =
       -posStiffness * (state.cx - targetCx) -
@@ -334,6 +346,23 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
       posDamping * (state.vy || 0);
     state.vy = (state.vy || 0) + fY * factor;
     state.cy += (state.vy || 0) * factor;
+
+    // --- 核心修复：实时几何软约束 (Dynamic Geometric Clamping) ---
+    // 确保 state.cx/cy 永远在当前 state.scale 下的合法范围内。
+    // 逻辑：可见区域的左边界 cx - 0.5/scale 必须 >= 0，右边界 cx + 0.5/scale 必须 <= 1
+    // 这能彻底杜绝因为物理异步/惯性导致画面露出黑色底板的问题。
+    const safeMarginX = 0.5 / Math.max(1.0, state.scale);
+    const safeMarginY = 0.5 / Math.max(1.0, state.scale);
+
+    const clampedCx = Math.max(safeMarginX, Math.min(1 - safeMarginX, state.cx));
+    const clampedCy = Math.max(safeMarginY, Math.min(1 - safeMarginY, state.cy));
+
+    // 如果发生了截断，说明物理系统试图越界，同步重置速度以防止“弹跳”手感
+    if (clampedCx !== state.cx) state.vx = 0;
+    if (clampedCy !== state.cy) state.vy = 0;
+
+    state.cx = clampedCx;
+    state.cy = clampedCy;
 
     currentT = nextT;
   }

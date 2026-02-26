@@ -26,8 +26,3 @@ export const AVAILABLE_CURSORS = [
   'arrow-1.svg',
   'arrow-7.svg',
 ];
-
-export const AVAILABLE_POINTERS = [
-  'pointer-1.svg',
-  'pointer-2.svg'
-];

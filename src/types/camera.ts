@@ -19,6 +19,8 @@ export interface SpringConfig {
  * 镜头意图（用户想去哪）
  */
 export interface CameraIntent {
+  /** 唯一标识 */
+  id?: string;
   /** 时间戳 */
   t: Timestamp;
   /** 目标中心 X */
