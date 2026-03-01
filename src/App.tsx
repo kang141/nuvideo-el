@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { EditorPage } from "./components/EditorPage";
 import { RecordingStatusBar } from "./components/RecordingStatusBar";
 import { HomePage } from "./components/HomePage";
-import { RecordingState, RenderGraph, MouseEvent } from "./types";
+import { RenderGraph, MouseEvent } from "./types";
 import { useAppStore } from "./store/useAppStore";
 import { mouseTracker, screenRecorder } from "./recorder";
 import { nativeAudioRecorder } from "./recorder/audio-capture";
@@ -13,44 +13,27 @@ import { QualityConfig } from "./constants/quality";
 import { Language } from "./i18n/translations";
 
 function App() {
-  const { appState, setAppState: transitionTo } = useAppStore();
+  // 从 Zustand 获取所有状态
+  const {
+    appState,
+    setAppState: transitionTo,
+    recordingState,
+    setRecordingState,
+    isExporting,
+    setIsExporting,
+    renderGraph,
+    setRenderGraph,
+    isMaximized,
+    setIsMaximized,
+    autoZoomEnabled,
+    setAutoZoomEnabled,
+    recordingMetadata,
+    setRecordingMetadata,
+    resetRecordingMetadata,
+  } = useAppStore();
+
   const homeStartRef = useRef<() => void>();
-
-  const [recordingState, setRecordingState] = useState<RecordingState>(() => ({
-    isRecording: false,
-    duration: 0,
-    isPaused: false,
-    format: "video",
-    autoZoom: localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
-    webcamDeviceId: null,
-  }));
-  const recordingStateRef = useRef<RecordingState>(recordingState);
-  useEffect(() => {
-    recordingStateRef.current = recordingState;
-  }, [recordingState]);
-
-  const [isExporting, setIsExporting] = useState(false);
-  const isExportingRef = useRef(isExporting);
-  useEffect(() => {
-    isExportingRef.current = isExporting;
-  }, [isExporting]);
-
-  const [renderGraph, setRenderGraph] = useState<RenderGraph | null>(null);
   const lastVideoUrlRef = useRef<string | null>(null);
-  const audioDelayRef = useRef<number>(0);
-  const webcamDelayRef = useRef<number>(0);
-  const readyOffsetRef = useRef<number>(0);
-  const recordingBoundsRef = useRef<{ width: number; height: number } | null>(null);
-  const recordingScaleFactorRef = useRef<number>(1);
-
-  const [autoZoomEnabled, setAutoZoomEnabled] = useState(
-    () => localStorage.getItem("nuvideo_auto_zoom_enabled") !== "false",
-  );
-
-  const handleUpdateAutoZoom = (val: boolean) => {
-    setAutoZoomEnabled(val);
-    localStorage.setItem("nuvideo_auto_zoom_enabled", val.toString());
-  };
 
   const [language, setLanguage] = useState<Language>(
     () => (localStorage.getItem("nuvideo_language") as Language) || "zh",
@@ -60,10 +43,6 @@ function App() {
     setLanguage(lang);
     localStorage.setItem("nuvideo_language", lang);
   };
-
-
-
-  const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
     const ipc = window.ipcRenderer;
@@ -77,7 +56,7 @@ function App() {
     return () => {
       ipc.off('window-is-maximized', handleStatus);
     };
-  }, []);
+  }, [setIsMaximized]);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -86,11 +65,11 @@ function App() {
 
   const handlePauseRecording = useCallback(() => {
     setRecordingState((prev) => ({ ...prev, isPaused: true }));
-  }, []);
+  }, [setRecordingState]);
 
   const handleResumeRecording = useCallback(() => {
     setRecordingState((prev) => ({ ...prev, isPaused: false }));
-  }, []);
+  }, [setRecordingState]);
 
   useEffect(() => {
     if (!recordingState.isRecording || recordingState.isPaused) {
@@ -121,11 +100,11 @@ function App() {
     }, 100);
 
     return () => clearInterval(interval);
-  }, [recordingState.isRecording, recordingState.isPaused]);
+  }, [recordingState.isRecording, recordingState.isPaused, setRecordingState]);
 
   const handleRecordingError = useCallback((msg: string) => {
     // 防止重复弹窗
-    if (recordingStateRef.current.isPaused) return;
+    if (recordingState.isPaused) return;
 
     console.error("[App] Recording error detected:", msg);
 
@@ -134,7 +113,7 @@ function App() {
 
     // 2. 自动切换到暂停状态，避免计时器继续走
     handlePauseRecording();
-  }, [handlePauseRecording]);
+  }, [recordingState.isPaused, handlePauseRecording]);
 
   useEffect(() => {
     // 绑定渲染进程级（AUDIO/WEBCAM）捕获器的错误回调
@@ -182,12 +161,16 @@ function App() {
       ]);
 
       if (startResult?.t0) {
-        readyOffsetRef.current = startResult.readyOffset;
-        recordingBoundsRef.current = startResult.bounds;
-        recordingScaleFactorRef.current = startResult.scaleFactor || 1;
+        // 保存录制元数据到 store
+        setRecordingMetadata({
+          readyOffset: startResult.readyOffset,
+          bounds: startResult.bounds,
+          scaleFactor: startResult.scaleFactor || 1,
+          audioDelay: (audioT0 || performance.now()) - startResult.t0 + 150,
+          webcamDelay: webcamT0 > 0 ? webcamT0 - startResult.t0 : 0,
+        });
+        
         mouseTracker.align(startResult.t0);
-        audioDelayRef.current = (audioT0 || performance.now()) - startResult.t0 + 150;
-        webcamDelayRef.current = webcamT0 > 0 ? webcamT0 - startResult.t0 : 0;
       }
 
       setRecordingState({
@@ -198,16 +181,16 @@ function App() {
         format,
         autoZoom,
         webcamDeviceId: webcamConfig.enabled ? webcamConfig.deviceId : null,
-        quality, // 存储质量配置
+        quality,
       });
 
       transitionTo("recording");
     } catch (err) {
-      console.error("Failed to start recording:", err);
+      console.error("录制启动失败:", err);
       setRecordingState((prev) => ({ ...prev, isRecording: false }));
       alert("录制启动失败");
     }
-  }, [transitionTo]);
+  }, [transitionTo, setRecordingState, setRecordingMetadata]);
 
   const fetchSessionEvents = async (
     sessionId: string,
@@ -237,7 +220,7 @@ function App() {
         const rawT = typeof raw.t === "number" ? raw.t : raw.ts;
         if (typeof rawT !== "number") continue;
 
-        const t = rawT - readyOffsetRef.current;
+        const t = rawT - recordingMetadata.readyOffset;
         if (t < 0) continue;
 
         if (
@@ -259,14 +242,13 @@ function App() {
 
       return result.sort((a, b) => a.t - b.t);
     } catch (e) {
-      console.error("[App] Failed to fetch session events:", e);
+      console.error("[App] 获取会话事件失败:", e);
       return [];
     }
   };
 
   const handleStopRecording = useCallback(async () => {
-    const currentState = recordingStateRef.current;
-    if (!currentState.isRecording) return;
+    if (!recordingState.isRecording) return;
 
     try {
       setRecordingState((prev) => ({
@@ -282,7 +264,7 @@ function App() {
       const webcamBuffer = await webcamRecorder.stop();
 
       if (!sessionResult) {
-        throw new Error(`Empty recording result.`);
+        throw new Error(`录制结果为空。`);
       }
 
       const { sessionId } = sessionResult;
@@ -295,6 +277,7 @@ function App() {
         fadeOut: number;
         enabled: boolean;
       }> = [];
+      
       if (audioBuffers && (audioBuffers.micBuffer || audioBuffers.sysBuffer)) {
         const saveResult = await window.ipcRenderer.invoke(
           "save-session-audio-segments",
@@ -344,13 +327,14 @@ function App() {
           finalWebcamPath = `nuvideo://session/${sessionId}/webcam.webm`;
         }
       }
+      
       const mouseEvents = await fetchSessionEvents(sessionId);
 
       const tailPaddingMs = 150;
       const lastEventT =
         mouseEvents.length > 0 ? mouseEvents[mouseEvents.length - 1].t : 0;
       const finalDurationMs = Math.max(
-        currentState.duration,
+        recordingState.duration,
         Math.ceil(lastEventT + tailPaddingMs),
       );
 
@@ -361,7 +345,7 @@ function App() {
           tracks: audioTracks,
         },
         webcamSource: finalWebcamPath,
-        webcamDelay: webcamDelayRef.current,
+        webcamDelay: recordingMetadata.webcamDelay,
         mouse: mouseEvents,
         mouseTheme: {
           style: "macOS",
@@ -385,19 +369,19 @@ function App() {
         },
         config: {
           fps: 60,
-          ratio: "16:9", // 先恢复固定比例以修复类型错误，后续可根据 bounds 动态计算
+          ratio: "16:9",
           outputWidth: Math.min(
-            (currentState.quality?.maxWidth || 1920),
-            Math.round((recordingBoundsRef.current?.width || 1920) * recordingScaleFactorRef.current)
+            (recordingState.quality?.maxWidth || 1920),
+            Math.round((recordingMetadata.bounds?.width || 1920) * recordingMetadata.scaleFactor)
           ),
-          targetFormat: currentState.format,
+          targetFormat: recordingState.format,
         },
-        autoZoom: currentState.autoZoom,
+        autoZoom: recordingState.autoZoom,
         webcam: {
           isEnabled: !!finalWebcamPath,
           shape: "rect",
         },
-        audioDelay: audioDelayRef.current,
+        audioDelay: recordingMetadata.audioDelay,
       };
 
       setRecordingState((prev) => ({
@@ -408,9 +392,10 @@ function App() {
         webcamDeviceId: null,
       }));
       setRenderGraph(finalGraph);
+      resetRecordingMetadata();
       transitionTo("editor");
     } catch (err) {
-      console.error("[App] Failed to finalize recording:", err);
+      console.error("[App] 录制结束失败:", err);
       setRecordingState((prev) => ({
         ...prev,
         isRecording: false,
@@ -420,7 +405,7 @@ function App() {
       }));
       transitionTo("home");
     }
-  }, [transitionTo]); // 依赖项现在非常稳定
+  }, [recordingState, recordingMetadata, transitionTo, setRecordingState, setRenderGraph, resetRecordingMetadata]);
 
   // --- 关键生命周期：窗口尺寸与模式同步 ---
   useEffect(() => {
@@ -458,10 +443,9 @@ function App() {
     if (!ipc) return;
 
     const onToggle = () => {
-      if (isExportingRef.current) return;
+      if (isExporting) return;
 
-      const state = recordingStateRef.current;
-      if (state.isRecording) {
+      if (recordingState.isRecording) {
         handleStopRecording();
       } else if (appState === 'home' && homeStartRef.current) {
         homeStartRef.current();
@@ -469,9 +453,8 @@ function App() {
     };
 
     const onPauseResume = () => {
-      const state = recordingStateRef.current;
-      if (state.isRecording) {
-        if (state.isPaused) handleResumeRecording();
+      if (recordingState.isRecording) {
+        if (recordingState.isPaused) handleResumeRecording();
         else handlePauseRecording();
       }
     };
@@ -485,7 +468,7 @@ function App() {
         ipc.removeAllListeners('hotkey-pause-resume');
       }
     };
-  }, [appState, handleStopRecording, handlePauseRecording, handleResumeRecording]);
+  }, [appState, isExporting, recordingState, handleStopRecording, handlePauseRecording, handleResumeRecording]);
 
   const handleBackToHome = () => {
     transitionTo("home");
@@ -548,7 +531,7 @@ function App() {
                 onStartRecording={handleStartRecording}
                 onRegisterStart={(fn) => { homeStartRef.current = fn; }}
                 autoZoomEnabled={autoZoomEnabled}
-                onToggleAutoZoom={handleUpdateAutoZoom}
+                onToggleAutoZoom={setAutoZoomEnabled}
                 language={language}
                 setLanguage={handleUpdateLanguage}
                 isMaximized={isMaximized}
@@ -566,7 +549,7 @@ function App() {
                 language={language}
                 setLanguage={handleUpdateLanguage}
                 autoZoomEnabled={autoZoomEnabled}
-                onToggleAutoZoom={handleUpdateAutoZoom}
+                onToggleAutoZoom={setAutoZoomEnabled}
                 isMaximized={isMaximized}
               />
             </div>
