@@ -4,7 +4,7 @@ const ALLOWED_CHANNELS = {
   // 窗口控制
   send: ["window-control", "set-progress-bar", "show-notification", "set-ignore-mouse-events", "resize-window", "hotkey-toggle-record", "hotkey-pause-resume"],
   // 主进程调用
-  invoke: ["get-sources", "save-temp-video", "show-save-dialog", "sync-clock", "start-sidecar-record", "stop-sidecar-record", "save-exported-video", "open-export-stream", "write-export-chunk", "write-export-chunks-batch", "close-export-stream", "show-item-in-folder", "delete-file", "convert-mp4-to-gif", "save-session-audio-segments", "save-session-webcam"],
+  invoke: ["get-sources", "save-temp-video", "show-save-dialog", "sync-clock", "start-sidecar-record", "stop-sidecar-record", "save-exported-video", "open-export-stream", "write-export-chunk", "write-export-chunks-batch", "close-export-stream", "show-item-in-folder", "delete-file", "convert-mp4-to-gif", "save-session-audio-segments", "save-session-webcam", "start-ffmpeg-export", "write-ffmpeg-frame", "finalize-ffmpeg-export", "cleanup-ffmpeg-export"],
   // 事件监听
   on: ["main-process-message", "mouse-update", "mouse-click", "window-is-maximized", "recording-error", "hotkey-toggle-record", "hotkey-pause-resume"],
   // 事件移除

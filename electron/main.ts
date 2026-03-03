@@ -1071,3 +1071,224 @@ ipcMain.on('window-control', (_event, action: 'minimize' | 'toggle-maximize' | '
       break
   }
 })
+
+// ============ FFmpeg 高质量导出 API ============
+// 使用 libx264 + CRF 模式实现极致质量导出
+
+interface FFmpegExportSession {
+  process: any;
+  targetPath: string;
+  width: number;
+  height: number;
+  fps: number;
+  frameCount: number;
+}
+
+let currentFFmpegExport: FFmpegExportSession | null = null;
+
+// 检测 NVENC 硬件编码器支持
+async function checkNVENCSupport(): Promise<boolean> {
+  const { spawn } = await import('node:child_process');
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-hide_banner', '-encoders']);
+    let output = '';
+    
+    proc.stdout.on('data', (data: Buffer) => {
+      output += data.toString();
+    });
+    
+    proc.on('close', () => {
+      resolve(output.includes('h264_nvenc'));
+    });
+    
+    // 超时保护
+    setTimeout(() => {
+      proc.kill();
+      resolve(false);
+    }, 3000);
+  });
+}
+
+// 启动 FFmpeg 导出进程
+ipcMain.handle('start-ffmpeg-export', async (_event, { targetPath, width, height, fps, crf, duration: _duration, hasAudio: _hasAudio }) => {
+  try {
+    if (currentFFmpegExport) {
+      return { success: false, error: '已有导出任务正在进行' };
+    }
+
+    const { spawn } = await import('node:child_process');
+    
+    // 检测硬件编码器
+    const hasNVENC = await checkNVENCSupport();
+    console.log(`[FFmpeg Export] NVENC 支持: ${hasNVENC}`);
+    
+    // 构建 FFmpeg 参数
+    const args = [
+      '-f', 'rawvideo',
+      '-pix_fmt', 'rgba',
+      '-s', `${width}x${height}`,
+      '-r', fps.toString(),
+      '-i', '-', // 从 stdin 读取
+    ];
+    
+    // 选择编码器和参数
+    if (hasNVENC) {
+      // NVENC 硬件编码
+      args.push(
+        '-c:v', 'h264_nvenc',
+        '-preset', 'p7',        // 最高质量预设
+        '-rc', 'vbr',           // 可变码率
+        '-cq', crf.toString(),  // 质量控制
+        '-b:v', '0',            // 不限制码率
+        '-pix_fmt', 'yuv420p'
+      );
+    } else {
+      // libx264 软件编码
+      args.push(
+        '-c:v', 'libx264',
+        '-crf', crf.toString(), // 质量控制
+        '-preset', 'faster',    // 速度预设
+        '-pix_fmt', 'yuv420p'
+      );
+    }
+    
+    // 通用参数
+    args.push(
+      '-movflags', '+faststart',
+      '-y',
+      targetPath
+    );
+    
+    console.log('[FFmpeg Export] 启动参数:', args.join(' '));
+    
+    const ffmpegProcess = spawn(ffmpegPath, args, {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    currentFFmpegExport = {
+      process: ffmpegProcess,
+      targetPath,
+      width,
+      height,
+      fps,
+      frameCount: 0
+    };
+    
+    // 监听错误输出
+    ffmpegProcess.stderr.on('data', (data: Buffer) => {
+      const log = data.toString();
+      if (log.includes('error') || log.includes('Error')) {
+        console.error('[FFmpeg Export] 错误:', log);
+      }
+    });
+    
+    // 监听进程退出
+    ffmpegProcess.on('exit', (code: number) => {
+      console.log(`[FFmpeg Export] 进程退出，代码: ${code}`);
+      if (code !== 0 && currentFFmpegExport) {
+        console.error('[FFmpeg Export] 非正常退出');
+      }
+    });
+    
+    // 防止 stdin 错误导致崩溃
+    if (ffmpegProcess.stdin) {
+      ffmpegProcess.stdin.on('error', (err: any) => {
+        console.error('[FFmpeg Export] stdin 错误:', err);
+      });
+    }
+    
+    return { success: true };
+    
+  } catch (err) {
+    console.error('[FFmpeg Export] 启动失败:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 写入帧数据
+ipcMain.handle('write-ffmpeg-frame', async (_event, { frameData }) => {
+  try {
+    if (!currentFFmpegExport || !currentFFmpegExport.process.stdin) {
+      return { success: false, error: '导出会话不存在' };
+    }
+    
+    const buffer = Buffer.from(frameData);
+    
+    // 写入到 FFmpeg stdin
+    const canWrite = currentFFmpegExport.process.stdin.write(buffer);
+    
+    if (!canWrite) {
+      // 如果缓冲区满了，等待 drain 事件
+      await new Promise<void>((resolve) => {
+        currentFFmpegExport!.process.stdin.once('drain', () => resolve());
+      });
+    }
+    
+    currentFFmpegExport.frameCount++;
+    
+    return { success: true };
+    
+  } catch (err) {
+    console.error('[FFmpeg Export] 写入帧失败:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 完成导出
+ipcMain.handle('finalize-ffmpeg-export', async () => {
+  try {
+    if (!currentFFmpegExport) {
+      return { success: false, error: '导出会话不存在' };
+    }
+    
+    const session = currentFFmpegExport;
+    console.log(`[FFmpeg Export] 完成导出，共 ${session.frameCount} 帧`);
+    
+    // 关闭 stdin，触发 FFmpeg 完成编码
+    if (session.process.stdin) {
+      session.process.stdin.end();
+    }
+    
+    // 等待进程退出
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        session.process.kill('SIGKILL');
+        reject(new Error('FFmpeg 超时'));
+      }, 30000);
+      
+      session.process.on('close', (code: number) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg 退出代码: ${code}`));
+        }
+      });
+    });
+    
+    currentFFmpegExport = null;
+    
+    return { success: true };
+    
+  } catch (err) {
+    console.error('[FFmpeg Export] 完成失败:', err);
+    currentFFmpegExport = null;
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 清理导出会话
+ipcMain.handle('cleanup-ffmpeg-export', async () => {
+  try {
+    if (currentFFmpegExport) {
+      if (currentFFmpegExport.process) {
+        currentFFmpegExport.process.kill('SIGKILL');
+      }
+      currentFFmpegExport = null;
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[FFmpeg Export] 清理失败:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});

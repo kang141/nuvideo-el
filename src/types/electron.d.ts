@@ -82,6 +82,10 @@ export interface IpcHandlerReturns {
   'show-item-in-folder': { success: boolean; error?: string };
   'delete-file': { success: boolean; error?: string };
   'convert-mp4-to-gif': { success: boolean; error?: string };
+  'start-ffmpeg-export': { success: boolean; error?: string };
+  'write-ffmpeg-frame': { success: boolean; error?: string };
+  'finalize-ffmpeg-export': { success: boolean; error?: string };
+  'cleanup-ffmpeg-export': { success: boolean; error?: string };
 }
 
 export {};
