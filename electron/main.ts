@@ -563,7 +563,7 @@ function buildFFmpegArgs(videoInputParams: string[], outputPath: string, encoder
         '-level', '5.2',      // 提升 Level 支持更高分辨率
         '-pix_fmt', 'yuv420p',
         '-movflags', 'faststart+frag_keyframe+empty_moov',
-        '-g', '120'
+        '-g', '30'            // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
 
@@ -581,7 +581,7 @@ function buildFFmpegArgs(videoInputParams: string[], outputPath: string, encoder
         '-level', '5.2',
         '-pix_fmt', 'yuv420p',
         '-movflags', 'faststart+frag_keyframe+empty_moov',
-        '-g', '120'
+        '-g', '30'            // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
 
@@ -599,7 +599,7 @@ function buildFFmpegArgs(videoInputParams: string[], outputPath: string, encoder
         '-level', '5.1',
         '-pix_fmt', 'nv12', // QSV 通常在 NV12 下工作得最好
         '-movflags', 'faststart+frag_keyframe+empty_moov',
-        '-g', '120'
+        '-g', '30'            // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
 
@@ -616,7 +616,7 @@ function buildFFmpegArgs(videoInputParams: string[], outputPath: string, encoder
         '-pix_fmt', 'yuv420p',
         '-movflags', 'faststart+frag_keyframe+empty_moov',
         '-threads', '0',
-        '-g', '120'
+        '-g', '30'            // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
   }

@@ -424,8 +424,9 @@ export function useVideoExport({
             const encodeStartTime = performance.now();
             const vFrame = new VideoFrame(exportCanvas, { timestamp: accurateTimestamp, alpha: 'discard' });
 
+            // 🎯 优化：每 30 帧一个关键帧（每 0.5 秒），提升播放兼容性和 seek 性能
             if (videoEncoder) {
-              videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+              videoEncoder.encode(vFrame, { keyFrame: encodedCount % 30 === 0 });
             }
             vFrame.close();
             encodedCount++;
@@ -507,7 +508,8 @@ export function useVideoExport({
           const accurateTimestamp = Math.round(t * 1_000_000);
           const vFrame = new VideoFrame(exportCanvas, { timestamp: accurateTimestamp, alpha: 'discard' });
           if (videoEncoder) {
-            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 60 === 0 });
+            // 🎯 优化：每 30 帧一个关键帧（每 0.5 秒），提升播放兼容性和 seek 性能
+            videoEncoder.encode(vFrame, { keyFrame: encodedCount % 30 === 0 });
           }
           vFrame.close();
           encodedCount++;

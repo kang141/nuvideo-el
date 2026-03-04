@@ -360,8 +360,10 @@ export function useVideoRenderer({
     const camera = computeCameraState(renderGraph, timestampMs, activeCache);
     const s = camera.scale;
 
-    // 🎯 性能优化：移除冗余的 clearRect 与黑色填充。
-    // 背景由 offscreenRef 完整覆盖，且 canvas 开启了 alpha: false。
+    // 🎯 关键修复：每帧开始前必须清空 Canvas，防止前一帧内容残留导致闪烁
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 绘制背景
     ctx.drawImage(offscreenRef.current, 0, 0, EDITOR_CANVAS_SIZE.width, EDITOR_CANVAS_SIZE.height);
 
     // --- B. 布局参数 ---
@@ -432,7 +434,10 @@ export function useVideoRenderer({
       ctx.drawImage(mainVideoCacheRef.current, 0, 0, dw, dh);
     }
     drawSmoothMouse(ctx, camera as ExtendedCameraState, dw, dh, renderGraph, timestampMs);
-    ctx.restore(); ctx.restore(); ctx.restore();
+    
+    // 🎯 修复：正确恢复 Canvas 状态（2 个 save 对应 2 个 restore）
+    ctx.restore(); // 恢复视频内容层的变换
+    ctx.restore(); // 恢复剪裁区域
 
     // 细节描边
     ctx.beginPath(); ctx.roundRect(dx, dy, totalW, totalH, r); ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();

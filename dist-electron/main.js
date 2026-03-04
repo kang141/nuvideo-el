@@ -558,7 +558,8 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-movflags",
         "faststart+frag_keyframe+empty_moov",
         "-g",
-        "120"
+        "30"
+        // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
     case "amf":
@@ -590,7 +591,8 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-movflags",
         "faststart+frag_keyframe+empty_moov",
         "-g",
-        "120"
+        "30"
+        // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
     case "qsv":
@@ -622,7 +624,8 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-movflags",
         "faststart+frag_keyframe+empty_moov",
         "-g",
-        "120"
+        "30"
+        // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
     case "software":
@@ -652,7 +655,8 @@ function buildFFmpegArgs(videoInputParams, outputPath, encoderPreference = "nven
         "-threads",
         "0",
         "-g",
-        "120"
+        "30"
+        // 🎯 从 120 降低到 30（每 0.5 秒一个关键帧），提升播放流畅度
       );
       break;
   }

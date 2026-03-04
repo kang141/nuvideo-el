@@ -18,13 +18,13 @@ interface UseFFmpegExportOptions {
   renderFrame: (t: number, cache?: CameraSolverCache) => Promise<void>;
 }
 
-// 将现有的质量配置映射到 CRF 值
+// 将现有的质量配置映射到 CRF 值（越低越清晰，0-51 范围）
 const qualityToCRF = (quality: QualityConfig): number => {
   switch (quality.id) {
-    case 'original': return 18; // 最高质量 → CRF 18（接近无损）
-    case 'fhd': return 23;      // 清晰 → CRF 23（推荐）
-    case 'hd': return 26;       // 流畅 → CRF 26（较小文件）
-    default: return 23;
+    case 'original': return 15; // 最高质量 → CRF 15（从 18 降低到 15，视觉无损）
+    case 'fhd': return 20;      // 清晰 → CRF 20（从 23 降低到 20，高质量）
+    case 'hd': return 23;       // 流畅 → CRF 23（从 26 降低到 23，平衡质量）
+    default: return 20;
   }
 };
 
