@@ -87,9 +87,10 @@ export function useVideoExport({
     const width = Math.floor(baseWidth * scale / 2) * 2;
     const height = Math.floor(baseHeight * scale / 2) * 2;
 
-    // 在 try 之前声明编码器变量，以便在错误处理中可以访问它们
+    // 在 try 之前声明编码器变量和性能监控定时器，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
     let audioEncoder: AudioEncoder | null = null;
+    let perfReportInterval: NodeJS.Timeout | null = null;
 
     try {
       isExportingRef.current = true;
@@ -308,6 +309,29 @@ export function useVideoExport({
 
       console.log('[导出] 正在加载渲染资源...');
 
+      // 🔍 调试：性能监控
+      const perfMonitor = {
+        totalFrames: Math.floor(durationSeconds * fps),
+        renderedFrames: 0,
+        encodedFrames: 0,
+        startTime: performance.now(),
+        lastReportTime: performance.now(),
+        slowRenders: 0,
+        slowEncodes: 0,
+        queuePeakSize: 0,
+        encoderStalls: 0
+      };
+
+      // 定期输出性能报告
+      perfReportInterval = setInterval(() => {
+        const elapsed = (performance.now() - perfMonitor.startTime) / 1000;
+        const avgFps = perfMonitor.renderedFrames / elapsed;
+        const progress = (perfMonitor.encodedFrames / perfMonitor.totalFrames * 100).toFixed(1);
+        const queueSize = videoEncoder?.encodeQueueSize || 0;
+        
+        console.log(`[性能监控] 进度: ${progress}%, 已渲染: ${perfMonitor.renderedFrames}/${perfMonitor.totalFrames}, 平均FPS: ${avgFps.toFixed(1)}, 编码队列: ${queueSize}, 慢渲染: ${perfMonitor.slowRenders}, 编码器停顿: ${perfMonitor.encoderStalls}, 队列峰值: ${perfMonitor.queuePeakSize}`);
+      }, 2000);
+
       // 加载背景图（从 Props 获取，带默认值兜底）
       const bgImage = new Image();
       const cat = bgCategory || 'macOS';
@@ -333,6 +357,7 @@ export function useVideoExport({
             if (vfcId !== null) vVideo.cancelVideoFrameCallback(vfcId);
             if (timeoutId) clearTimeout(timeoutId);
             video.removeEventListener('ended', onEnded);
+            if (perfReportInterval) clearInterval(perfReportInterval); // 清理性能监控定时器
           };
 
           const onFrame = async (_: number, meta: VideoFrameCallbackMetadata) => {
@@ -352,17 +377,51 @@ export function useVideoExport({
               return;
             }
 
+            const frameStartTime = performance.now();
+            const currentQueueSize = videoEncoder?.encodeQueueSize || 0;
+
+            // 🔍 调试：检测编码器队列积压
+            if (currentQueueSize > perfMonitor.queuePeakSize) {
+              perfMonitor.queuePeakSize = currentQueueSize;
+            }
+
+            if (currentQueueSize > ENCODER_QUEUE_THRESHOLD * 0.8) {
+              console.warn(`[导出调试] 编码器队列接近阈值: ${currentQueueSize}/${ENCODER_QUEUE_THRESHOLD} (${(currentQueueSize/ENCODER_QUEUE_THRESHOLD*100).toFixed(1)}%)`);
+            }
+
+            // 🔍 调试：检测编码器停顿
             if (videoEncoder && videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
+              perfMonitor.encoderStalls++;
+              const stallStartTime = performance.now();
+              console.warn(`[导出调试] 编码器队列满载 (${videoEncoder.encodeQueueSize}), 暂停视频等待编码...`);
+              
               video.pause();
               while (videoEncoder.encodeQueueSize > 2) await new Promise(r => setTimeout(r, 10));
               video.play().catch(console.error);
+              
+              const stallTime = performance.now() - stallStartTime;
+              console.log(`[导出调试] 编码器恢复，停顿耗时 ${stallTime.toFixed(2)}ms`);
             }
 
+            // 渲染当前帧
+            const renderStartTime = performance.now();
             await renderFrame(meta.mediaTime * 1000, exportCameraCache);
+            const renderTime = performance.now() - renderStartTime;
+            
+            perfMonitor.renderedFrames++;
+            
+            // 🔍 调试：记录异常慢的渲染
+            if (renderTime > 50) {
+              perfMonitor.slowRenders++;
+              console.warn(`[导出调试] 帧 ${encodedCount} 渲染耗时 ${renderTime.toFixed(2)}ms (异常慢)`);
+            }
+
             const exportCanvas = canvas;
 
             // 🎯 核心修复：使用视频真实的媒体时间戳（微秒），确保导出的视频速度永远正确
             const accurateTimestamp = Math.round(meta.mediaTime * 1_000_000);
+            
+            const encodeStartTime = performance.now();
             const vFrame = new VideoFrame(exportCanvas, { timestamp: accurateTimestamp, alpha: 'discard' });
 
             if (videoEncoder) {
@@ -370,6 +429,22 @@ export function useVideoExport({
             }
             vFrame.close();
             encodedCount++;
+            perfMonitor.encodedFrames++;
+            
+            const encodeTime = performance.now() - encodeStartTime;
+            
+            // 🔍 调试：记录异常慢的编码
+            if (encodeTime > 30) {
+              perfMonitor.slowEncodes++;
+              console.warn(`[导出调试] 帧 ${encodedCount - 1} 编码提交耗时 ${encodeTime.toFixed(2)}ms (异常慢)`);
+            }
+
+            const totalFrameTime = performance.now() - frameStartTime;
+            
+            // 🔍 调试：记录整体帧处理时间
+            if (totalFrameTime > 100) {
+              console.warn(`[导出调试] 帧 ${encodedCount - 1} 总处理时间 ${totalFrameTime.toFixed(2)}ms (渲染: ${renderTime.toFixed(2)}ms, 编码: ${encodeTime.toFixed(2)}ms, 队列: ${currentQueueSize})`);
+            }
 
             if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
               const progressRatio = meta.mediaTime / durationSeconds;
@@ -534,6 +609,12 @@ export function useVideoExport({
 
       console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
 
+      // 🔍 清理性能监控定时器
+      if (perfReportInterval) {
+        clearInterval(perfReportInterval);
+        perfReportInterval = null;
+      }
+
       // 🎯 导出完成后恢复预览配置
       console.log('[useVideoExport] Restoring preview render config...');
       if (canvas) applyRenderConfig(canvas, PREVIEW_CONFIG);
@@ -542,6 +623,13 @@ export function useVideoExport({
 
     } catch (e: any) {
       console.error('[useVideoExport] Export failed:', e);
+      
+      // 🔍 清理性能监控定时器（错误情况）
+      if (perfReportInterval) {
+        clearInterval(perfReportInterval);
+        perfReportInterval = null;
+      }
+      
       // 确保清理资源
       try {
         if (typeof videoEncoder !== 'undefined' && videoEncoder && videoEncoder.state !== 'closed') {

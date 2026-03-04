@@ -1026,6 +1026,9 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
       `${width}x${height}`,
       "-r",
       fps.toString(),
+      "-thread_queue_size",
+      "1024",
+      // 增加输入队列大小
       "-i",
       "-"
       // 从 stdin 读取
@@ -1035,8 +1038,8 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
         "-c:v",
         "h264_nvenc",
         "-preset",
-        "p7",
-        // 最高质量预设
+        "p5",
+        // 从 p7 降到 p5，提升编码速度
         "-rc",
         "vbr",
         // 可变码率
@@ -1046,6 +1049,9 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
         "-b:v",
         "0",
         // 不限制码率
+        "-bufsize",
+        "100M",
+        // 增加缓冲区
         "-pix_fmt",
         "yuv420p"
       );
@@ -1057,10 +1063,16 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
         crf.toString(),
         // 质量控制
         "-preset",
-        "faster",
-        // 速度预设
+        "veryfast",
+        // 从 faster 改为 veryfast，提升速度
+        "-tune",
+        "zerolatency",
+        // 零延迟调优
         "-pix_fmt",
-        "yuv420p"
+        "yuv420p",
+        "-threads",
+        "0"
+        // 使用所有可用线程
       );
     }
     args.push(
@@ -1083,8 +1095,24 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
     };
     ffmpegProcess.stderr.on("data", (data) => {
       const log = data.toString();
+      if (log.includes("frame=")) {
+        const frameMatch = log.match(/frame=\s*(\d+)/);
+        const fpsMatch = log.match(/fps=\s*([\d.]+)/);
+        const speedMatch = log.match(/speed=\s*([\d.]+)x/);
+        if (frameMatch || fpsMatch || speedMatch) {
+          const info = {
+            frame: frameMatch ? frameMatch[1] : "?",
+            fps: fpsMatch ? fpsMatch[1] : "?",
+            speed: speedMatch ? speedMatch[1] : "?"
+          };
+          console.log(`[FFmpeg Export] 进度: frame=${info.frame}, fps=${info.fps}, speed=${info.speed}x`);
+        }
+      }
       if (log.includes("error") || log.includes("Error")) {
         console.error("[FFmpeg Export] 错误:", log);
+      }
+      if (log.includes("slow") || log.includes("dropping") || log.includes("buffer")) {
+        console.warn("[FFmpeg Export] 性能警告:", log);
       }
     });
     ffmpegProcess.on("exit", (code) => {
@@ -1104,20 +1132,70 @@ ipcMain.handle("start-ffmpeg-export", async (_event, { targetPath, width, height
     return { success: false, error: err.message };
   }
 });
+ipcMain.handle("write-ffmpeg-frames-batch", async (_event, { frames }) => {
+  try {
+    if (!currentFFmpegExport || !currentFFmpegExport.process.stdin) {
+      return { success: false, error: "导出会话不存在" };
+    }
+    let successCount = 0;
+    for (const frameData of frames) {
+      const buffer = Buffer.from(frameData);
+      const canWrite = currentFFmpegExport.process.stdin.write(buffer);
+      if (!canWrite) {
+        await Promise.race([
+          new Promise((resolve) => {
+            currentFFmpegExport.process.stdin.once("drain", () => resolve());
+          }),
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("写入超时：FFmpeg 处理速度过慢")), 5e3);
+          })
+        ]);
+      }
+      currentFFmpegExport.frameCount++;
+      successCount++;
+    }
+    return { success: true, count: successCount };
+  } catch (err) {
+    console.error("[FFmpeg Export] 批量写入帧失败:", err);
+    return { success: false, error: err.message };
+  }
+});
 ipcMain.handle("write-ffmpeg-frame", async (_event, { frameData }) => {
   try {
     if (!currentFFmpegExport || !currentFFmpegExport.process.stdin) {
       return { success: false, error: "导出会话不存在" };
     }
+    const writeStartTime = performance.now();
     const buffer = Buffer.from(frameData);
-    const canWrite = currentFFmpegExport.process.stdin.write(buffer);
+    const stdin = currentFFmpegExport.process.stdin;
+    const bufferSize = stdin.writableLength || 0;
+    const highWaterMark = stdin.writableHighWaterMark || 0;
+    if (bufferSize > highWaterMark * 0.8) {
+      console.warn(`[FFmpeg Export] 缓冲区接近满载: ${bufferSize}/${highWaterMark} (${(bufferSize / highWaterMark * 100).toFixed(1)}%)`);
+    }
+    const canWrite = stdin.write(buffer);
     if (!canWrite) {
-      await new Promise((resolve) => {
-        currentFFmpegExport.process.stdin.once("drain", () => resolve());
-      });
+      const drainStartTime = performance.now();
+      console.warn(`[FFmpeg Export] 缓冲区已满，等待 drain 事件...`);
+      await Promise.race([
+        new Promise((resolve) => {
+          stdin.once("drain", () => {
+            const drainTime = performance.now() - drainStartTime;
+            console.log(`[FFmpeg Export] drain 完成，耗时 ${drainTime.toFixed(2)}ms`);
+            resolve();
+          });
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("写入超时：FFmpeg 处理速度过慢")), 5e3);
+        })
+      ]);
     }
     currentFFmpegExport.frameCount++;
-    return { success: true };
+    const totalWriteTime = performance.now() - writeStartTime;
+    if (totalWriteTime > 50) {
+      console.warn(`[FFmpeg Export] 帧 ${currentFFmpegExport.frameCount} 写入耗时 ${totalWriteTime.toFixed(2)}ms (异常慢)`);
+    }
+    return { success: true, writeTime: totalWriteTime };
   } catch (err) {
     console.error("[FFmpeg Export] 写入帧失败:", err);
     return { success: false, error: err.message };

@@ -1122,33 +1122,37 @@ ipcMain.handle('start-ffmpeg-export', async (_event, { targetPath, width, height
     const hasNVENC = await checkNVENCSupport();
     console.log(`[FFmpeg Export] NVENC 支持: ${hasNVENC}`);
     
-    // 构建 FFmpeg 参数
+    // 构建 FFmpeg 参数（优化：增加缓冲区大小）
     const args = [
       '-f', 'rawvideo',
       '-pix_fmt', 'rgba',
       '-s', `${width}x${height}`,
       '-r', fps.toString(),
+      '-thread_queue_size', '1024',  // 增加输入队列大小
       '-i', '-', // 从 stdin 读取
     ];
     
     // 选择编码器和参数
     if (hasNVENC) {
-      // NVENC 硬件编码
+      // NVENC 硬件编码（优化：调整预设以平衡速度和质量）
       args.push(
         '-c:v', 'h264_nvenc',
-        '-preset', 'p7',        // 最高质量预设
+        '-preset', 'p5',        // 从 p7 降到 p5，提升编码速度
         '-rc', 'vbr',           // 可变码率
         '-cq', crf.toString(),  // 质量控制
         '-b:v', '0',            // 不限制码率
+        '-bufsize', '100M',     // 增加缓冲区
         '-pix_fmt', 'yuv420p'
       );
     } else {
-      // libx264 软件编码
+      // libx264 软件编码（优化：使用更快的预设）
       args.push(
         '-c:v', 'libx264',
         '-crf', crf.toString(), // 质量控制
-        '-preset', 'faster',    // 速度预设
-        '-pix_fmt', 'yuv420p'
+        '-preset', 'veryfast',  // 从 faster 改为 veryfast，提升速度
+        '-tune', 'zerolatency', // 零延迟调优
+        '-pix_fmt', 'yuv420p',
+        '-threads', '0'         // 使用所有可用线程
       );
     }
     
@@ -1174,11 +1178,34 @@ ipcMain.handle('start-ffmpeg-export', async (_event, { targetPath, width, height
       frameCount: 0
     };
     
-    // 监听错误输出
+    // 监听错误输出（增强调试）
     ffmpegProcess.stderr.on('data', (data: Buffer) => {
       const log = data.toString();
+      
+      // 🔍 调试：记录 FFmpeg 输出
+      if (log.includes('frame=')) {
+        // 提取帧数和速度信息
+        const frameMatch = log.match(/frame=\s*(\d+)/);
+        const fpsMatch = log.match(/fps=\s*([\d.]+)/);
+        const speedMatch = log.match(/speed=\s*([\d.]+)x/);
+        
+        if (frameMatch || fpsMatch || speedMatch) {
+          const info = {
+            frame: frameMatch ? frameMatch[1] : '?',
+            fps: fpsMatch ? fpsMatch[1] : '?',
+            speed: speedMatch ? speedMatch[1] : '?'
+          };
+          console.log(`[FFmpeg Export] 进度: frame=${info.frame}, fps=${info.fps}, speed=${info.speed}x`);
+        }
+      }
+      
       if (log.includes('error') || log.includes('Error')) {
         console.error('[FFmpeg Export] 错误:', log);
+      }
+      
+      // 🔍 调试：检测编码器性能问题
+      if (log.includes('slow') || log.includes('dropping') || log.includes('buffer')) {
+        console.warn('[FFmpeg Export] 性能警告:', log);
       }
     });
     
@@ -1205,28 +1232,96 @@ ipcMain.handle('start-ffmpeg-export', async (_event, { targetPath, width, height
   }
 });
 
-// 写入帧数据
+// 批量写入帧数据（优化版：减少 IPC 调用次数）
+ipcMain.handle('write-ffmpeg-frames-batch', async (_event, { frames }) => {
+  try {
+    if (!currentFFmpegExport || !currentFFmpegExport.process.stdin) {
+      return { success: false, error: '导出会话不存在' };
+    }
+    
+    let successCount = 0;
+    
+    for (const frameData of frames) {
+      const buffer = Buffer.from(frameData);
+      
+      // 写入到 FFmpeg stdin
+      const canWrite = currentFFmpegExport.process.stdin.write(buffer);
+      
+      if (!canWrite) {
+        // 如果缓冲区满了，等待 drain 事件（带超时保护）
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            currentFFmpegExport!.process.stdin.once('drain', () => resolve());
+          }),
+          new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error('写入超时：FFmpeg 处理速度过慢')), 5000);
+          })
+        ]);
+      }
+      
+      currentFFmpegExport.frameCount++;
+      successCount++;
+    }
+    
+    return { success: true, count: successCount };
+    
+  } catch (err) {
+    console.error('[FFmpeg Export] 批量写入帧失败:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// 写入帧数据（优化版：增加超时保护和更好的背压处理）
 ipcMain.handle('write-ffmpeg-frame', async (_event, { frameData }) => {
   try {
     if (!currentFFmpegExport || !currentFFmpegExport.process.stdin) {
       return { success: false, error: '导出会话不存在' };
     }
     
+    const writeStartTime = performance.now();
     const buffer = Buffer.from(frameData);
     
+    // 🔍 调试：记录缓冲区状态
+    const stdin = currentFFmpegExport.process.stdin;
+    const bufferSize = stdin.writableLength || 0;
+    const highWaterMark = stdin.writableHighWaterMark || 0;
+    
+    if (bufferSize > highWaterMark * 0.8) {
+      console.warn(`[FFmpeg Export] 缓冲区接近满载: ${bufferSize}/${highWaterMark} (${(bufferSize/highWaterMark*100).toFixed(1)}%)`);
+    }
+    
     // 写入到 FFmpeg stdin
-    const canWrite = currentFFmpegExport.process.stdin.write(buffer);
+    const canWrite = stdin.write(buffer);
     
     if (!canWrite) {
-      // 如果缓冲区满了，等待 drain 事件
-      await new Promise<void>((resolve) => {
-        currentFFmpegExport!.process.stdin.once('drain', () => resolve());
-      });
+      const drainStartTime = performance.now();
+      console.warn(`[FFmpeg Export] 缓冲区已满，等待 drain 事件...`);
+      
+      // 如果缓冲区满了，等待 drain 事件（带超时保护）
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          stdin.once('drain', () => {
+            const drainTime = performance.now() - drainStartTime;
+            console.log(`[FFmpeg Export] drain 完成，耗时 ${drainTime.toFixed(2)}ms`);
+            resolve();
+          });
+        }),
+        new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error('写入超时：FFmpeg 处理速度过慢')), 5000);
+        })
+      ]);
     }
     
     currentFFmpegExport.frameCount++;
     
-    return { success: true };
+    const totalWriteTime = performance.now() - writeStartTime;
+    
+    // 🔍 调试：记录异常慢的写入
+    if (totalWriteTime > 50) {
+      console.warn(`[FFmpeg Export] 帧 ${currentFFmpegExport.frameCount} 写入耗时 ${totalWriteTime.toFixed(2)}ms (异常慢)`);
+    }
+    
+    return { success: true, writeTime: totalWriteTime };
     
   } catch (err) {
     console.error('[FFmpeg Export] 写入帧失败:', err);

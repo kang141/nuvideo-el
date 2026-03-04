@@ -120,6 +120,27 @@ export function useFFmpegExport({
         duration: durationSeconds
       });
 
+      // 🔍 调试：性能监控
+      const perfMonitor = {
+        totalFrames: Math.floor(durationSeconds * fps),
+        renderedFrames: 0,
+        writtenFrames: 0,
+        startTime: performance.now(),
+        lastReportTime: performance.now(),
+        slowRenders: 0,
+        slowWrites: 0,
+        queuePeakSize: 0
+      };
+
+      // 定期输出性能报告
+      const perfReportInterval = setInterval(() => {
+        const elapsed = (performance.now() - perfMonitor.startTime) / 1000;
+        const avgFps = perfMonitor.renderedFrames / elapsed;
+        const progress = (perfMonitor.writtenFrames / perfMonitor.totalFrames * 100).toFixed(1);
+        
+        logger.info(`[性能监控] 进度: ${progress}%, 已渲染: ${perfMonitor.renderedFrames}/${perfMonitor.totalFrames}, 平均FPS: ${avgFps.toFixed(1)}, 慢渲染: ${perfMonitor.slowRenders}, 慢写入: ${perfMonitor.slowWrites}, 队列峰值: ${perfMonitor.queuePeakSize}`);
+      }, 2000);
+
       // 3. 加载背景图
       const bgImage = new Image();
       const cat = bgCategory || 'macOS';
@@ -175,6 +196,62 @@ export function useFFmpegExport({
             if (vfcId !== null) vVideo.cancelVideoFrameCallback(vfcId);
             if (timeoutId) clearTimeout(timeoutId);
             video.removeEventListener('ended', onEnded);
+            clearInterval(perfReportInterval); // 清理性能监控定时器
+          };
+
+          // 帧缓冲队列，用于异步写入
+          const frameQueue: Array<{ data: ArrayBuffer; index: number; timestamp: number }> = [];
+          let isWriting = false;
+          let lastLogTime = 0;
+
+          // 异步写入队列中的帧
+          const processFrameQueue = async () => {
+            if (isWriting || frameQueue.length === 0) return;
+            isWriting = true;
+
+            while (frameQueue.length > 0 && isExportingRef.current) {
+              const frame = frameQueue.shift();
+              if (!frame) break;
+
+              const writeStartTime = performance.now();
+              
+              // 🔍 调试：记录队列长度和写入时间
+              if (performance.now() - lastLogTime > 1000) {
+                logger.info(`[导出调试] 队列长度: ${frameQueue.length}, 当前帧: ${frame.index}`);
+                lastLogTime = performance.now();
+              }
+
+              const sendResult = await ipc.invoke('write-ffmpeg-frame', {
+                frameData: frame.data,
+              }) as { success: boolean; error?: string };
+
+              const writeTime = performance.now() - writeStartTime;
+              
+              perfMonitor.writtenFrames++;
+              
+              // 🔍 调试：记录异常慢的写入操作
+              if (writeTime > 100) {
+                perfMonitor.slowWrites++;
+                logger.warn(`[导出调试] 帧 ${frame.index} 写入耗时 ${writeTime.toFixed(2)}ms (异常慢)`);
+              }
+
+              if (!sendResult.success) {
+                cleanup();
+                reject(new Error(`写入帧失败: ${sendResult.error}`));
+                isWriting = false;
+                return;
+              }
+
+              // 更新进度（基于已写入的帧）
+              if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
+                const progressRatio = frame.index / (durationSeconds * fps);
+                setExportProgress(Math.min(0.95, progressRatio));
+                ipc.send('set-progress-bar', Math.min(0.95, progressRatio));
+                lastProgressAt = performance.now();
+              }
+            }
+
+            isWriting = false;
           };
 
           const onFrame = async (_: number, meta: VideoFrameCallbackMetadata) => {
@@ -189,14 +266,45 @@ export function useFFmpegExport({
               logger.debug('VFC 到达结束时间:', meta.mediaTime);
               video.pause();
               cleanup();
+              
+              // 等待队列中的帧全部写入完成
+              logger.info(`[导出调试] 等待队列清空，剩余 ${frameQueue.length} 帧`);
+              while (frameQueue.length > 0 || isWriting) {
+                await new Promise(r => setTimeout(r, 10));
+              }
+              logger.info('[导出调试] 队列已清空');
+              
               resolve();
               return;
             }
 
+            const frameStartTime = performance.now();
+
+            // 🔍 调试：检测队列积压
+            if (frameQueue.length > 30) {
+              logger.warn(`[导出调试] 队列积压严重: ${frameQueue.length} 帧，可能导致卡顿`);
+            }
+            
+            // 🔍 更新队列峰值
+            if (frameQueue.length > perfMonitor.queuePeakSize) {
+              perfMonitor.queuePeakSize = frameQueue.length;
+            }
+
             // 渲染当前帧
+            const renderStartTime = performance.now();
             await renderFrame(meta.mediaTime * 1000, exportCameraCache);
+            const renderTime = performance.now() - renderStartTime;
+            
+            perfMonitor.renderedFrames++;
+            
+            // 🔍 调试：记录异常慢的渲染
+            if (renderTime > 50) {
+              perfMonitor.slowRenders++;
+              logger.warn(`[导出调试] 帧 ${frameCount} 渲染耗时 ${renderTime.toFixed(2)}ms (异常慢)`);
+            }
 
             // 提取 RGBA 数据
+            const extractStartTime = performance.now();
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
             if (!ctx) {
               reject(new Error('无法获取 Canvas 上下文'));
@@ -204,27 +312,32 @@ export function useFFmpegExport({
             }
 
             const imageData = ctx.getImageData(0, 0, width, height);
-
-            // 发送帧数据到 FFmpeg
-            const sendResult = await ipc.invoke('write-ffmpeg-frame', {
-              frameData: imageData.data.buffer,
-            }) as { success: boolean; error?: string };
-
-            if (!sendResult.success) {
-              cleanup();
-              reject(new Error(`写入帧失败: ${sendResult.error}`));
-              return;
+            const extractTime = performance.now() - extractStartTime;
+            
+            // 🔍 调试：记录异常慢的数据提取
+            if (extractTime > 30) {
+              logger.warn(`[导出调试] 帧 ${frameCount} 数据提取耗时 ${extractTime.toFixed(2)}ms (异常慢)`);
             }
 
+            // 将帧数据加入队列（非阻塞）
+            frameQueue.push({
+              data: imageData.data.buffer,
+              index: frameCount,
+              timestamp: performance.now()
+            });
             frameCount++;
 
-            // 更新进度
-            if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
-              const progressRatio = meta.mediaTime / durationSeconds;
-              setExportProgress(Math.min(0.95, progressRatio));
-              ipc.send('set-progress-bar', Math.min(0.95, progressRatio));
-              lastProgressAt = performance.now();
+            const totalFrameTime = performance.now() - frameStartTime;
+            
+            // 🔍 调试：记录整体帧处理时间
+            if (totalFrameTime > 100) {
+              logger.warn(`[导出调试] 帧 ${frameCount - 1} 总处理时间 ${totalFrameTime.toFixed(2)}ms (渲染: ${renderTime.toFixed(2)}ms, 提取: ${extractTime.toFixed(2)}ms)`);
             }
+
+            // 触发异步写入（不等待）
+            processFrameQueue().catch(err => {
+              logger.error('帧队列处理失败:', err);
+            });
 
             vfcId = vVideo.requestVideoFrameCallback(onFrame);
           };

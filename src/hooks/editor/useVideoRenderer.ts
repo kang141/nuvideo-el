@@ -180,6 +180,14 @@ export function useVideoRenderer({
 
     renderer.initialize().then(() => {
       logger.debug('Modern renderer initialized');
+
+      // 🎯 核心修复：如果处于导出模式，立即初始化离线解码器
+      if (isExporting && renderGraph.videoSource) {
+        renderer.setOfflineSource(renderGraph.videoSource).catch(e => {
+          logger.error('Failed to initialize offline source:', e);
+        });
+      }
+
       if (isExporting) {
         requestAnimationFrame(() => void renderFrame(video.currentTime * 1000));
       }
@@ -189,7 +197,7 @@ export function useVideoRenderer({
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, [videoRef]); // 移除 isExporting 依赖，避免导出开始时销毁并重建渲染器
+  }, [videoRef, isExporting, renderGraph.videoSource]); // 增加 isExporting 依赖，确保状态切换时能触发离线源初始化
 
   // 启动摄像头渲染器
   useEffect(() => {
@@ -379,72 +387,43 @@ export function useVideoRenderer({
 
     // --- 统一的现代化渲染策略 ---
     if (renderer) {
-      // 🎯 核心优化：导出模式且视频正在播放时（VFC模式），不使用 seek 模式的 getFrameAt
-      // 而是直接使用捕获当前帧，避免 seek 导致的黑屏。
-      const isActuallyPlaying = video && !video.paused;
+      if (isExportingNow) {
+        // 🎯 核心方案：导出模式下，尝试使用离线解码
+        // 如果离线解码不可用或返回空，则自动回退到原生 Video 标签逻辑（防止黑屏）
+        let frame: VideoFrame | null = null;
 
-      // 🎯 诊断日志
-      if (isExportingNow && timestampMs < 100) {
-        logger.debug('渲染路径选择:', {
-          isExportingNow,
-          isActuallyPlaying,
-          videoPaused: video.paused,
-          videoCurrentTime: video.currentTime,
-          videoReadyState: video.readyState,
-          timestampMs
-        });
-      }
-
-      if (!isExportingNow || isActuallyPlaying) {
-        // 预览模式或正在播放的导出，直接从视频层抽取
-        frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
-
-        if (isExportingNow && timestampMs < 100) {
-          logger.debug('drawToCanvas 结果:', { frameRendered, videoReadyState: video.readyState });
+        if (renderer.isOfflineMode()) {
+          try {
+            frame = await renderer.getFrameAt(timestampMs, true);
+          } catch (e) {
+            logger.warn('[Exporter] 离线解码请求出错:', e);
+          }
         }
 
-        // 更新缓存（用于丢帧时的兜底）
-        if (frameRendered) {
+        if (frame) {
+          renderer.drawToCanvas(ctx, 0, 0, dw, dh, frame);
+          frameRendered = true;
+
+          // 更新缓存
           if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
           if (mainVideoCacheRef.current.width !== dw) {
             mainVideoCacheRef.current.width = dw;
             mainVideoCacheRef.current.height = dh;
           }
           const cacheCtx = mainVideoCacheRef.current.getContext('2d');
-          if (cacheCtx) {
-            try {
-              cacheCtx.drawImage(video, 0, 0, dw, dh);
-            } catch (e) { /* ignore */ }
-          }
-        }
-      }
-      else {
-        // 导出模式且视频暂停（手动 Seek 模式）：使用精确帧获取
-        if (timestampMs < 100) {
-          logger.debug('使用 getFrameAt 模式');
-        }
-        try {
-          const frame = await renderer.getFrameAt(timestampMs, true);
-          if (frame) {
-            ctx.drawImage(frame, 0, 0, dw, dh);
-            frameRendered = true;
+          if (cacheCtx) cacheCtx.drawImage(frame, 0, 0, dw, dh);
 
-            // 更新缓存
-            if (!mainVideoCacheRef.current) mainVideoCacheRef.current = document.createElement('canvas');
-            if (mainVideoCacheRef.current.width !== dw) {
-              mainVideoCacheRef.current.width = dw;
-              mainVideoCacheRef.current.height = dh;
-            }
-            const cacheCtx = mainVideoCacheRef.current.getContext('2d');
-            if (cacheCtx) cacheCtx.drawImage(frame, 0, 0, dw, dh);
-
-            frame.close();
-          } else {
-            if (isExportingNow) logger.warn('getFrameAt 返回空, 时间戳:', timestampMs);
+          frame.close();
+        } else {
+          // 🎯 兜底逻辑：离线解码不可用，回退到 Video 标签绘制
+          if (renderer.isOfflineMode()) {
+            logger.warn('[Exporter] 离线帧为空，回退到原生 Video 绘制:', timestampMs);
           }
-        } catch (e) {
-          logger.warn('获取精确帧失败:', e);
+          frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
         }
+      } else {
+        // 预览模式：直接从视频层抽取，追求 60fps 极限流畅度
+        frameRendered = renderer.drawToCanvas(ctx, 0, 0, dw, dh);
       }
     }
 
