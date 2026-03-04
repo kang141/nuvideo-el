@@ -28,29 +28,21 @@ const DEADZONE_H = 0.06;
 // 自动对焦时的缩放力度
 const AUTO_ZOOM_SCALE = 1.5; // 与 auto-zoom.ts 保持一致
 
-// ============ 增量缓存系统 ============
-// 用于导出时避免 O(n²) 重复计算
-interface CameraSolverCache {
+/**
+ * 镜头积分器缓存系统
+ * 用于导出时避免从头积分，实现 O(1) 增量运算
+ */
+export interface CameraSolverCache {
   lastT: number;
   state: ExtendedCameraState;
   mouseIdx: number;
 }
 
-let incrementalCache: CameraSolverCache | null = null;
-
 /**
- * 重置增量缓存。导出开始前调用一次。
+ * 创建一个初始化的缓存对象
  */
-export function resetCameraCache(): void {
-  incrementalCache = null;
-}
-
-/**
- * 启用增量模式。调用后 computeCameraState 会从上次 t 继续积分，
- * 而非每次都从 0 开始。
- */
-export function enableIncrementalMode(): void {
-  incrementalCache = {
+export function createCameraCache(): CameraSolverCache {
+  return {
     lastT: 0,
     state: {
       t: 0,
@@ -61,7 +53,6 @@ export function enableIncrementalMode(): void {
     mouseIdx: 0,
   };
 }
-// ============ 增量缓存系统结束 ============
 
 function findActiveIntent(intents: CameraIntent[], t: number): CameraIntent {
   if (intents.length === 0) return defaultIntent;
@@ -77,78 +68,76 @@ function findActiveIntent(intents: CameraIntent[], t: number): CameraIntent {
  * 核心优化：高阶鼠标位置插值 (Catmull-Rom 变体)
  * 相比线性插值，它能显著消除在离散采集点之间移动时的“折线感”
  */
-let lastMouseIdx = 0;
 function findMousePos(
   events: NuMouseEvent[],
   t: number,
-): { x: number; y: number } | null {
+  startIdx: number = 0
+): { x: number; y: number; index: number } | null {
   if (!events || events.length === 0) return null;
 
-  // 1. 找到当前时间点的事件索引（使用缓存优化）
+  // 1. 寻找当前时间点的事件索引
   let idx = -1;
-  for (let i = lastMouseIdx; i < events.length; i++) {
+
+  // 如果时间小于起始搜索点的时间，说明发生了回退，从头开始搜
+  const actualStart = (startIdx >= events.length || t < events[startIdx].t) ? 0 : startIdx;
+
+  for (let i = actualStart; i < events.length; i++) {
     if (events[i].t <= t) {
       idx = i;
-      lastMouseIdx = i;
     } else {
       break;
     }
   }
 
   if (idx === -1) {
-    return { x: events[0].x, y: events[0].y };
+    return { x: events[0].x, y: events[0].y, index: 0 };
   }
 
   // 2. 如果是最后一个点，直接返回
   if (idx >= events.length - 1) {
-    return { x: events[idx].x, y: events[idx].y };
+    return { x: events[idx].x, y: events[idx].y, index: idx };
   }
 
-  // 3. 获取插值所需的上下文点 (p0, p1, p2, p3)
+  // 3. 插值逻辑
   const p1 = events[idx];
   const p2 = events[idx + 1];
-
   const span = p2.t - p1.t;
 
-  // 🎯 优化：对于极短时间跨度（<1ms），直接返回 p1，避免数值不稳定
-  if (span <= 1.0) return { x: p1.x, y: p1.y };
+  if (span <= 1.0) return { x: p1.x, y: p1.y, index: idx };
 
   const ratio = Math.max(0, Math.min(1, (t - p1.t) / span));
 
-  // 🎯 优化：使用 Catmull-Rom 样条插值（四点插值）
-  // 这是业界标准的平滑曲线算法，广泛用于动画和图形学
   const p0 = events[Math.max(0, idx - 1)];
   const p3 = events[Math.min(events.length - 1, idx + 2)];
-
-  // Catmull-Rom 张力参数（0.5 是标准值，产生最平滑的曲线）
   const tension = 0.5;
 
-  // 计算切线 (Tangents) - 使用相邻点的差值
   const m1x = (p2.x - p0.x) * tension;
   const m1y = (p2.y - p0.y) * tension;
   const m2x = (p3.x - p1.x) * tension;
   const m2y = (p3.y - p1.y) * tension;
 
-  // Hermite Basis Functions（三次多项式基函数）
   const r2 = ratio * ratio;
   const r3 = r2 * ratio;
-  const h1 = 2 * r3 - 3 * r2 + 1;      // p1 的权重
-  const h2 = -2 * r3 + 3 * r2;         // p2 的权重
-  const h3 = r3 - 2 * r2 + ratio;      // m1 的权重
-  const h4 = r3 - r2;                  // m2 的权重
+  const h1 = 2 * r3 - 3 * r2 + 1;
+  const h2 = -2 * r3 + 3 * r2;
+  const h3 = r3 - 2 * r2 + ratio;
+  const h4 = r3 - r2;
 
-  // 🎯 最终插值结果
   const x = h1 * p1.x + h2 * p2.x + h3 * m1x + h4 * m2x;
   const y = h1 * p1.y + h2 * p2.y + h3 * m1y + h4 * m2y;
 
-  // 🎯 边界保护：确保插值结果不会超出 [0, 1] 范围
   return {
     x: Math.max(0, Math.min(1, x)),
-    y: Math.max(0, Math.min(1, y))
+    y: Math.max(0, Math.min(1, y)),
+    index: idx
   };
 }
 
-export function computeCameraState(graph: RenderGraph, t: number): ExtendedCameraState {
+export function computeCameraState(
+  graph: RenderGraph,
+  t: number,
+  cache?: CameraSolverCache
+): ExtendedCameraState {
   const intents = graph.camera.intents || [];
   const mouseEvents = graph.mouse || [];
 
@@ -190,11 +179,13 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
   let state: ExtendedCameraState;
   let currentT: number;
 
-  if (incrementalCache && t >= incrementalCache.lastT) {
+  let currentMouseIdx = 0;
+
+  if (cache && t >= cache.lastT) {
     // 增量模式：从上次位置继续
-    state = { ...incrementalCache.state };
-    currentT = incrementalCache.lastT;
-    lastMouseIdx = incrementalCache.mouseIdx;
+    state = { ...cache.state };
+    currentT = cache.lastT;
+    currentMouseIdx = cache.mouseIdx;
 
     // 重点：如果是增量模式的第一帧（t=0 或第一次积分），确保位置从首帧开始而非中心点
     if (currentT === 0 && mouseEvents.length > 0) {
@@ -218,7 +209,7 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
       mvy: 0,
     };
     currentT = 0;
-    lastMouseIdx = 0;
+    currentMouseIdx = 0;
   }
 
   // 子步长优化：将 16.6ms 拆解为 2ms 的小步长，极大提升数值稳定性
@@ -230,7 +221,9 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
     const factor = stepDt / 1000;
 
     const active = findActiveIntent(intents, currentT);
-    const rawMouse = findMousePos(mouseEvents, currentT);
+    const mouseRes = findMousePos(mouseEvents, currentT, currentMouseIdx);
+    const rawMouse = mouseRes;
+    if (mouseRes) currentMouseIdx = mouseRes.index;
 
     // 1. 镜头意图与桥接优化 (Bridging)
     // 场景：当两个缩放块挨得很近时，中间会产生一个瞬间回到 1.0x 的“空隙”。
@@ -368,10 +361,10 @@ export function computeCameraState(graph: RenderGraph, t: number): ExtendedCamer
   }
 
   // ============ 更新增量缓存 ============
-  if (incrementalCache) {
-    incrementalCache.lastT = t;
-    incrementalCache.state = { ...state };
-    incrementalCache.mouseIdx = lastMouseIdx;
+  if (cache) {
+    cache.lastT = t;
+    cache.state = { ...state };
+    cache.mouseIdx = currentMouseIdx;
   }
 
   return {

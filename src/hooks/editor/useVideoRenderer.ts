@@ -1,7 +1,7 @@
 import { useEffect, useRef, RefObject, useState } from 'react';
 import { EDITOR_CANVAS_SIZE, AVAILABLE_CURSORS } from '../../constants/editor';
 import { RenderGraph, MouseEvent } from '../../types';
-import { computeCameraState } from '../../core/camera-solver';
+import { computeCameraState, createCameraCache, CameraSolverCache } from '../../core/camera-solver';
 import type { ExtendedCameraState } from '../../core/camera-solver';
 import { ModernVideoRenderer } from '../../core/modern-video-renderer';
 import { applyRenderConfig, getRenderConfig } from '../../core/render-config';
@@ -38,6 +38,9 @@ export function useVideoRenderer({
   const mainVideoCacheRef = useRef<HTMLCanvasElement | null>(null);
   const webcamCacheRef = useRef<HTMLCanvasElement | null>(null);
 
+  // 镜头解算器缓存：预览专用
+  const previewCacheRef = useRef<CameraSolverCache>(createCameraCache());
+
   // 离屏 Canvas 用于缓存静态层（背景 + 阴影窗口背景）
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -45,20 +48,26 @@ export function useVideoRenderer({
   const isExportingRef = useRef(isExporting);
   useEffect(() => { isExportingRef.current = isExporting; }, [isExporting]);
 
-  // 预加载光标资源
+  // 预加载所有可能的鼠标资源 (包括箭头, 手型, 文本输入等)
   const cursorImagesRef = useRef<Record<string, HTMLImageElement>>({});
   useEffect(() => {
-    // 预加载所有箭头样式的光标
-    AVAILABLE_CURSORS.forEach(file => {
-      const img = new Image();
-      img.src = `/cursors/${file}`;
-      img.onload = () => { cursorImagesRef.current[`cursor:${file}`] = img; };
-    });
+    const cursorsToPreload = [
+      ...AVAILABLE_CURSORS.map(c => ({ key: `cursor:${c}`, src: `/cursors/${c}` })),
+      { key: 'pointer:pointer-1.svg', src: '/cursors/arrow-1.svg' }, // 兜底：如果没有 pointer-1，先用基础箭头
+      { key: 'text', src: '/cursors/text.svg' }
+    ];
 
-    // 固定加载 text 类型
-    const textImg = new Image();
-    textImg.src = '/cursors/text.svg';
-    textImg.onload = () => { cursorImagesRef.current['text'] = textImg; };
+    cursorsToPreload.forEach(item => {
+      const img = new Image();
+      img.src = item.src;
+      img.onload = () => { cursorImagesRef.current[item.key] = img; };
+      img.onerror = () => {
+        // 如果加载失败，尝试映射到基础 arrow
+        if (item.key !== 'cursor:arrow-1.svg') {
+          cursorImagesRef.current[item.key] = cursorImagesRef.current['cursor:arrow-1.svg'];
+        }
+      };
+    });
   }, []);
 
   // 绘制/刷新离屏静态层
@@ -304,10 +313,13 @@ export function useVideoRenderer({
   };
 
   // 核心渲染 logic (可重复调用)
-  const renderFrame = async (timestampMs: number) => {
+  const renderFrame = async (timestampMs: number, externalCache?: CameraSolverCache) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) return;
+
+    // 🎯 使用外部传入的缓存（如导出时），或是预览专用的 Ref 缓存
+    const activeCache = externalCache || previewCacheRef.current;
 
     const isExportingNow = isExportingRef.current;
     if (!video || !canvas || !isReady || !offscreenRef.current) {
@@ -337,7 +349,7 @@ export function useVideoRenderer({
       return;
     }
 
-    const camera = computeCameraState(renderGraph, timestampMs);
+    const camera = computeCameraState(renderGraph, timestampMs, activeCache);
     const s = camera.scale;
 
     // 🎯 性能优化：移除冗余的 clearRect 与黑色填充。
@@ -644,10 +656,10 @@ export function useVideoRenderer({
       cursorImg = cursorImagesRef.current['text'];
     } else if (currentShape === 'pointer') {
       const file = graph.mouseTheme.pointerFile || 'pointer-1.svg';
-      cursorImg = cursorImagesRef.current[`pointer:${file}`];
+      cursorImg = cursorImagesRef.current[`pointer:${file}`] || cursorImagesRef.current['cursor:arrow-1.svg'];
     } else {
       const file = graph.mouseTheme.cursorFile || 'arrow-1.svg';
-      cursorImg = cursorImagesRef.current[`cursor:${file}`];
+      cursorImg = cursorImagesRef.current[`cursor:${file}`] || cursorImagesRef.current['cursor:arrow-1.svg'];
     }
 
     if (cursorImg) {

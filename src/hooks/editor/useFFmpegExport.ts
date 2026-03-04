@@ -1,7 +1,7 @@
 import { useState, RefObject, useRef } from 'react';
 import { RenderGraph } from '../../types/render-graph';
 import { QualityConfig, DEFAULT_QUALITY } from '../../constants/quality';
-import { enableIncrementalMode, resetCameraCache } from '../../core/camera-solver';
+import { createCameraCache, CameraSolverCache } from '../../core/camera-solver';
 import { applyRenderConfig, EXPORT_CONFIG, PREVIEW_CONFIG } from '../../core/render-config';
 import { logger } from '../../utils/logger';
 
@@ -15,7 +15,7 @@ interface UseFFmpegExportOptions {
   renderGraph?: RenderGraph;
   bgCategory?: string;
   bgFile?: string;
-  renderFrame: (t: number) => Promise<void>;
+  renderFrame: (t: number, cache?: CameraSolverCache) => Promise<void>;
 }
 
 // 将现有的质量配置映射到 CRF 值
@@ -45,14 +45,13 @@ export function useFFmpegExport({
   const [exportProgress, setExportProgress] = useState(0);
   const isExportingRef = useRef(false);
   const LAST_DIR_KEY = 'nuvideo_last_export_dir';
-  
+
   type RendererIPC = { invoke: (channel: string, payload?: unknown) => Promise<unknown>; send: (channel: string, ...args: any[]) => void };
   const ipc = ((window as unknown) as { ipcRenderer?: RendererIPC }).ipcRenderer!;
 
   const cancelExport = () => {
     isExportingRef.current = false;
     setIsExporting(false);
-    resetCameraCache();
     if (videoRef.current) videoRef.current.playbackRate = 1.0;
     ipc.send('set-progress-bar', -1);
   };
@@ -62,10 +61,10 @@ export function useFFmpegExport({
     targetPath?: string | null
   ): Promise<{ success: boolean; filePath?: string }> => {
     if (isExportingRef.current) return { success: false };
-    
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    
+
     if (!video || !canvas || !renderGraph) {
       logger.error('缺少必需的元素:', { video: !!video, canvas: !!canvas, renderGraph: !!renderGraph });
       return { success: false };
@@ -83,7 +82,7 @@ export function useFFmpegExport({
         const saveResult = await ipc.invoke('show-save-dialog', { defaultName: suggestName }) as { canceled: boolean; filePath?: string };
         if (saveResult.canceled || !saveResult.filePath) throw new Error('CanceledByUser');
         finalPath = saveResult.filePath;
-        
+
         const lastSlashIndex = Math.max(finalPath.lastIndexOf('/'), finalPath.lastIndexOf('\\'));
         if (lastSlashIndex > -1) {
           const dir = finalPath.substring(0, lastSlashIndex);
@@ -95,14 +94,14 @@ export function useFFmpegExport({
       const targetQuality = quality || DEFAULT_QUALITY;
       const durationSeconds = exportDuration ?? maxDuration;
       const fps = 60;
-      
+
       // 根据质量配置计算分辨率
       const baseWidth = EXPORT_CONFIG.canvasWidth;
       const baseHeight = EXPORT_CONFIG.canvasHeight;
       const scale = Math.min(1, targetQuality.maxWidth / baseWidth, targetQuality.maxHeight / baseHeight);
       const width = Math.floor(baseWidth * scale / 2) * 2;
       const height = Math.floor(baseHeight * scale / 2) * 2;
-      
+
       // 将质量配置映射到 CRF 值
       const crf = qualityToCRF(targetQuality);
 
@@ -112,13 +111,13 @@ export function useFFmpegExport({
         dpr: scale
       });
 
-      logger.info('开始 FFmpeg 导出:', { 
-        quality: targetQuality.label, 
-        width, 
-        height, 
-        fps, 
-        crf, 
-        duration: durationSeconds 
+      logger.info('开始 FFmpeg 导出:', {
+        quality: targetQuality.label,
+        width,
+        height,
+        fps,
+        crf,
+        duration: durationSeconds
       });
 
       // 3. 加载背景图
@@ -158,7 +157,7 @@ export function useFFmpegExport({
         video.currentTime = 0;
       });
 
-      enableIncrementalMode();
+      const exportCameraCache = createCameraCache();
       const startTime = performance.now();
       let lastProgressAt = 0;
       let frameCount = 0;
@@ -167,17 +166,17 @@ export function useFFmpegExport({
       const vVideo = video as any;
       if (typeof vVideo.requestVideoFrameCallback === 'function') {
         logger.info('使用 VFC 模式导出...');
-        
+
         await new Promise<void>((resolve, reject) => {
           let vfcId: number | null = null;
           let timeoutId: any = null;
-          
+
           const cleanup = () => {
             if (vfcId !== null) vVideo.cancelVideoFrameCallback(vfcId);
             if (timeoutId) clearTimeout(timeoutId);
             video.removeEventListener('ended', onEnded);
           };
-          
+
           const onFrame = async (_: number, meta: VideoFrameCallbackMetadata) => {
             if (!isExportingRef.current) {
               video.pause();
@@ -185,7 +184,7 @@ export function useFFmpegExport({
               reject(new Error('Aborted'));
               return;
             }
-            
+
             if (meta.mediaTime >= durationSeconds - 0.016) {
               logger.debug('VFC 到达结束时间:', meta.mediaTime);
               video.pause();
@@ -195,28 +194,28 @@ export function useFFmpegExport({
             }
 
             // 渲染当前帧
-            await renderFrame(meta.mediaTime * 1000);
-            
+            await renderFrame(meta.mediaTime * 1000, exportCameraCache);
+
             // 提取 RGBA 数据
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
             if (!ctx) {
               reject(new Error('无法获取 Canvas 上下文'));
               return;
             }
-            
+
             const imageData = ctx.getImageData(0, 0, width, height);
-            
+
             // 发送帧数据到 FFmpeg
             const sendResult = await ipc.invoke('write-ffmpeg-frame', {
               frameData: imageData.data.buffer,
             }) as { success: boolean; error?: string };
-            
+
             if (!sendResult.success) {
               cleanup();
               reject(new Error(`写入帧失败: ${sendResult.error}`));
               return;
             }
-            
+
             frameCount++;
 
             // 更新进度
@@ -226,7 +225,7 @@ export function useFFmpegExport({
               ipc.send('set-progress-bar', Math.min(0.95, progressRatio));
               lastProgressAt = performance.now();
             }
-            
+
             vfcId = vVideo.requestVideoFrameCallback(onFrame);
           };
 
@@ -235,9 +234,9 @@ export function useFFmpegExport({
             cleanup();
             resolve();
           };
-          
+
           video.addEventListener('ended', onEnded);
-          
+
           // 超时保护
           timeoutId = setTimeout(() => {
             logger.warn('导出超时，强制结束');
@@ -249,7 +248,7 @@ export function useFFmpegExport({
           video.currentTime = 0;
           vfcId = vVideo.requestVideoFrameCallback(onFrame);
           video.playbackRate = 1.0;
-          
+
           setTimeout(() => {
             video.play().catch((err) => {
               logger.error('视频播放失败:', err);
@@ -261,34 +260,34 @@ export function useFFmpegExport({
       } else {
         // Fallback: 手动 seek 模式
         logger.info('使用手动 seek 模式导出...');
-        
-        for (let t = 0; t < durationSeconds; t += 1/fps) {
+
+        for (let t = 0; t < durationSeconds; t += 1 / fps) {
           if (!isExportingRef.current) break;
-          
+
           video.currentTime = t;
           await new Promise(r => {
             const onSd = () => { video.removeEventListener('seeked', onSd); r(null); };
             video.addEventListener('seeked', onSd);
             setTimeout(onSd, 500);
           });
-          
-          await renderFrame(t * 1000);
-          
+
+          await renderFrame(t * 1000, exportCameraCache);
+
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
           if (!ctx) throw new Error('无法获取 Canvas 上下文');
-          
+
           const imageData = ctx.getImageData(0, 0, width, height);
-          
+
           const sendResult = await ipc.invoke('write-ffmpeg-frame', {
             frameData: imageData.data.buffer,
           }) as { success: boolean; error?: string };
-          
+
           if (!sendResult.success) {
             throw new Error(`写入帧失败: ${sendResult.error}`);
           }
-          
+
           frameCount++;
-          
+
           if (performance.now() - lastProgressAt > PROGRESS_THROTTLE_MS) {
             const progressRatio = t / durationSeconds;
             setExportProgress(Math.min(0.95, progressRatio));
@@ -302,7 +301,7 @@ export function useFFmpegExport({
       // 7. 完成导出
       setExportProgress(0.98);
       const finalizeResult = await ipc.invoke('finalize-ffmpeg-export') as { success: boolean; error?: string };
-      
+
       if (!finalizeResult.success) {
         throw new Error(`FFmpeg 完成失败: ${finalizeResult.error}`);
       }
@@ -314,31 +313,30 @@ export function useFFmpegExport({
         body: `视频已保存至: ${finalPath}`,
         silent: false
       });
-      
+
       setTimeout(() => ipc.send('set-progress-bar', -1), 3000);
 
       const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
       logger.info(`导出完成，耗时 ${elapsed}s`);
-      
+
       // 恢复预览配置
       if (canvas) applyRenderConfig(canvas, PREVIEW_CONFIG);
-      
+
       return { success: true, filePath: finalPath };
 
     } catch (e: any) {
       logger.error('导出失败:', e);
-      
+
       // 清理 FFmpeg 进程
-      await ipc.invoke('cleanup-ffmpeg-export').catch(() => {});
-      
+      await ipc.invoke('cleanup-ffmpeg-export').catch(() => { });
+
       // 恢复预览配置
       if (canvas) applyRenderConfig(canvas, PREVIEW_CONFIG);
-      
+
       return { success: false };
     } finally {
       isExportingRef.current = false;
       setIsExporting(false);
-      resetCameraCache();
       if (videoRef.current) videoRef.current.playbackRate = 1.0;
     }
   };
