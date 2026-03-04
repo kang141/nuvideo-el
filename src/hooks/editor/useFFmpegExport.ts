@@ -421,11 +421,7 @@ export function useFFmpegExport({
 
       setExportProgress(1);
       ipc.send('set-progress-bar', 1);
-      ipc.send('show-notification', {
-        title: '导出成功',
-        body: `视频已保存至: ${finalPath}`,
-        silent: false
-      });
+      // 已移除系统通知，避免打扰用户
 
       setTimeout(() => ipc.send('set-progress-bar', -1), 3000);
 

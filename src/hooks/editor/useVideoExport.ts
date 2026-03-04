@@ -600,11 +600,7 @@ export function useVideoExport({
 
       setExportProgress(1);
       window.ipcRenderer.send('set-progress-bar', 1);
-      window.ipcRenderer.send('show-notification', {
-        title: '导出成功',
-        body: `视频已保存至: ${finalPath}`,
-        silent: false
-      });
+      // 已移除系统通知，避免打扰用户
       setTimeout(() => window.ipcRenderer.send('set-progress-bar', -1), 3000);
 
       console.log(`[useVideoExport] Export finished in ${((performance.now() - startTime) / 1000).toFixed(1)}s`);
