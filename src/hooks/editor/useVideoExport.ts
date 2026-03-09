@@ -20,9 +20,63 @@ interface UseVideoExportOptions {
   renderFrame: (t: number, cache?: CameraSolverCache) => Promise<void>;
 }
 
-const ENCODER_QUEUE_THRESHOLD = 128; // 进一步增大队列，允许渲染跑得更超前
+// 🎯 优化：基于目标帧率的动态队列阈值（约 1-1.5 秒的视频内容）
+const getEncoderQueueThreshold = (fps: number): number => {
+  return Math.max(60, Math.min(120, fps * 1.5));
+};
+
+// 🎯 优化：基于分辨率的动态批量大小
+const getBatchSize = (width: number, height: number): number => {
+  const pixelCount = width * height;
+  if (pixelCount > 4000000) { // > 2K
+    return 16;  // 高分辨率减少批量大小
+  } else if (pixelCount > 1000000) { // > 1080p
+    return 32;
+  } else {
+    return 64;  // 低分辨率增大批量
+  }
+};
+
 const PROGRESS_THROTTLE_MS = 100;
-const IPC_WRITE_BATCH_SIZE = 32; // 批量写入阈值
+
+// 🎯 新增：动态帧率检测函数
+const detectSourceFps = async (video: HTMLVideoElement): Promise<number> => {
+  // 方法 1: 尝试从 videoTracks 获取（如果可用）
+  const videoTracks = (video as any).videoTracks;
+  if (videoTracks?.[0]?.frameRate) {
+    const detectedFps = videoTracks[0].frameRate;
+    console.log('[useVideoExport] Detected FPS from videoTracks:', detectedFps);
+    return detectedFps;
+  }
+  
+  // 方法 2: 通过 playbackQuality 和时长估算
+  return new Promise((resolve) => {
+    const checkQuality = () => {
+      const quality = (video as any).getVideoPlaybackQuality?.();
+      if (quality?.totalVideoFrames && video.duration > 0) {
+        // 简单估算：大多数视频为 24/25/30/50/60 fps
+        const estimatedFps = Math.round(quality.totalVideoFrames / video.duration);
+        // 映射到标准帧率
+        const standardFps = [24, 25, 30, 50, 60].find(fps => 
+          Math.abs(fps - estimatedFps) < 5
+        );
+        if (standardFps) {
+          console.log('[useVideoExport] Estimated FPS from playbackQuality:', standardFps);
+          return resolve(standardFps);
+        }
+      }
+      // 默认值 60fps
+      console.log('[useVideoExport] Using default FPS: 60');
+      resolve(60);
+    };
+    
+    if (video.readyState >= 1) {
+      checkQuality();
+    } else {
+      video.addEventListener('loadedmetadata', checkQuality, { once: true });
+    }
+  });
+};
 
 export function useVideoExport({
   videoRef,
@@ -80,12 +134,16 @@ export function useVideoExport({
     let streamId: string | null = null;
     let isGif = quality?.id === 'gif' || targetPath?.toLowerCase().endsWith('.gif');
     const bitrate = isGif ? 150 * 1024 * 1024 : (targetQuality.bitrate || 50 * 1024 * 1024);
-    const fps = 60;
+    // 🎯 核心修复：动态检测源视频帧率，避免强制 60fps 导致的卡顿/掉帧
+    const fps = await detectSourceFps(video);
     const durationSeconds = exportDuration ?? maxDuration;
 
     // 🎯 物理编码分辨率：必须基于 base * scale 且为偶数
     const width = Math.floor(baseWidth * scale / 2) * 2;
     const height = Math.floor(baseHeight * scale / 2) * 2;
+
+    // 🎯 优化：根据分辨率动态设置批量写入大小
+    const IPC_WRITE_BATCH_SIZE = getBatchSize(width, height);
 
     // 在 try 之前声明编码器变量和性能监控定时器，以便在错误处理中可以访问它们
     let videoEncoder: VideoEncoder | undefined = undefined;
@@ -310,6 +368,7 @@ export function useVideoExport({
       console.log('[导出] 正在加载渲染资源...');
 
       // 🔍 调试：性能监控
+      const queueThreshold = getEncoderQueueThreshold(fps);
       const perfMonitor = {
         totalFrames: Math.floor(durationSeconds * fps),
         renderedFrames: 0,
@@ -352,6 +411,9 @@ export function useVideoExport({
         await new Promise<void>((resolve, reject) => {
           let vfcId: number | null = null;
           let timeoutId: any = null;
+          // 🎯 新增：跳帧机制变量
+          let lastEncodedTime = -1;
+          const minFrameInterval = 1000 / fps; // 最小帧间隔 (ms)
 
           const cleanup = () => {
             if (vfcId !== null) vVideo.cancelVideoFrameCallback(vfcId);
@@ -377,6 +439,15 @@ export function useVideoExport({
               return;
             }
 
+            // 🎯 新增：跳帧机制 - 如果距离上一帧编码时间不足，跳过此帧
+            const currentMediaTimeMs = meta.mediaTime * 1000;
+            if (lastEncodedTime >= 0 && (currentMediaTimeMs - lastEncodedTime) < minFrameInterval * 0.8) {
+              // 跳过此帧以保持帧率稳定
+              console.log(`[导出] 跳帧：${(minFrameInterval * 0.8).toFixed(2)}ms < ${(currentMediaTimeMs - lastEncodedTime).toFixed(2)}ms`);
+              vfcId = vVideo.requestVideoFrameCallback(onFrame);
+              return;
+            }
+
             const frameStartTime = performance.now();
             const currentQueueSize = videoEncoder?.encodeQueueSize || 0;
 
@@ -385,19 +456,30 @@ export function useVideoExport({
               perfMonitor.queuePeakSize = currentQueueSize;
             }
 
-            if (currentQueueSize > ENCODER_QUEUE_THRESHOLD * 0.8) {
-              console.warn(`[导出调试] 编码器队列接近阈值: ${currentQueueSize}/${ENCODER_QUEUE_THRESHOLD} (${(currentQueueSize/ENCODER_QUEUE_THRESHOLD*100).toFixed(1)}%)`);
+            const queueThreshold = getEncoderQueueThreshold(fps);
+            
+            if (currentQueueSize > queueThreshold * 0.8) {
+              console.warn(`[导出调试] 编码器队列接近阈值：${currentQueueSize}/${queueThreshold} (${(currentQueueSize/queueThreshold*100).toFixed(1)}%)`);
             }
 
-            // 🔍 调试：检测编码器停顿
-            if (videoEncoder && videoEncoder.encodeQueueSize > ENCODER_QUEUE_THRESHOLD) {
+            // 🎯 核心优化：实现渐变式背压控制，替代急停急走
+            if (videoEncoder && videoEncoder.encodeQueueSize > queueThreshold) {
               perfMonitor.encoderStalls++;
               const stallStartTime = performance.now();
-              console.warn(`[导出调试] 编码器队列满载 (${videoEncoder.encodeQueueSize}), 暂停视频等待编码...`);
+              console.warn(`[导出调试] 编码器队列满载 (${videoEncoder.encodeQueueSize}), 降速等待编码...`);
               
-              video.pause();
-              while (videoEncoder.encodeQueueSize > 2) await new Promise(r => setTimeout(r, 10));
-              video.play().catch(console.error);
+              // 降低播放速度而非完全暂停
+              const targetRate = Math.max(0.5, 1 - (videoEncoder.encodeQueueSize - queueThreshold * 0.8) / queueThreshold);
+              video.playbackRate = targetRate;
+              console.log(`[导出] 检测到编码积压，降速至 ${targetRate.toFixed(2)}x`);
+              
+              // 等待队列缓解
+              while (videoEncoder.encodeQueueSize > queueThreshold * 0.5) {
+                await new Promise(r => setTimeout(r, 16)); // 等待一帧时间
+              }
+              
+              // 恢复正常速度
+              video.playbackRate = 1.0;
               
               const stallTime = performance.now() - stallStartTime;
               console.log(`[导出调试] 编码器恢复，停顿耗时 ${stallTime.toFixed(2)}ms`);
@@ -431,6 +513,9 @@ export function useVideoExport({
             vFrame.close();
             encodedCount++;
             perfMonitor.encodedFrames++;
+            
+            // 🎯 更新最后编码时间，用于跳帧检测
+            lastEncodedTime = currentMediaTimeMs;
             
             const encodeTime = performance.now() - encodeStartTime;
             
